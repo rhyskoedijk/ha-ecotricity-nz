@@ -80,7 +80,7 @@ See `docs/architecture.md` for diagrams and `docs/api.md` for the services.
 - If the config entry's data or options change shape, bump `VERSION` in `config_flow.py` and add `async_migrate_entry`.
 - Config flow schemas use `probatio` (Home Assistant's voluptuous-compatible replacement), not `voluptuous`.
 - Never block the event loop. CPU-bound work such as chart reading goes through `hass.async_add_executor_job`, and time zones load with `dt_util.async_get_time_zone`.
-- Use HA's shared aiohttp session for the onboarding site. The portal needs its own (`async_create_clientsession`) for its cookie jar.
+- Use HA's shared aiohttp session for the onboarding site. The portal needs its own (`async_create_clientsession`) for its cookie jar. One created during entry setup is released by HA when the entry unloads; one created in a config flow isn't, so the flow creates it with `auto_cleanup=False` and calls `detach()` when the check is done.
 - Log with `LOGGER` and `%` formatting, not f-strings.
 - Don't add `requirements` to `manifest.json` without a good reason. Pillow already ships with Home Assistant.
 - Brand images live in `brand/` and must keep the home-assistant/brands sizes; see `docs/development.md` before changing them.

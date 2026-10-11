@@ -239,8 +239,11 @@ class EcotricityConfigFlow(ConfigFlow, domain=DOMAIN):
         server_tz = await dt_util.async_get_time_zone(PORTAL_SERVER_TIME_ZONE)
         assert local_tz is not None  # noqa: S101 - tzdata ships with Home Assistant
         assert server_tz is not None  # noqa: S101 - tzdata ships with Home Assistant
+        # Flows run outside a config entry, so Home Assistant would only release an auto-cleanup
+        # session at shutdown. Release this one as soon as the check is done.
+        session = async_create_clientsession(self.hass, auto_cleanup=False)
         portal = PortalClient(
-            async_create_clientsession(self.hass),
+            session,
             credentials[CONF_ACCOUNT_NUMBER],
             credentials[CONF_PASSWORD],
             user_agent=USER_AGENT,
@@ -254,6 +257,8 @@ class EcotricityConfigFlow(ConfigFlow, domain=DOMAIN):
         except EcotricityError as err:
             LOGGER.debug("Could not reach the customer portal: %s", err)
             return {"base": "cannot_connect"}
+        finally:
+            session.detach()
         return {}
 
 

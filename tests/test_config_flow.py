@@ -148,6 +148,25 @@ async def test_portal_errors(
     assert result["errors"] == {"base": error}
 
 
+@pytest.mark.parametrize("side_effect", [None, AuthError("no"), EcotricityConnectionError("down")])
+async def test_portal_session_released(
+    hass: HomeAssistant, mock_portal: MagicMock, side_effect: Exception | None
+) -> None:
+    """Each credential check releases its session instead of keeping it until shutdown."""
+    mock_portal.async_login.side_effect = side_effect
+    flow_id = await _start(hass)
+
+    with patch(
+        "custom_components.ecotricity_nz.config_flow.async_create_clientsession"
+    ) as create_session:
+        await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_ICP: TEST_ICP, CONF_ACCOUNT_NUMBER: "123456", CONF_PASSWORD: "pw"}
+        )
+
+    create_session.assert_called_once_with(hass, auto_cleanup=False)
+    create_session.return_value.detach.assert_called_once_with()
+
+
 async def test_already_configured(hass: HomeAssistant, config_entry: MockConfigEntry) -> None:
     config_entry.add_to_hass(hass)
     flow_id = await _start(hass)

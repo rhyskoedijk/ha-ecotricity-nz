@@ -1,0 +1,77 @@
+[project]
+name = "ha-ecotricity-nz"
+version = "0.1.0"
+description = "Home Assistant custom integration for Ecotricity (New Zealand) pricing and consumption data"
+readme = "README.md"
+requires-python = ">=3.14.2"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest-homeassistant-custom-component==0.13.371",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["custom_components.ecotricity_nz"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D203",   # conflicts with D211
+    "D213",   # conflicts with D212
+    "COM812", # conflicts with the formatter
+    "ISC001", # conflicts with the formatter
+    "TRY003", # long exception messages are fine here
+    "EM101",
+    "EM102",
+    "EXE002", # files are mode 777 on some dev filesystems
+    "CPY001", # no per-file copyright headers
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures are injected by argument name, so argument counts and type-only imports don't apply.
+"tests/**" = [
+    "S101", "PLR2004", "SLF001", "ARG001", "D", "ANN", "FBT", "TC", "PLR0913", "PLR0917",
+    "DTZ001",  # naive datetimes are deliberate when testing wall-clock handling
+]
+# Parsers take raw JSON, so their inputs are typed Any. Models leave them fully typed.
+"custom_components/ecotricity_nz/api/parsers.py" = ["ANN401"]
+"scripts/**" = ["INP001", "T201", "D"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.ecotricity_nz"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+explicit_package_bases = true
+packages = ["custom_components.ecotricity_nz"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"

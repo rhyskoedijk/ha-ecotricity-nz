@@ -1,0 +1,212 @@
+{
+  "representation": "json, text/plain, */*",
+  "content": {
+    "network": {
+      "currentAuditNumber": "NET-10000001",
+      "vGenerationFuelType": "",
+      "allSharedICPsList": "\n\t\t\t\t\t",
+      "displayEventType": "Network",
+      "bus": "EXL0011",
+      "networkIdentifier": "EXLN",
+      "vInstallationType": "B",
+      "userId": "EXLN0001",
+      "icpNumber": "0000123456AB1C2",
+      "eventDate": "2025-07-14",
+      "generationCapacityKW": "0",
+      "vProposedTrader": "",
+      "vDirectBilledStatus": "",
+      "endDate": "1900-01-01",
+      "myNetwork": {
+        "description": "Example Lines Network",
+        "code": "EXLN"
+      },
+      "directBilledDetails": "",
+      "proposedRetailer": "",
+      "vReconciliationType": "GN",
+      "installationType": "",
+      "vMyNSPMapping": "\n\t\t\t\t\t",
+      "initialEnergisationDate": "1900-01-01",
+      "unmeteredLoadDistributor": "",
+      "dedicatedNSP": "false",
+      "dateChanged": "2025-07-15T09:30:00.000-00:00",
+      "userRef": "100001"
+    },
+    "retailer": {
+      "icpNumber": "0000123456AB1C2",
+      "code": "ECOT",
+      "description": "Ecotricity Limited"
+    },
+    "pricing": {
+      "userId": "EXLN",
+      "dateChanged": "2022-04-03T20:00:00.000-00:00",
+      "userRef": "100002",
+      "chargeableCapacity": "0.00",
+      "installDetails": "",
+      "icpNumber": "0000123456AB1C2",
+      "eventDate": "2022-04-01",
+      "displayEventType": "Pricing",
+      "myLossFactorCode": {
+        "code": "EXLN01",
+        "startPeriod": "1",
+        "myNetwork": {
+          "description": "Example Lines Network",
+          "code": "EXLN"
+        },
+        "myCodeDefinition": {
+          "type": "String",
+          "description": "Loss Factor Codes",
+          "name": "Loss Factor Codes"
+        },
+        "endDate": "1900-01-01",
+        "startDate": "2020-04-01",
+        "endPeriod": "48",
+        "description": "",
+        "lossFactorGeneration": "1.0000",
+        "lossFactorConsumption": "1.0450"
+      },
+      "endDate": "1900-01-01",
+      "allPriceCategoryCodes": {
+        "PriceCategoryCode": {
+          "isActive": "true",
+          "startDate": "2021-04-01",
+          "isAllocatedToIcp": "true",
+          "endDate": "9999-12-31",
+          "myCodeDefinition": {
+            "name": "Price Categories",
+            "description": "Price Categories",
+            "type": "String"
+          },
+          "myNetwork": {
+            "description": "Example Lines Network",
+            "code": "EXLN"
+          },
+          "code": "RTOU24",
+          "description": "Residential Time of Use"
+        }
+      },
+      "currentAuditNumber": "PRI-10000002"
+    },
+    "metering": {
+      "certVariationsExpiryDate": "2024-01-01",
+      "installationNumber": "1",
+      "leasePriceCode": "",
+      "maxInterrogationCycle": "90",
+      "vCertVariations": "X",
+      "locationCode": "EW",
+      "certificationDate": "2015-06-01",
+      "highestMeteringCategory": "1",
+      "vNumberOfComponents": "1",
+      "certificationNumber": "N000000",
+      "certificationExpiryDate": "2030-06-01",
+      "vGPS_E": "0",
+      "allMeteringComponents": {
+        "MeteringComponent": [
+          {
+            "vMeteringInstallationNumber": "1",
+            "meterType": "HHR",
+            "allMeteringChannels": {
+              "MeteringChannel": [
+                {
+                  "energyFlowDirection": "X",
+                  "vMeteringInstallationNumber": "1",
+                  "accumulatorType": "C",
+                  "eventReading": "",
+                  "periodOfAvailability": "24",
+                  "vMeteringComponentSerialNumber": "900000001",
+                  "settlementIndicator": "true",
+                  "numberOfDials": "6",
+                  "channelNumber": "1",
+                  "vUnitOfMeasurement": "kWh",
+                  "vRegisterContentCode": "UN"
+                },
+                {
+                  "numberOfDials": "6",
+                  "vMeteringComponentSerialNumber": "900000001",
+                  "settlementIndicator": "true",
+                  "vUnitOfMeasurement": "kWh",
+                  "vRegisterContentCode": "EG",
+                  "channelNumber": "2",
+                  "energyFlowDirection": "I",
+                  "vMeteringInstallationNumber": "1",
+                  "eventReading": "",
+                  "accumulatorType": "C",
+                  "periodOfAvailability": "24"
+                },
+                {
+                  "vUnitOfMeasurement": "kWh",
+                  "vRegisterContentCode": "7304",
+                  "channelNumber": "50",
+                  "numberOfDials": "12",
+                  "vMeteringComponentSerialNumber": "900000001",
+                  "settlementIndicator": "false",
+                  "periodOfAvailability": "24",
+                  "vMeteringInstallationNumber": "1",
+                  "eventReading": "",
+                  "accumulatorType": "A",
+                  "energyFlowDirection": "X"
+                },
+                {
+                  "vRegisterContentCode": "7304",
+                  "vUnitOfMeasurement": "kWh",
+                  "channelNumber": "51",
+                  "numberOfDials": "12",
+                  "vMeteringComponentSerialNumber": "900000001",
+                  "settlementIndicator": "false",
+                  "periodOfAvailability": "24",
+                  "energyFlowDirection": "I",
+                  "vMeteringInstallationNumber": "1",
+                  "eventReading": "",
+                  "accumulatorType": "A"
+                }
+              ]
+            },
+            "vComponentType": "M",
+            "meteringCategory": "1",
+            "owner": "NGCS",
+            "amiFlag": "true",
+            "vNumberOfChannels": "4",
+            "serialNumber": "900000001",
+            "removalDate": "1900-01-01",
+            "compensationFactor": "1"
+          }
+        ]
+      },
+      "controlDeviceCertificationFlag": "false",
+      "vGPS_N": "0",
+      "vATHparticipantIdentifier": "INDS",
+      "icpNumber": "0000123456AB1C2",
+      "vCertificationType": "F",
+      "vMeteringInstallationType": "HHR"
+    },
+    "address": {
+      "displayEventType": "Address",
+      "suburb": "TESTVILLE",
+      "userId": "EXLN",
+      "street": "EXAMPLE ROAD",
+      "postCode": "9999",
+      "town": "SAMPLETOWN",
+      "dateChanged": "2019-02-01T00:00:00.000-00:00",
+      "userRef": "ADDR-TEST",
+      "unit": "",
+      "vGPS_Easting": "0",
+      "icpNumber": "0000123456AB1C2",
+      "eventDate": "2019-01-15",
+      "vRegion": "Waikato",
+      "propertyName": "",
+      "currentAuditNumber": "ADD-10000003",
+      "endDate": "1900-01-01",
+      "number": "1",
+      "vGPS_Northing": "0"
+    }
+  },
+  "returnCode": {
+    "name": "OK",
+    "details": "",
+    "ID": 0
+  },
+  "protocolVersion": 1,
+  "self": {
+    "rel": "self",
+    "href": "https://onboarding.ecotricity.co.nz/cgi-bin/RESTICP/energy/0000123456AB1C2"
+  }
+}

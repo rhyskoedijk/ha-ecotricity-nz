@@ -1,0 +1,33 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      # uv.lock is generated and outgrows the 500 KB limit; the check is for stray binaries and captures.
+      - id: check-added-large-files
+        exclude: ^uv\.lock$
+      - id: detect-private-key
+
+  # Run the project's own pinned tools, so pre-commit and CI always agree.
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: uv run mypy custom_components
+        language: system
+        types: [python]
+        pass_filenames: false

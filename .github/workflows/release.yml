@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Attach zip
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Stamp the version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          jq --arg v "$version" '.version = $v' custom_components/ecotricity_nz/manifest.json > manifest.tmp
+          mv manifest.tmp custom_components/ecotricity_nz/manifest.json
+
+      - name: Build the zip
+        run: |
+          cd custom_components/ecotricity_nz
+          zip -r "$GITHUB_WORKSPACE/ecotricity_nz.zip" . -x "__pycache__/*" "*.pyc"
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: ecotricity_nz.zip

@@ -1,0 +1,225 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ecotricity",
+        "description": "Enter the ICP number for the connection. Adding your customer portal login also imports your half-hourly usage.",
+        "data": {
+          "icp": "ICP number",
+          "account_number": "Customer account number",
+          "password": "Portal password"
+        },
+        "data_description": {
+          "icp": "The 15-character ICP number from your bill, for example 0000123456AB1C2.",
+          "account_number": "Optional. The account number you log in to the Ecotricity customer portal with.",
+          "password": "Optional. Your Ecotricity customer portal password."
+        }
+      },
+      "plan": {
+        "title": "Choose your plan",
+        "description": "Choose the plan this ICP is on. The names match the plans on the Ecotricity website. You can change it later in the integration's options.",
+        "data": {
+          "plan_id": "Plan"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in to the Ecotricity portal again",
+        "description": "The portal rejected the saved login for ICP {icp}. Enter your account number and password.",
+        "data": {
+          "account_number": "Customer account number",
+          "password": "Portal password"
+        }
+      },
+      "reconfigure": {
+        "title": "Change portal login",
+        "description": "Update the customer portal login for ICP {icp}. Clear both fields to stop importing usage data.",
+        "data": {
+          "account_number": "Customer account number",
+          "password": "Portal password"
+        }
+      }
+    },
+    "error": {
+      "invalid_icp": "That doesn't look like an ICP number. It should be 10 digits, 2 letters and 3 letters or digits.",
+      "icp_not_found": "Ecotricity has no record of that ICP number.",
+      "cannot_connect": "Couldn't reach Ecotricity. Try again shortly.",
+      "invalid_auth": "The portal rejected that account number or password.",
+      "credentials_incomplete": "Enter both the account number and the password, or leave both empty.",
+      "credentials_required": "Enter your account number and password."
+    },
+    "abort": {
+      "already_configured": "This ICP is already set up.",
+      "reauth_successful": "Login updated.",
+      "reconfigure_successful": "Login updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ecotricity options",
+        "data": {
+          "include_gst": "Include GST in prices",
+          "plan_id": "Plan"
+        },
+        "data_description": {
+          "include_gst": "Add 15% GST to import prices and daily charges, as you're billed. Export credits are always shown as published, because GST isn't added to them for customers who aren't GST-registered.",
+          "plan_id": "The plan this ICP is on, as named on the Ecotricity website. Prices are worked out from this plan."
+        }
+      }
+    }
+  },
+  "entity": {
+    "image": {
+      "time_of_use_chart": {
+        "name": "Time-of-use chart"
+      }
+    },
+    "sensor": {
+      "icp": {
+        "name": "ICP"
+      },
+      "network": {
+        "name": "Network"
+      },
+      "price_category": {
+        "name": "Price category"
+      },
+      "meter": {
+        "name": "Meter"
+      },
+      "plan": {
+        "name": "Plan"
+      },
+      "season": {
+        "name": "Season"
+      },
+      "next_season_change": {
+        "name": "Next season change"
+      },
+      "daily_charge": {
+        "name": "Daily charge"
+      },
+      "current_import_price": {
+        "name": "Current import price"
+      },
+      "current_export_price": {
+        "name": "Current export price"
+      },
+      "current_controlled_price": {
+        "name": "Current controlled price"
+      },
+      "anytime_import_price": {
+        "name": "Anytime import price"
+      },
+      "peak_import_price": {
+        "name": "Peak import price"
+      },
+      "off_peak_import_price": {
+        "name": "Off-peak import price"
+      },
+      "shoulder_import_price": {
+        "name": "Shoulder import price"
+      },
+      "other_import_price": {
+        "name": "{name} import price"
+      },
+      "anytime_export_price": {
+        "name": "Anytime export price"
+      },
+      "peak_export_price": {
+        "name": "Peak export price"
+      },
+      "off_peak_export_price": {
+        "name": "Off-peak export price"
+      },
+      "shoulder_export_price": {
+        "name": "Shoulder export price"
+      },
+      "other_export_price": {
+        "name": "{name} export price"
+      },
+      "anytime_controlled_price": {
+        "name": "Anytime controlled price"
+      },
+      "peak_controlled_price": {
+        "name": "Peak controlled price"
+      },
+      "off_peak_controlled_price": {
+        "name": "Off-peak controlled price"
+      },
+      "shoulder_controlled_price": {
+        "name": "Shoulder controlled price"
+      },
+      "other_controlled_price": {
+        "name": "{name} controlled price"
+      },
+      "current_import_period": {
+        "name": "Current import period",
+        "state": {
+          "anytime": "Anytime",
+          "peak": "Peak",
+          "off_peak": "Off-peak",
+          "shoulder": "Shoulder"
+        }
+      },
+      "current_export_period": {
+        "name": "Current export period",
+        "state": {
+          "anytime": "Anytime",
+          "peak": "Peak",
+          "off_peak": "Off-peak",
+          "shoulder": "Shoulder"
+        }
+      },
+      "next_import_period_change": {
+        "name": "Next import period change"
+      },
+      "next_export_period_change": {
+        "name": "Next export period change"
+      },
+      "last_day_imported": {
+        "name": "Last day imported"
+      },
+      "last_day_exported": {
+        "name": "Last day exported"
+      },
+      "last_day_carbon_savings": {
+        "name": "Last day carbon savings"
+      },
+      "last_meter_reading": {
+        "name": "Last meter reading"
+      },
+      "last_data_sync": {
+        "name": "Last data sync"
+      },
+      "registered_generation_capacity": {
+        "name": "Registered generation capacity"
+      }
+    }
+  },
+  "exceptions": {
+    "attestation_failed": {
+      "message": "The Ecotricity onboarding site refused the request. Its security check may have changed."
+    },
+    "invalid_auth": {
+      "message": "The Ecotricity portal rejected the saved login."
+    },
+    "update_failed": {
+      "message": "Couldn't update from Ecotricity: {error}"
+    }
+  },
+  "issues": {
+    "attestation_failed": {
+      "title": "Ecotricity pricing can't be fetched",
+      "description": "The Ecotricity onboarding site has rejected the integration's requests several times in a row. The site has probably changed how it checks visitors. Check for an update to this integration."
+    },
+    "tou_chart_unreadable": {
+      "title": "Time-of-use hours for {plan} can't be read",
+      "description": "The integration reads the peak and off-peak hours from Ecotricity's plan charts, and the latest chart couldn't be read or didn't match the plan's prices. The current price and period sensors are unavailable until this is fixed. Check for an update to this integration."
+    },
+    "plan_not_found": {
+      "title": "Your Ecotricity plan is no longer listed",
+      "description": "The plan chosen for this ICP isn't among the plans Ecotricity currently lists for it, so prices are being worked out from {default} instead. Choose your plan again in the integration's options."
+    }
+  }
+}

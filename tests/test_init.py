@@ -30,6 +30,7 @@ from custom_components.ecotricity_nz.api import (
     AttestationError,
     AuthError,
     EcotricityConnectionError,
+    Plan,
     PlanList,
     Rate,
     RateUnit,
@@ -790,6 +791,36 @@ async def test_time_of_use_chart_image_without_a_season(
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
     assert image.image_url is None
+
+
+async def test_time_of_use_chart_image_stays_on_the_onboarding_host(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A chart template without a leading slash can't turn the rest of the URL into a host."""
+    freezer.move_to(WINTER_PEAK)
+    plans = mock_onboarding.async_get_plans.return_value
+
+    def unrooted(plan: Plan) -> Plan:
+        weekday = plan.timeframe_chart_weekday
+        return replace(plan, timeframe_chart_weekday=weekday and weekday.lstrip("/"))
+
+    mock_onboarding.async_get_plans.return_value = replace(
+        plans,
+        default=unrooted(plans.default),
+        alternative=plans.alternative and unrooted(plans.alternative),
+        others=tuple(unrooted(plan) for plan in plans.others),
+    )
+    await _setup(hass, config_entry)
+    entity_id = f"image.icp_{TEST_ICP.lower()}_time_of_use_chart"
+    image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
+    assert image is not None
+    assert image.image_url == (
+        "https://onboarding.ecotricity.co.nz/timeframeimages_ecotricity/"
+        "EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD.png"
+    )
 
 
 @pytest.mark.usefixtures("mock_onboarding")

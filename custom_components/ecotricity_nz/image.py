@@ -85,6 +85,9 @@ class TimeOfUseChartImage(EcotricityEntity[PricingCoordinator], ImageEntity):
             season.end if season else None,
             include_gst=include_gst,
         )
+        # The template comes from the API; a missing leading slash would let it change the host.
+        if not path.startswith("/"):
+            path = "/" + path
         return ONBOARDING_URL + path
 
     @callback

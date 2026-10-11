@@ -100,7 +100,7 @@ The per-period price sensors follow the plan. Whenever a refresh turns up a buck
 
 The current price, current period and next period change sensors (each for import and export) re-evaluate at every half-hour boundary using their own timers, so they change when the window does rather than at the next poll. The next period change looks no further than the next season change, because a new season can bring new windows.
 
-The time-of-use chart image entity points Home Assistant at Ecotricity's chart for today's day type and season; Home Assistant downloads and caches it.
+The time-of-use chart image entity points Home Assistant at Ecotricity's chart for today's day type and season; Home Assistant downloads and caches it. When no published season covers today, the chart's dates are unknown, so the entity has no image URL rather than a broken one.
 
 ## Consumption
 

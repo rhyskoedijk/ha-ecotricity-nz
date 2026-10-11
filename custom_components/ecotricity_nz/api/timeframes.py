@@ -70,6 +70,11 @@ class ChartReading:
     export_tiers: tuple[ChartTier, ...]
 
 
+def needs_season(template: str) -> bool:
+    """Return whether a chart template has season dates to fill in."""
+    return _START_PLACEHOLDER in template or _END_PLACEHOLDER in template
+
+
 def chart_path(
     template: str, start: date | None, end: date | None, *, include_gst: bool = False
 ) -> str:

@@ -10,7 +10,7 @@ from homeassistant.helpers.entity import EntityDescription
 from homeassistant.util import dt as dt_util
 
 from .api.onboarding import ONBOARDING_URL
-from .api.timeframes import chart_path
+from .api.timeframes import chart_path, needs_season
 from .const import CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
 from .coordinator import PricingCoordinator
 from .entity import EcotricityEntity
@@ -72,12 +72,13 @@ class TimeOfUseChartImage(EcotricityEntity[PricingCoordinator], ImageEntity):
             if today.weekday() < WEEKDAY_COUNT
             else data.plan.timeframe_chart_weekend
         )
-        if not template:
+        season = data.season
+        # Without a published season the chart's dates are unknown, so there's no chart to show.
+        if not template or (season is None and needs_season(template)):
             return None
         include_gst = self.coordinator.config_entry.options.get(
             CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
         )
-        season = data.season
         path = chart_path(
             template,
             season.start if season else None,

@@ -15,6 +15,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
     ChartTier,
     chart_path,
     match_tiers,
+    needs_season,
     read_chart,
 )
 
@@ -45,6 +46,11 @@ def test_chart_path() -> None:
         == "/timeframeimages_ecotricity/X-20261001-20261231-WD-NOGST.png"
     )
     assert chart_path("/a-NOGST.png", date(2026, 1, 1), date(2026, 1, 2)) == "/a-NOGST.png"
+
+
+def test_needs_season() -> None:
+    assert needs_season("/X-SSSSSSSS-EEEEEEEE-WD.png")
+    assert not needs_season("/X-20261001-20261231-WD.png")
 
 
 def test_read_two_tier_import_and_export() -> None:

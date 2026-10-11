@@ -779,6 +779,20 @@ async def test_time_of_use_chart_image(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+async def test_time_of_use_chart_image_without_a_season(
+    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    """With no published season for today, there's no chart URL to point at."""
+    # Monday 3 May 2027, after the last published season ends.
+    freezer.move_to(datetime(2027, 5, 2, 21, 0, tzinfo=UTC))
+    await _setup(hass, config_entry)
+    entity_id = f"image.icp_{TEST_ICP.lower()}_time_of_use_chart"
+    image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
+    assert image is not None
+    assert image.image_url is None
+
+
+@pytest.mark.usefixtures("mock_onboarding")
 async def test_credentials_never_logged(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,

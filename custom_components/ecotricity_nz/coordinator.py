@@ -29,7 +29,14 @@ from .api import (
     PortalIndicator,
     Season,
 )
-from .api.timeframes import ChartReadError, ChartReading, chart_path, match_tiers, read_chart
+from .api.timeframes import (
+    ChartReadError,
+    ChartReading,
+    chart_path,
+    match_tiers,
+    needs_season,
+    read_chart,
+)
 from .const import (
     BACKFILL_PAUSE_SECONDS,
     CONF_ICP,
@@ -293,7 +300,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
     async def _async_chart(self, template: str | None, season: Season | None) -> ChartReading:
         if not template:
             raise ChartReadError("The plan has no timeframe chart")
-        if season is None and "SSSSSSSS" in template:
+        if season is None and needs_season(template):
             # Ecotricity may not have published the next season yet. The daily refresh picks it
             # up as soon as it appears in the plan list.
             raise ChartReadError("No published season covers today")

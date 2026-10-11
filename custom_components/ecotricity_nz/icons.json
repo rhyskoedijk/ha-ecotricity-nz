@@ -12,7 +12,7 @@
       "network": {
         "default": "mdi:transmission-tower"
       },
-      "price_category": {
+      "pricing_category": {
         "default": "mdi:tag-outline"
       },
       "meter": {
@@ -21,10 +21,10 @@
       "plan": {
         "default": "mdi:file-document-outline"
       },
-      "season": {
+      "pricing_season": {
         "default": "mdi:calendar-range"
       },
-      "next_season_change": {
+      "next_pricing_season_change": {
         "default": "mdi:calendar-arrow-right"
       },
       "daily_charge": {

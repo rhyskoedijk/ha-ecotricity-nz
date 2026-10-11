@@ -93,8 +93,8 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         },
     ),
     PricingSensorDescription(
-        key="price_category",
-        translation_key="price_category",
+        key="pricing_category",
+        translation_key="pricing_category",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.icp.price_category_description or data.icp.price_category,
         attrs_fn=lambda data: {"code": data.icp.price_category},
@@ -121,8 +121,8 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         },
     ),
     PricingSensorDescription(
-        key="season",
-        translation_key="season",
+        key="pricing_season",
+        translation_key="pricing_season",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=_season_label,
         attrs_fn=lambda data: {
@@ -135,9 +135,8 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         },
     ),
     PricingSensorDescription(
-        key="next_season_change",
-        translation_key="next_season_change",
-        entity_category=EntityCategory.DIAGNOSTIC,
+        key="next_pricing_season_change",
+        translation_key="next_pricing_season_change",
         device_class=SensorDeviceClass.DATE,
         value_fn=lambda data: next_season_change(data.plan, data.day),
     ),

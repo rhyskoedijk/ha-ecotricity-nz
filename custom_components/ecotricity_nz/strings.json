@@ -81,8 +81,8 @@
       "network": {
         "name": "Network"
       },
-      "price_category": {
-        "name": "Price category"
+      "pricing_category": {
+        "name": "Pricing category"
       },
       "meter": {
         "name": "Meter"
@@ -90,11 +90,11 @@
       "plan": {
         "name": "Plan"
       },
-      "season": {
-        "name": "Season"
+      "pricing_season": {
+        "name": "Pricing season"
       },
-      "next_season_change": {
-        "name": "Next season change"
+      "next_pricing_season_change": {
+        "name": "Next pricing season change"
       },
       "daily_charge": {
         "name": "Daily charge"

@@ -9,11 +9,12 @@ It isn't made by or affiliated with Ecotricity, and it reads their websites rath
 With just your ICP number:
 
 - **Plan**, by the name the Ecotricity website uses ("Low ecoSOLAR", say), with the internal name (`internal_name`) and plan `code` as attributes
-- **Network**, with its code and the network's loss factors as attributes, and **Price category**, your network price category (such as "Residential Time of Use"), with its `code` as an attribute
-- **Season**, the current pricing season, with its dates and every published season as attributes, and **Next season change**, the date the next season starts
+- **Network**, with its code and the network's loss factors as attributes, and **Pricing category**, your network pricing category (such as "Residential Time of Use"), with its `code` as an attribute
+- **Pricing season**, the current pricing season, with its dates and every published season as attributes
 - **Current import price** and **current export price** in NZD/kWh, which change at the start of each peak or off-peak window. Use them as the price entities in the Energy dashboard. Their attributes break the price into its parts: `supplier_rate`, `network_rate` and (for import) `ea_levy`, plus the current `period`. Only the parts your plan has are shown.
 - **Current import period** and **current export period**: anytime, peak, off-peak or shoulder, each with today's windows (such as `07:00-11:00 peak`) as a `windows` attribute. Import and export can have different windows; on Low ecoSOLAR, for example, import is one price all day but export has peak hours.
 - **Next import period change** and **next export period change**: when the period next changes, with the `period` and `price` from then as attributes. Handy for automations. Unknown when the period doesn't change again before the season ends.
+- **Next pricing season change**: the date the next pricing season starts, when prices or time-of-use windows can change.
 - **Time-of-use chart**: an image of Ecotricity's chart for today (weekday or weekend) and the current season. It follows the GST option, but Ecotricity's own GST-inclusive chart also adds GST to export prices, unlike the price sensors. If Ecotricity hasn't published a season covering today yet, there's no chart to show until it does.
 - **Daily charge**: the total fixed charge per day, broken down into `supplier_rate` (Ecotricity's own fee), `metering_rate` (the metering fee) and `network_rate` (the lines company's charge) as attributes. Any other item on your plan appears under its own name.
 - A price sensor for each period on the plan, such as **Peak import price** and **Off-peak export price**, with the same breakdown attributes. These are disabled by default; enable the ones you want. If a season doesn't price a period separately (no peak rate outside winter, for example) and one price applies all day, that period's sensor shows the price you're actually charged, with a `charged_as` attribute saying which period it is. Parts that are zero, such as a 0c network export rate, aren't listed.
@@ -27,7 +28,7 @@ With your customer portal login as well:
 - **Last day imported**, **last day exported** and **last day carbon savings**, for the latest complete day. Each has a `statistic_id` attribute naming the statistic that holds its full history.
 - **Last meter reading** and **last data sync** times
 
-Details about your connection and settings (ICP, network, price category, meter, plan, season, next season change, registered generation capacity, last meter reading and last data sync) are listed under **Diagnostic** on the device page. They work in automations and dashboards like any other sensor.
+Details about your connection and settings (ICP, network, pricing category, meter, plan, pricing season, registered generation capacity, last meter reading and last data sync) are listed under **Diagnostic** on the device page. They work in automations and dashboards like any other sensor.
 
 Import prices and daily charges include 15% GST unless you turn that off in the options. Export credits are always shown as published, without GST, because that's what customers who aren't GST-registered are paid.
 

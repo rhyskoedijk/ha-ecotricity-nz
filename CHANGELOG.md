@@ -9,7 +9,7 @@ First version.
 - Half-hourly import and export from the customer portal as hourly statistics for the Energy dashboard, with a full history backfill on first run
 - Price sensors with `supplier_rate`, `network_rate` and `ea_levy` attributes, shown to 4 decimal places
 - Export credits shown as published, without GST
-- Current and next period change sensors for import and export, a next season change sensor, and today's time-of-use windows as an attribute
+- Current and next period change sensors for import and export, a next pricing season change sensor, and today's time-of-use windows as an attribute
 - A time-of-use chart image entity
 - Carbon savings as an hourly statistic, alongside import and export
 - Controlled-load (for example hot water) pricing, shown only when the plan has a controlled-load rate

@@ -74,7 +74,7 @@ async def test_pricing_sensors(
 
     assert config_entry.state is ConfigEntryState.LOADED
     assert _state(hass, "plan") == "Low ecoSAVER"
-    assert _state(hass, "season") == "Seasonal Rates 04/2026 - 09/2026"
+    assert _state(hass, "pricing_season") == "Seasonal Rates 04/2026 - 09/2026"
     assert _state(hass, "current_import_period") == "peak"
     # Winter peak: 37.3476c + GST. Export: 13.74c anytime + 2c network peak, credited as
     # published because GST isn't added to export credits.
@@ -306,7 +306,7 @@ async def test_refreshes_after_nz_midnight(
     # 30 September is the last day of the winter season; 1 October starts the next one.
     freezer.move_to(datetime(2026, 9, 30, 10, 0, tzinfo=UTC))  # 11pm NZDT
     await _setup(hass, config_entry)
-    assert _state(hass, "season") == "Seasonal Rates 04/2026 - 09/2026"
+    assert _state(hass, "pricing_season") == "Seasonal Rates 04/2026 - 09/2026"
     calls = mock_onboarding.async_get_icp.await_count
 
     freezer.move_to(datetime(2026, 9, 30, 11, 1, tzinfo=UTC))  # just after NZ midnight
@@ -314,7 +314,7 @@ async def test_refreshes_after_nz_midnight(
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert mock_onboarding.async_get_icp.await_count > calls
-    assert _state(hass, "season") == "Seasonal Rates 10/2026 - 12/2026"
+    assert _state(hass, "pricing_season") == "Seasonal Rates 10/2026 - 12/2026"
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -448,7 +448,7 @@ async def test_new_season_adds_sensors(
     await hass.async_block_till_done()
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is not None
-    season = hass.states.get(f"{PREFIX}_season")
+    season = hass.states.get(f"{PREFIX}_pricing_season")
     assert season is not None
     assert "2027-04-01/2027-09-30" in season.attributes["published"]
     assert season.attributes["end"] == date(2026, 9, 30)
@@ -673,8 +673,8 @@ async def test_network_and_sync_sensors(
         "loss_factor_consumption": pytest.approx(1.045),
         "loss_factor_generation": pytest.approx(1.0),
     }
-    assert _state(hass, "price_category") == "Residential Time of Use"
-    assert _extra(hass, "price_category") == {"code": "RTOU24"}
+    assert _state(hass, "pricing_category") == "Residential Time of Use"
+    assert _extra(hass, "pricing_category") == {"code": "RTOU24"}
     assert _state(hass, "last_meter_reading") == "2026-04-05T12:00:00+00:00"
     assert _state(hass, "last_data_sync") == "2026-04-05T15:06:00+00:00"
 
@@ -728,8 +728,8 @@ async def test_schedule_sensors(
         "17:00-21:00 peak",
         "21:00-24:00 off_peak",
     ]
-    assert _state(hass, "next_season_change") == "2026-10-01"
-    assert _state(hass, "season") == "Seasonal Rates 04/2026 - 09/2026"
+    assert _state(hass, "next_pricing_season_change") == "2026-10-01"
+    assert _state(hass, "pricing_season") == "Seasonal Rates 04/2026 - 09/2026"
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -742,7 +742,7 @@ async def test_no_next_period_change_on_a_flat_plan(
 
     assert _state(hass, "next_import_period_change") == "unknown"
     assert _extra(hass, "current_import_period")["windows"] == ["00:00-24:00 off_peak"]
-    assert _state(hass, "next_season_change") == "2027-01-01"
+    assert _state(hass, "next_pricing_season_change") == "2027-01-01"
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -872,12 +872,11 @@ async def test_entity_categories(
     assert diagnostic == {
         "icp",
         "network",
-        "price_category",
+        "pricing_category",
         "meter",
         "registered_generation_capacity",
         "plan",
-        "season",
-        "next_season_change",
+        "pricing_season",
         "last_meter_reading",
         "last_data_sync",
     }

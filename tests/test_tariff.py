@@ -7,15 +7,18 @@ check the integration against the website rather than against itself.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.ecotricity_nz.api import Plan, Rate, RateUnit
 from custom_components.ecotricity_nz.api.parsers import parse_plan_list
 from custom_components.ecotricity_nz.tariff import (
+    SLOTS_PER_DAY,
     SlotMap,
     TouPeriod,
+    next_bucket_change,
     period_for_bucket,
     price_day,
     resolve_bucket,
@@ -23,6 +26,7 @@ from custom_components.ecotricity_nz.tariff import (
 )
 from tests.conftest import load_json_fixture
 
+NZ = ZoneInfo("Pacific/Auckland")
 WINTER = date(2026, 6, 15)
 SPRING = date(2026, 10, 15)
 
@@ -192,3 +196,38 @@ def test_shoulder_rates() -> None:
         "CHARGE_HIGH": pytest.approx(30.0),
     }
     assert period_for_bucket("CHARGE_3") is TouPeriod.SHOULDER
+
+
+def _peak_slots(*peak: int) -> SlotMap:
+    slots = tuple("CHARGE_HIGH" if slot in peak else "CHARGE_LOW" for slot in range(SLOTS_PER_DAY))
+    return SlotMap(weekday=slots, weekend=slots)
+
+
+@pytest.mark.parametrize(
+    "now",
+    [
+        datetime(2026, 4, 4, 13, 45, tzinfo=UTC),
+        # The same instant as a local time: stepping must not use wall-clock arithmetic.
+        datetime(2026, 4, 5, 2, 45, tzinfo=NZ),
+    ],
+)
+def test_next_bucket_change_in_repeated_hour(now: datetime) -> None:
+    # Peak from 02:00 to 02:30 happens twice the night daylight saving ends. At the first 02:45
+    # the next change is the second 02:00, not the following night.
+    assert next_bucket_change(_peak_slots(4), now, NZ) == (
+        datetime(2026, 4, 4, 14, 0, tzinfo=UTC),
+        "CHARGE_HIGH",
+    )
+
+
+def test_next_bucket_change_across_skipped_hour() -> None:
+    # Peak from 02:00 to 04:00 starts at 03:00 the night daylight saving starts.
+    now = datetime(2026, 9, 27, 1, 15, tzinfo=NZ)
+    assert next_bucket_change(_peak_slots(4, 5, 6, 7), now, NZ) == (
+        datetime(2026, 9, 27, 3, 0, tzinfo=NZ),
+        "CHARGE_HIGH",
+    )
+    # And ends at 04:00, an hour later rather than two.
+    assert next_bucket_change(
+        _peak_slots(4, 5, 6, 7), datetime(2026, 9, 27, 3, 0, tzinfo=NZ), NZ
+    ) == (datetime(2026, 9, 27, 4, 0, tzinfo=NZ), "CHARGE_LOW")

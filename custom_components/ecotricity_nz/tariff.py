@@ -16,7 +16,7 @@ Everything here is in cents excluding GST. This module has no Home Assistant imp
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -331,8 +331,10 @@ def next_bucket_change(
     """Return when the bucket next changes, and the bucket it changes to.
 
     Steps through half-hour boundaries for up to a week. Stops at `until` (the next season
-    change), after which these slots may no longer apply.
+    change), after which these slots may no longer apply. Steps are counted in UTC, so the hour
+    skipped when daylight saving starts is skipped and the repeated one is visited twice.
     """
+    now = now.astimezone(UTC)
     current = slots.bucket_at(now.astimezone(tz))
     boundary = now.replace(minute=0, second=0, microsecond=0) + timedelta(
         minutes=30 if now.minute < HALF_HOUR else 60

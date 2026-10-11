@@ -115,8 +115,8 @@ sequenceDiagram
     P-->>C: data range, last import time
     C->>R: last imported import/export hour
     R-->>C: hour and running sum (or nothing on first run)
-    Note over C: resume = hour after the last one,<br/>or the start of the portal's data
-    loop 7-day chunks up to the end of the data
+    Note over C: resume = hour after the last one,<br/>or the start of the portal's data,<br/>rounded back to NZ midnight
+    loop 7-day chunks, midnight to midnight, up to the end of the data
         C->>P: half-hourly readings (analysis/valueRequest)
         P-->>C: import, export, carbon
         C->>C: sum hours, stopping at a recent gap
@@ -128,7 +128,7 @@ sequenceDiagram
 
 Portal data arrives a day or two late, so recording it as sensor state would put every reading at the wrong time. Instead the readings become external statistics (`ecotricity_nz:<icp>_energy_import`, `_energy_export` and `_carbon_savings`), which carry their own timestamps and plug straight into the Energy dashboard.
 
-The last imported hour of each statistic is its checkpoint, and each sync continues from the earliest of them, so a statistic added later catches up on the full history. Only the series the portal says it holds are tracked, so an ICP with no export never forces a full re-read. If the portal lists a series but returns no readings for it, the coordinator remembers how far it has read that series, so it's read in full once per Home Assistant start rather than on every sync. Each chunk is written as soon as it's fetched, so an interrupted backfill carries on from where it stopped on the next run. Because the checkpoint never moves backwards, the import stops at the first hour that's missing or short of a half-hour, and later hours wait until the portal fills it in. That keeps the running sum complete. A gap more than seven days older than the portal's latest data is treated as settled and imported as it stands, so a reading the portal never supplies can't hold up everything after it.
+The last imported hour of each statistic is its checkpoint, and each sync continues from the earliest of them, so a statistic added later catches up on the full history. Only the series the portal says it holds are tracked, so an ICP with no export never forces a full re-read. If the portal lists a series but returns no readings for it, the coordinator remembers how far it has read that series, so it's read in full once per Home Assistant start rather than on every sync. Requests always start and end at NZ midnight, even when resuming partway through a day, and hours already imported are skipped. Midnight never falls inside a daylight saving change, so every response starts with an hour whose occurrence is known, and no hour is split between two chunks. Each chunk is written as soon as it's fetched, so an interrupted backfill carries on from where it stopped on the next run. Because the checkpoint never moves backwards, the import stops at the first hour that's missing or short of a half-hour, and later hours wait until the portal fills it in. That keeps the running sum complete. A gap more than seven days older than the portal's latest data is treated as settled and imported as it stands, so a reading the portal never supplies can't hold up everything after it.
 
 The coordinator always fetches the last complete day, even when it's already imported, to fill the "last day" sensors.
 

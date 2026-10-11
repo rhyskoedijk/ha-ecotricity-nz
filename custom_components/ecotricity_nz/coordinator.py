@@ -430,14 +430,17 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             ),
             default=indicator.data_start,
         )
-        # Always fetch the last complete day too, for the daily summary sensors.
-        fetch_start = max(indicator.data_start, min(resume, last_day_start))
+        # Always fetch the last complete day too, for the daily summary sensors. Requests start
+        # and end at NZ midnight: a response starting partway through the hour repeated when
+        # daylight saving ends can't be placed on the right occurrence of it, and a chunk ending
+        # mid-hour would split that hour's readings. Hours already imported are skipped.
+        fetch_start = max(indicator.data_start, self._local_midnight(min(resume, last_day_start)))
 
         hours_imported = 0
         last_day: list[ConsumptionData] = []
         chunk_start = fetch_start
         while chunk_start < data_end:
-            chunk_end = min(chunk_start + CONSUMPTION_CHUNK, data_end)
+            chunk_end = min(self._local_midnight(chunk_start, CONSUMPTION_CHUNK.days), data_end)
             data = await self._portal.async_get_half_hourly(chunk_start, chunk_end)
             for series, readings in (
                 (IMPORT, data.imported_kwh),
@@ -468,9 +471,10 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             LOGGER.debug("Imported %s hours of consumption", hours_imported)
         return self._summarise(indicator, last_day, last_day_start, data_end, hours_imported)
 
-    def _local_midnight(self, instant: datetime) -> datetime:
-        local = instant.astimezone(self._local_tz)
-        return datetime.combine(local.date(), datetime.min.time(), self._local_tz)
+    def _local_midnight(self, instant: datetime, days_later: int = 0) -> datetime:
+        """Return the NZ midnight starting the instant's day, or a number of days after it."""
+        day = instant.astimezone(self._local_tz).date() + timedelta(days=days_later)
+        return datetime.combine(day, time.min, self._local_tz)
 
     def _summarise(
         self,

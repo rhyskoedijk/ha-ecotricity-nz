@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -1144,6 +1144,45 @@ async def test_recent_gap_holds_back_the_import_until_filled(
     await portal_config_entry.runtime_data.consumption.async_refresh()
     await hass.async_block_till_done()
     await async_wait_recording_done(hass)
+    stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
+    assert stats["sum"] == pytest.approx(37.25)
+    assert datetime.fromtimestamp(stats["start"], UTC) == datetime(2026, 4, 5, 11, 0, tzinfo=UTC)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_requests_start_at_nz_midnight(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Resuming within the repeated daylight-saving hour still fetches from the day's start.
+
+    A response starting partway through that hour can't be placed on the right occurrence of it.
+    """
+    freezer.move_to(WINTER_PEAK)
+    indicator = mock_portal.async_get_indicator.return_value
+    mock_portal.async_get_indicator.return_value = replace(
+        indicator, data_end=datetime(2026, 4, 7, 0, 0, tzinfo=NZ)
+    )
+    # 14:30 UTC is the second 02:30 that night, so the import stops after the first 02:00 hour.
+    dropping = _drop_import_reading(mock_portal, datetime(2026, 4, 4, 14, 30, tzinfo=UTC))
+    await _setup(hass, portal_config_entry)
+    await async_wait_recording_done(hass)
+    stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
+    assert datetime.fromtimestamp(stats["start"], UTC) == datetime(2026, 4, 4, 13, 0, tzinfo=UTC)
+
+    dropping[0] = False
+    calls = mock_portal.async_get_half_hourly.await_count
+    await portal_config_entry.runtime_data.consumption.async_refresh()
+    await hass.async_block_till_done()
+    await async_wait_recording_done(hass)
+
+    requests = mock_portal.async_get_half_hourly.await_args_list[calls:]
+    assert requests[0].args[0] == datetime(2026, 4, 5, 0, 0, tzinfo=NZ)
+    for request in requests:
+        for bound in request.args:
+            assert bound.astimezone(NZ).time() == time(0, 0)
     stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
     assert stats["sum"] == pytest.approx(37.25)
     assert datetime.fromtimestamp(stats["start"], UTC) == datetime(2026, 4, 5, 11, 0, tzinfo=UTC)

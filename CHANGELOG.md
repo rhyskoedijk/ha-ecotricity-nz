@@ -17,3 +17,4 @@ First version.
 - Rate sensors for periods a season doesn't price separately show the price actually charged instead of unknown
 - Reauthentication, reconfiguration, diagnostics and repair issues
 - Integration icon and logo, shown in Home Assistant's integration list and setup screens
+- Daylight saving changes are handled in the consumption statistics and the next period change times

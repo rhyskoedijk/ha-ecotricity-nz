@@ -181,6 +181,86 @@ def test_parse_values_skips_bad_items() -> None:
         parse_values([], NZ)
 
 
+def _import_payload(*periods: tuple[str, str]) -> dict[str, object]:
+    """Return a valueRequest response with one import reading per (from, to) wall-clock pair."""
+    return {
+        "indicatorValueResponses": [
+            {
+                "featureValueResponses": [
+                    {
+                        "featureID": "POWER_ACTIVE_PURCHASE_CONSUMPTION",
+                        "values": [
+                            {"value": 1.0, "measuringPeriod": {start: end}}
+                            for start, end in periods
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "gap_end",
+    [
+        # Wall-clock arithmetic gives a time that never happened.
+        "2026-09-27T02:00:00.000+02:00",
+        # The true local end.
+        "2026-09-27T03:00:00.000+02:00",
+    ],
+)
+def test_parse_values_across_dst_start(gap_end: str) -> None:
+    # Clocks go from 02:00 to 03:00, so the 01:30 reading ends in the skipped hour. It's kept,
+    # or the 01:00 hour would be half-filled and hold back the statistics import.
+    payload = _import_payload(
+        ("2026-09-27T01:00:00.000+02:00", "2026-09-27T01:30:00.000+02:00"),
+        ("2026-09-27T01:30:00.000+02:00", gap_end),
+        ("2026-09-27T03:00:00.000+02:00", "2026-09-27T03:30:00.000+02:00"),
+    )
+    readings = parse_values(payload, NZ).imported_kwh
+
+    assert [(r.start, r.end) for r in readings] == [
+        (datetime(2026, 9, 26, 13, 0, tzinfo=UTC), datetime(2026, 9, 26, 13, 30, tzinfo=UTC)),
+        (datetime(2026, 9, 26, 13, 30, tzinfo=UTC), datetime(2026, 9, 26, 14, 0, tzinfo=UTC)),
+        (datetime(2026, 9, 26, 14, 0, tzinfo=UTC), datetime(2026, 9, 26, 14, 30, tzinfo=UTC)),
+    ]
+
+
+def test_parse_values_end_before_start_takes_half_an_hour() -> None:
+    # The second 02:30 can't end at either 02:00, so it's given the usual reading length.
+    payload = _import_payload(
+        ("2026-04-05T02:30:00.000+02:00", "2026-04-05T02:00:00.000+02:00"),
+        ("2026-04-05T02:30:00.000+02:00", "2026-04-05T02:00:00.000+02:00"),
+    )
+    readings = parse_values(payload, NZ).imported_kwh
+
+    assert [(r.start, r.end) for r in readings] == [
+        (datetime(2026, 4, 4, 13, 30, tzinfo=UTC), datetime(2026, 4, 4, 14, 0, tzinfo=UTC)),
+        (datetime(2026, 4, 4, 14, 30, tzinfo=UTC), datetime(2026, 4, 4, 15, 0, tzinfo=UTC)),
+    ]
+
+
+def test_parse_indicator_range_ending_in_skipped_hour() -> None:
+    payload = {
+        "currentIndicator": {
+            "indicatorID": "ind",
+            "features": {
+                "POWER_ACTIVE_PURCHASE_CONSUMPTION": [
+                    {
+                        "measuredValueRange": {
+                            "2026-09-01T00:00:00.000+02:00": "2026-09-27T02:00:00.000+02:00"
+                        }
+                    }
+                ]
+            },
+        }
+    }
+    indicator = parse_indicator(payload, NZ)
+
+    assert indicator.data_start == datetime(2026, 9, 1, 0, 0, tzinfo=NZ)
+    assert indicator.data_end == datetime(2026, 9, 27, 3, 0, tzinfo=NZ)
+
+
 def test_parse_indicator() -> None:
     indicator = parse_indicator(load_json_fixture("portal_init_data.json"), NZ)
 

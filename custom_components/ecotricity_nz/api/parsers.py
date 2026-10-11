@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
 
 from .exceptions import EcotricityResponseError, IcpNotFoundError
@@ -23,6 +23,8 @@ from .models import (
 FEATURE_IMPORT = "POWER_ACTIVE_PURCHASE_CONSUMPTION"
 FEATURE_EXPORT = "POWER_ACTIVE_SUPPLY_CONSUMPTION"
 FEATURE_CARBON = "EMISSION|POWER_ACTIVE_PURCHASE_CONSUMPTION|Carbon Savings"
+# The length assumed for a reading whose end time can't be placed.
+READING_LENGTH = timedelta(minutes=30)
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -279,6 +281,29 @@ def _range_bounds(value: Any) -> tuple[str, str] | None:
     return None
 
 
+def _localise_range(
+    bounds: tuple[str, str], tz: tzinfo, after: datetime | None = None
+) -> tuple[datetime, datetime] | None:
+    """Return a portal range as UTC instants, or None if its start doesn't exist locally.
+
+    The portal works out end times with wall-clock arithmetic, so the reading before the hour
+    skipped when daylight saving starts ends at a time that never happened (01:30 to 02:00), and
+    the one before the repeated hour when it ends goes backwards (02:30 to 02:00). The end is
+    placed after the start, and when it can't be it's taken as the same wall-clock length on from
+    the start.
+    """
+    naive_start = portal_wall_time(bounds[0])
+    naive_end = portal_wall_time(bounds[1])
+    start = localise_wall_time(naive_start, tz, after)
+    if start is None:
+        return None
+    end = localise_wall_time(naive_end, tz, start)
+    if end is None:
+        length = naive_end - naive_start
+        end = start + (length if length > timedelta(0) else READING_LENGTH)
+    return start, end
+
+
 def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
     """Parse a portal analysis/initData response."""
     if not isinstance(payload, dict) or not isinstance(payload.get("currentIndicator"), dict):
@@ -297,12 +322,9 @@ def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
             if bounds is None:
                 continue
             features.add(str(feature))
-            start = localise_wall_time(portal_wall_time(bounds[0]), tz)
-            end = localise_wall_time(portal_wall_time(bounds[1]), tz)
-            if start is not None:
-                starts.append(start)
-            if end is not None:
-                ends.append(end)
+            if (localised := _localise_range(bounds, tz)) is not None:
+                starts.append(localised[0])
+                ends.append(localised[1])
 
     last_import: datetime | None = None
     if text := indicator.get("lastImportDate"):
@@ -326,12 +348,10 @@ def _parse_feature_values(values: Any, tz: tzinfo) -> tuple[IntervalReading, ...
         value = item.get("value")
         if bounds is None or not isinstance(value, int | float):
             continue
-        start = localise_wall_time(portal_wall_time(bounds[0]), tz, last_start)
-        if start is None:
+        localised = _localise_range(bounds, tz, last_start)
+        if localised is None:
             continue
-        end = localise_wall_time(portal_wall_time(bounds[1]), tz, start)
-        if end is None:
-            continue
+        start, end = localised
         readings.append(IntervalReading(start=start, end=end, value=float(value)))
         last_start = start
     return tuple(readings)

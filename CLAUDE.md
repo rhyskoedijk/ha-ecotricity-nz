@@ -75,7 +75,8 @@ See `docs/architecture.md` for diagrams and `docs/api.md` for the services.
 - Show plans with `Plan.name` (the customer-facing title, falling back to the internal description); match against the API with `Plan.description`.
 - Rates are grouped by bucket prefix: none for general import, `EG_` for export, `CN_` for controlled load (registry register code `CN`). Keep the groups apart; controlled-load sensors are only created when the plan has controlled rates. Controlled-load handling is unverified against real data (see `docs/api.md`).
 - Prices stay in cents excluding GST everywhere; only `sensor.py` converts to NZD. GST is added to import prices and daily charges only, never to export credits (residential customers who aren't GST-registered are paid the published rate).
-- Portal timestamps are NZ wall-clock times labelled with a Europe/Berlin offset. Parse them only with `portal_wall_time` and `localise_wall_time`.
+- Portal timestamps are NZ wall-clock times labelled with a Europe/Berlin offset. Parse them only with `portal_wall_time` and `localise_wall_time` (ranges go through `_localise_range`, which copes with end times that don't exist). Portal requests must start and end at NZ midnight, or readings in the hour repeated when daylight saving ends can land on the wrong occurrence.
+- Do time arithmetic on UTC datetimes. Adding a `timedelta` to a datetime with a `ZoneInfo` attached does wall-clock arithmetic, which goes wrong across daylight saving changes.
 - Entity unique IDs (`{icp}_{key}`) and statistic IDs (`ecotricity_nz:{icp}_energy_import`, `_energy_export` and `_carbon_savings`, ICP in lower case) are permanent. Changing them breaks users' history, so don't, unless you add a migration.
 - If the config entry's data or options change shape, bump `VERSION` in `config_flow.py` and add `async_migrate_entry`.
 - Config flow schemas use `probatio` (Home Assistant's voluptuous-compatible replacement), not `voluptuous`.

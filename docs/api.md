@@ -143,13 +143,15 @@ All are called with `X-Requested-With: XMLHttpRequest`.
 
 Every portal timestamp carries a `+02:00` or `+01:00` offset, which is Europe/Berlin (the server's zone), but the wall-clock part is New Zealand time. Solar export appears between 08:30 and 17:00 on those timestamps; as true Berlin times that would be the middle of the night in NZ.
 
-So the offset is discarded and the wall-clock time is read as `Pacific/Auckland`. Request ranges are sent the way the web app sends them: NZ wall-clock time with the Berlin offset for that date attached.
+So the offset is discarded and the wall-clock time is read as `Pacific/Auckland`. Request ranges are sent the way the web app sends them: NZ wall-clock time with the Berlin offset for that date attached. The integration only asks for ranges that start and end at NZ midnight.
 
-When NZ daylight saving ends, the wall-clock hour from 2am to 3am happens twice. The parser assigns the second occurrence to the later fold, so readings keep moving forward. A capture of a real daylight-saving-end day hasn't been checked yet.
+When NZ daylight saving ends, the wall-clock hour from 2am to 3am happens twice. The parser assigns the second occurrence to the later fold, so readings keep moving forward. That only works when a response starts before the repeated hour, which is one reason requests start at midnight. The fixture for that day shows the portal works out end times with wall-clock arithmetic: the first 02:30 reading ends at "02:00".
+
+When daylight saving starts, 2am to 3am is skipped. The same arithmetic would label the 01:30 reading as ending at 02:00, a time that never happened, so an end time that doesn't exist (or isn't after the start) is replaced by the start plus the reading's wall-clock length, or half an hour. A reading whose start doesn't exist is dropped. Neither daylight saving change has been checked against a real capture yet.
 
 ## Unknowns
 
 - The longest range one `valueRequest` accepts at half-hourly resolution. The integration asks for seven days at a time.
 - How long a portal session lasts.
-- What the portal returns for the hour repeated when daylight saving ends.
+- What the portal returns for the hour repeated when daylight saving ends, and for the hour skipped when it starts.
 - Whether weekend charts ever differ from weekday charts on networks that charge peak rates at weekends. The integration always fetches both.

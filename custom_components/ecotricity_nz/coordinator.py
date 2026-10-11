@@ -48,6 +48,7 @@ from .statistics import (
     CARBON,
     EXPORT,
     IMPORT,
+    Series,
     async_import_hours,
     async_last_point,
     hourly_totals,
@@ -329,6 +330,8 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         )
         self._portal = portal
         self._local_tz = local_tz
+        # How far each series has been read this session, for series with no statistic yet.
+        self._scanned_until: dict[Series, datetime] = {}
 
     @property
     def icp(self) -> str:
@@ -368,13 +371,18 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         data_end = indicator.data_end
         last_day_start = self._local_midnight(data_end - timedelta(seconds=1))
         # Continue from the earliest last-imported hour, so a series added later (or one that
-        # fell behind) catches up. Hours already imported are skipped.
+        # fell behind) catches up. Hours already imported are skipped. A series with no
+        # statistic yet is read from the start, unless this session has already read it to the
+        # end and found nothing, so a series that never has readings isn't re-read every day.
         resume = min(
-            (point.start + timedelta(hours=1) for point in last_points.values() if point),
+            (
+                point.start + timedelta(hours=1)
+                if point is not None
+                else self._scanned_until.get(series, indicator.data_start)
+                for series, point in last_points.items()
+            ),
             default=indicator.data_start,
         )
-        if any(point is None for point in last_points.values()):
-            resume = indicator.data_start
         # Always fetch the last complete day too, for the daily summary sensors.
         fetch_start = max(indicator.data_start, min(resume, last_day_start))
 
@@ -401,6 +409,8 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             chunk_start = chunk_end
             if chunk_start < data_end:
                 await asyncio.sleep(BACKFILL_PAUSE_SECONDS)
+        for series in held:
+            self._scanned_until[series] = data_end
 
         if hours_imported:
             LOGGER.debug("Imported %s hours of consumption", hours_imported)

@@ -964,3 +964,41 @@ async def _stats(hass: HomeAssistant, stat_id: str) -> list[dict[str, float]]:
         get_last_statistics, hass, 1, stat_id, True, {"sum"}
     )
     return result.get(stat_id, [])
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_series_listed_without_readings_is_not_reread(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The portal lists an export series with a data range but never returns readings for it.
+    freezer.move_to(WINTER_PEAK)
+    indicator = mock_portal.async_get_indicator.return_value
+    mock_portal.async_get_indicator.return_value = replace(
+        indicator,
+        data_start=datetime(2026, 3, 1, 0, 0, tzinfo=NZ),
+        features=frozenset(
+            {"POWER_ACTIVE_PURCHASE_CONSUMPTION", "POWER_ACTIVE_SUPPLY_CONSUMPTION"}
+        ),
+    )
+    half_hourly = mock_portal.async_get_half_hourly.side_effect
+
+    async def without_export(start: datetime, end: datetime) -> Any:
+        return replace(await half_hourly(start, end), exported_kwh=())
+
+    mock_portal.async_get_half_hourly.side_effect = without_export
+    await _setup(hass, portal_config_entry)
+    await async_wait_recording_done(hass)
+    assert not await _stats(hass, statistic_id(TEST_ICP, EXPORT))
+    first_start, _ = mock_portal.async_get_half_hourly.await_args_list[0].args
+    assert first_start == datetime(2026, 3, 1, 0, 0, tzinfo=NZ)
+    calls = mock_portal.async_get_half_hourly.await_count
+
+    # The next sync only fetches the latest day, not the whole history again.
+    await portal_config_entry.runtime_data.consumption.async_refresh()
+    await hass.async_block_till_done()
+    start, _ = mock_portal.async_get_half_hourly.await_args.args
+    assert mock_portal.async_get_half_hourly.await_count == calls + 1
+    assert start == datetime(2026, 4, 5, 0, 0, tzinfo=NZ)

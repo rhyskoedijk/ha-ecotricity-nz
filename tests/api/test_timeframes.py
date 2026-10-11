@@ -84,8 +84,56 @@ def test_read_flat_chart_with_unused_bucket() -> None:
 
     [tier] = reading.import_tiers
     assert tier.slots == ALL_SLOTS
-    assert match_tiers(reading.import_tiers, {"CHARGE_HIGH": 30.0, "CHARGE_24": 24.57}) == (
-        ("CHARGE_24",) * SLOTS_PER_DAY
+    import_prices = {"CHARGE_HIGH": 30.0, "CHARGE_24": 24.57}
+    # One tier fits either price, so the export bars on the same axis (legend -13.74c) settle it.
+    with pytest.raises(ChartReadError, match="more than one"):
+        match_tiers(reading.import_tiers, import_prices)
+    assert match_tiers(
+        reading.import_tiers,
+        import_prices,
+        other_tiers=reading.export_tiers,
+        other_prices={"EG_CHARGE_24": -13.74},
+    ) == (("CHARGE_24",) * SLOTS_PER_DAY)
+
+
+def test_single_tier_is_not_assumed_cheapest() -> None:
+    # 30c, 22c and 15c all fit one tier on their own; the export side pins the scale to 10px/c.
+    tier = ChartTier(colour=(0, 0, 255), height=300, slots=frozenset(range(SLOTS_PER_DAY)))
+    export = ChartTier(colour=(255, 128, 0), height=100, slots=frozenset(range(SLOTS_PER_DAY)))
+    prices = {"CHARGE_LOW": 15.0, "CHARGE_3": 22.0, "CHARGE_HIGH": 30.0}
+
+    with pytest.raises(ChartReadError, match="more than one"):
+        match_tiers((tier,), prices)
+    assert match_tiers(
+        (tier,), prices, other_tiers=(export,), other_prices={"EG_CHARGE_24": -10.0}
+    ) == (("CHARGE_HIGH",) * SLOTS_PER_DAY)
+
+
+def test_ambiguous_ratio_rejected() -> None:
+    # Heights 2:1 against 40c, 20c and 10c fit peak and shoulder as well as shoulder and off-peak.
+    tall = ChartTier(colour=(0, 0, 255), height=200, slots=frozenset(range(24)))
+    short = ChartTier(colour=(0, 0, 128), height=100, slots=frozenset(range(24, SLOTS_PER_DAY)))
+    prices = {"CHARGE_LOW": 10.0, "CHARGE_3": 20.0, "CHARGE_HIGH": 40.0}
+    export = ChartTier(colour=(255, 128, 0), height=50, slots=frozenset(range(SLOTS_PER_DAY)))
+
+    with pytest.raises(ChartReadError, match="more than one"):
+        match_tiers((tall, short), prices)
+    # An export side that fits both scales doesn't help.
+    with pytest.raises(ChartReadError, match="more than one"):
+        match_tiers(
+            (tall, short),
+            prices,
+            other_tiers=(export,),
+            other_prices={"EG_CHARGE_LOW": -5.0, "EG_CHARGE_HIGH": -10.0},
+        )
+    # Prices without export bars don't either.
+    with pytest.raises(ChartReadError, match="more than one"):
+        match_tiers((tall, short), prices, other_prices={"EG_CHARGE_24": -5.0})
+    assert (
+        match_tiers(
+            (tall, short), prices, other_tiers=(export,), other_prices={"EG_CHARGE_24": -5.0}
+        )
+        == ("CHARGE_3",) * 24 + ("CHARGE_LOW",) * 24
     )
 
 

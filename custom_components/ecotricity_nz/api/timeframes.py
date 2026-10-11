@@ -241,34 +241,65 @@ def _fit(
     return worst, assignment
 
 
+def _anchor_scales(tiers: Sequence[ChartTier], candidates: Mapping[str, float]) -> list[float]:
+    """Return the pixels-per-cent scales that put the tallest tier on each bucket price."""
+    if not tiers:
+        return []
+    tallest = max(tier.height for tier in tiers)
+    return [tallest / price for price in sorted(set(candidates.values()))]
+
+
+def _usage_prices(bucket_prices: Mapping[str, float]) -> dict[str, float]:
+    return {bucket: abs(price) for bucket, price in bucket_prices.items() if price}
+
+
 def match_tiers(
     tiers: Sequence[ChartTier],
     bucket_prices: Mapping[str, float],
     *,
+    other_tiers: Sequence[ChartTier] = (),
+    other_prices: Mapping[str, float] | None = None,
     tolerance: float = 0.6,
 ) -> tuple[str, ...]:
     """Return the charge bucket for each half-hour slot.
 
     Bar height is proportional to the absolute price, but the pixels-per-cent scale differs
-    between charts. Each candidate bucket is tried as the anchor for the tallest tier; the scale
-    that lets every tier land within `tolerance` cents of a bucket price wins. When several buckets
+    between charts. Each candidate bucket is tried as the anchor for the tallest tier; a scale
+    fits when every tier lands within `tolerance` cents of a bucket price. When several buckets
     share a price, the first one in `bucket_prices` order is used.
+
+    A chart with few tiers can fit more than one scale (a single tier fits every price). Import
+    and export bars share one axis, so the other side's tiers and prices (`other_tiers` and
+    `other_prices`) are used to rule out scales they don't fit. If the slots still can't be
+    settled, the chart is rejected rather than guessed.
     """
     if not tiers:
         raise ChartReadError("Chart has no tiers to match")
-    candidates = {bucket: abs(price) for bucket, price in bucket_prices.items() if price}
+    candidates = _usage_prices(bucket_prices)
     if not candidates:
         raise ChartReadError("Plan has no usage prices to match against")
 
-    tallest = max(tiers, key=lambda tier: tier.height)
     fits = [
-        fit
-        for anchor_price in sorted(set(candidates.values()))
-        if (fit := _fit(tiers, candidates, tallest.height / anchor_price, tolerance)) is not None
+        (scale, fit)
+        for scale in _anchor_scales(tiers, candidates)
+        if (fit := _fit(tiers, candidates, scale, tolerance)) is not None
     ]
     if not fits:
         raise ChartReadError("Chart bar heights don't match the plan's prices")
-    best = min(fits, key=lambda fit: fit[0])
+    if len({frozenset(fit[1].items()) for _, fit in fits}) > 1:
+        other_candidates = _usage_prices(other_prices or {})
+        scales = _anchor_scales(tiers, candidates) + _anchor_scales(other_tiers, other_candidates)
+        fits = [
+            (scale, fit)
+            for scale in scales
+            if other_tiers
+            and other_candidates
+            and _fit(other_tiers, other_candidates, scale, tolerance) is not None
+            and (fit := _fit(tiers, candidates, scale, tolerance)) is not None
+        ]
+        if len({frozenset(fit[1].items()) for _, fit in fits}) != 1:
+            raise ChartReadError("Chart bar heights fit more than one set of the plan's prices")
+    best = min((fit for _, fit in fits), key=lambda fit: fit[0])
 
     slots: list[str | None] = [None] * SLOTS_PER_DAY
     for tier, bucket in best[1].items():

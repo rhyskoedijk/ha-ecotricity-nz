@@ -114,7 +114,7 @@ automation:
 
 ## Known limitations
 
-- Ecotricity publishes the peak and off-peak hours only as chart images. The integration reads the bars on those charts and checks them against the plan's prices. If a chart can't be read, the current price and period sensors become unavailable and a repair notice appears. Import and export are checked separately, so if only the export bars don't match, the import sensors keep working.
+- Ecotricity publishes the peak and off-peak hours only as chart images. The integration reads the bars on those charts and checks them against the plan's prices. If the bars could match more than one set of prices, the chart is treated as unreadable rather than guessed. If a chart can't be read, the current price and period sensors become unavailable and a repair notice appears. Import and export are checked separately, so if only the export bars don't match, the import sensors keep working.
 - Ecotricity's charts only cover weekdays and weekends, so public holidays are priced like any other day of the week. If your network charges public holidays at off-peak rates, the current price on those days may show the weekday rate.
 - Only residential plans are supported.
 - Controlled-load support is based on Ecotricity's site code and the electricity registry's codes, not yet on a real controlled-load ICP. If your controlled-load prices look wrong, please open an issue with your diagnostics.

@@ -77,6 +77,24 @@ MAX_CACHED_CHARTS = 4
 CHART_MAX_AGE = timedelta(hours=23)
 
 
+def _match_import(chart: ChartReading, pricing: DayPricing) -> tuple[str, ...]:
+    return match_tiers(
+        chart.import_tiers,
+        pricing.import_buckets,
+        other_tiers=chart.export_tiers,
+        other_prices=pricing.export_buckets,
+    )
+
+
+def _match_export(chart: ChartReading, pricing: DayPricing) -> tuple[str, ...]:
+    return match_tiers(
+        chart.export_tiers,
+        pricing.export_buckets,
+        other_tiers=chart.import_tiers,
+        other_prices=pricing.import_buckets,
+    )
+
+
 @dataclass(slots=True)
 class EcotricityRuntimeData:
     """Objects shared by the platforms of a config entry."""
@@ -269,20 +287,21 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         except (ChartReadError, EcotricityError) as err:
             errors.append(str(err))
         else:
-            # Match import and export separately, so a problem with one keeps the other.
+            # Match import and export separately, so a problem with one keeps the other. Each
+            # side only looks at the other to settle a chart its own bars can't.
             if need_import:
                 try:
                     import_slots = SlotMap(
-                        weekday=match_tiers(weekday.import_tiers, pricing.import_buckets),
-                        weekend=match_tiers(weekend.import_tiers, pricing.import_buckets),
+                        weekday=_match_import(weekday, pricing),
+                        weekend=_match_import(weekend, pricing),
                     )
                 except ChartReadError as err:
                     errors.append(f"Import: {err}")
             if need_export:
                 try:
                     export_slots = SlotMap(
-                        weekday=match_tiers(weekday.export_tiers, pricing.export_buckets),
-                        weekend=match_tiers(weekend.export_tiers, pricing.export_buckets),
+                        weekday=_match_export(weekday, pricing),
+                        weekend=_match_export(weekend, pricing),
                     )
                 except ChartReadError as err:
                     errors.append(f"Export: {err}")

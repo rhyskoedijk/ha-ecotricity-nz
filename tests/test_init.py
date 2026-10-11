@@ -231,6 +231,25 @@ async def test_setup_retries_on_errors(
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
+async def test_options_flow_while_setup_is_retrying(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_onboarding: MagicMock
+) -> None:
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+    config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+    # Plans aren't known, so only the GST option is offered, and the chosen plan is kept.
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    assert list(result["data_schema"].schema) == [CONF_INCLUDE_GST]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_INCLUDE_GST: False}
+    )
+    await hass.async_block_till_done()
+
+    assert config_entry.options == {CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
+
+
 async def test_repeated_attestation_failures_raise_issue(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,

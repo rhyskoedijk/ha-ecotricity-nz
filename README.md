@@ -53,7 +53,7 @@ Leave the login blank to skip usage data. Next you'll choose your plan from the 
 Options (the cog on the integration):
 
 - **Include GST in prices**: on by default.
-- **Plan**: the plan your ICP is on. Change it here if you switch plans.
+- **Plan**: the plan your ICP is on. Change it here if you switch plans. It's only offered while the integration is running, because the list of plans comes from Ecotricity.
 
 To change or remove the portal login later, use **Reconfigure** on the integration. If the portal starts rejecting the saved login, Home Assistant will ask you to sign in again.
 

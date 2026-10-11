@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import probatio
 from homeassistant.config_entries import (
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlowWithReload,
@@ -273,17 +274,19 @@ class EcotricityOptionsFlow(OptionsFlowWithReload):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
-        if user_input is not None:
-            return self.async_create_entry(data=user_input)
-
         entry: EcotricityConfigEntry = self.config_entry
+        if user_input is not None:
+            # Keep the plan when it wasn't offered (the entry isn't loaded, so plans are unknown).
+            return self.async_create_entry(data={**entry.options, **user_input})
+
         schema: dict[probatio.Marker, Any] = {
             probatio.Required(
                 CONF_INCLUDE_GST,
                 default=entry.options.get(CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST),
             ): bool,
         }
-        data = entry.runtime_data.pricing.data
+        # Plans come from the running coordinator, which only exists while the entry is loaded.
+        data = entry.runtime_data.pricing.data if entry.state is ConfigEntryState.LOADED else None
         if data is not None:
             schema[
                 probatio.Required(

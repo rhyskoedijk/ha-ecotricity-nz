@@ -16,7 +16,7 @@ The portal login is optional. Without it, the integration never sees your accoun
 
 - In logs, at any level, including debug logging. The integration never logs them, and a test (`tests/test_init.py`, `test_credentials_never_logged`) checks this with debug logging on and the portal failing.
 - In error messages, repair notices or sensor attributes.
-- In diagnostics downloads. The account number, password, ICP number, address, meter serial numbers and portal identifiers are replaced with `**REDACTED**` (`custom_components/ecotricity_nz/diagnostics.py`).
+- In diagnostics downloads. The account number, password, ICP number, address and region, meter serial numbers and portal identifiers are replaced with `**REDACTED**` (`custom_components/ecotricity_nz/diagnostics.py`).
 - In setup and reconfigure forms. The password field is masked, and it's never filled in for you.
 
 **Removing them.** Use **Reconfigure** on the integration and clear both fields, or delete the integration. Either way the credentials are removed from the config entry. They'll stay in any backups made before that.

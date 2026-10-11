@@ -32,5 +32,10 @@ async def test_diagnostics_redact_personal_data(
 
     assert diagnostics["pricing"]["plan"]["description"] == "Low User"
     assert diagnostics["pricing"]["import_slots"] is not None
+    # Registry details are kept; only the identifying fields inside them are redacted.
+    details = diagnostics["pricing"]["icp_details"]
+    assert details["network_code"] == "EXLN"
+    assert details["icp"] == "**REDACTED**"
+    assert details["address"] == "**REDACTED**"
     for secret in (TEST_ICP, "123456", "secret", "Example Road", "900000001", "100001"):
         assert secret not in text

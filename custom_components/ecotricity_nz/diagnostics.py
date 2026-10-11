@@ -19,6 +19,7 @@ TO_REDACT = {
     CONF_PASSWORD,
     CONF_ICP,
     "address",
+    "region",
     "serial_number",
     "indicator_id",
     "display_name",
@@ -39,7 +40,8 @@ async def async_get_config_entry_diagnostics(
         {
             "entry": entry.as_dict(),
             "pricing": {
-                "icp": asdict(pricing.icp),
+                # Not "icp", which is redacted as a key and would hide the whole block.
+                "icp_details": _lists(asdict(pricing.icp)),
                 "plan": {
                     "id": pricing.plan.id,
                     "code": pricing.plan.code,
@@ -62,3 +64,12 @@ async def async_get_config_entry_diagnostics(
         },
         TO_REDACT,
     )
+
+
+def _lists(value: Any) -> Any:  # noqa: ANN401 - walks arbitrary dataclass output
+    """Turn tuples into lists, because async_redact_data only looks inside lists."""
+    if isinstance(value, dict):
+        return {key: _lists(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_lists(item) for item in value]
+    return value

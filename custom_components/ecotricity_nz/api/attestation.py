@@ -32,12 +32,11 @@ EXPIRY_MARGIN_SECONDS = 90
 MAX_CALLS_PER_TOKEN = 45
 
 
-class _HttpStatusError(AttestationError):
-    """An attestation endpoint returned an error status."""
+class _ForbiddenError(AttestationError):
+    """An attestation endpoint refused the request (HTTP 403)."""
 
-    def __init__(self, path: str, status: int) -> None:
-        super().__init__(f"Attestation {path} returned HTTP {status}")
-        self.status = status
+    def __init__(self, path: str) -> None:
+        super().__init__(f"Attestation {path} returned HTTP {HTTPStatus.FORBIDDEN}")
 
 
 def first_wrap_index(container_width: float, item_widths: list[float]) -> int:
@@ -133,9 +132,9 @@ class AttestationTokenManager:
         }
         try:
             result = await self._async_request("POST", "/token", body)
-        except _HttpStatusError as err:
+        except _ForbiddenError:
             # The web app retries once with a fresh challenge when the answer is rejected.
-            if retry_on_forbidden and err.status == HTTPStatus.FORBIDDEN:
+            if retry_on_forbidden:
                 return await self._async_mint(retry_on_forbidden=False)
             raise
         if not isinstance(result, dict) or not result.get("token"):
@@ -160,8 +159,13 @@ class AttestationTokenManager:
                 headers=self._headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
+                # Only a 403 says the token scheme refused us; other errors mean the site is down.
+                if response.status == HTTPStatus.FORBIDDEN:
+                    raise _ForbiddenError(path)
                 if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise _HttpStatusError(path, response.status)
+                    raise EcotricityConnectionError(
+                        f"Attestation {path} returned HTTP {response.status}"
+                    )
                 return await response.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError) as err:
             raise EcotricityConnectionError(f"Attestation {path} failed: {err}") from err

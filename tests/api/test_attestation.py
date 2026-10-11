@@ -157,6 +157,28 @@ async def test_repeated_rejection_raises(
 
 
 @pytest.mark.parametrize(
+    ("challenge_status", "token_status"),
+    [
+        (HTTPStatus.SERVICE_UNAVAILABLE, HTTPStatus.OK),
+        (HTTPStatus.NOT_FOUND, HTTPStatus.OK),
+        (HTTPStatus.OK, HTTPStatus.INTERNAL_SERVER_ERROR),
+    ],
+)
+async def test_server_errors_are_not_attestation_failures(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    challenge_status: HTTPStatus,
+    token_status: HTTPStatus,
+) -> None:
+    """A site outage mustn't count towards the attestation repair issue."""
+    aioclient_mock.get(CHALLENGE_URL, status=challenge_status, json=CHALLENGE)
+    aioclient_mock.post(TOKEN_URL, status=token_status, json={"token": "tok", "expires": 2_000})
+
+    with pytest.raises(EcotricityConnectionError):
+        await _manager(hass, Clock(1_000)).async_get_token()
+
+
+@pytest.mark.parametrize(
     "token_json",
     [{"expires": 2_000}, {"token": "tok"}, {"token": "tok", "expires": "soon"}, ["tok"]],
 )

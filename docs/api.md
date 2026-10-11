@@ -26,7 +26,7 @@ The ICP and plan services reject requests without an `X-Onboarding-Token` header
 3. The answer is the lowercase hex SHA-256 of `"{cid}|{index}"`.
 4. `POST /cgi-bin/RESTATTEST/token` with `{"cid", "expiry", "sig", "params", "answer"}` returns `{"token", "expires"}`, where `expires` is a Unix timestamp.
 
-The app reuses a token until 90 seconds before `expires` or until it has made 45 calls with it. If a gated call gets a 403, it mints a fresh token and retries once with `X-Onboarding-Attestation-Retry: 1`. If the token POST itself gets a 403, it starts again with a new challenge, once.
+The app reuses a token until 90 seconds before `expires` or until it has made 45 calls with it. If a gated call gets a 403, it mints a fresh token and retries once with `X-Onboarding-Attestation-Retry: 1`. If the token POST itself gets a 403, it starts again with a new challenge, once. The integration treats only a 403 as the token scheme refusing it; a 404 or 5xx from `/challenge` or `/token` is handled as an outage, so it doesn't raise the attestation repair issue.
 
 Since the boxes have fixed widths and no spacing, the layout is a running sum, and `custom_components/ecotricity_nz/api/attestation.py` reproduces it without a browser. This was a deliberate choice, accepting the terms-of-use and breakage risk, because the onboarding site is the only source of Ecotricity's prices. The app also posts failures to `/cgi-bin/RESTATTEST/report`; the integration doesn't.
 

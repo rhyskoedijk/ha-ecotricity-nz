@@ -20,7 +20,10 @@ from custom_components.ecotricity_nz.api.attestation import (
     first_wrap_index,
     solve_challenge,
 )
-from custom_components.ecotricity_nz.api.exceptions import EcotricityConnectionError
+from custom_components.ecotricity_nz.api.exceptions import (
+    EcotricityConnectionError,
+    EcotricityResponseError,
+)
 
 BASE = "https://onboarding.test"
 CHALLENGE_URL = f"{BASE}/cgi-bin/RESTATTEST/challenge"
@@ -201,11 +204,21 @@ async def test_bad_challenge_response(
         await _manager(hass, Clock(1_000)).async_get_token()
 
 
-async def test_invalid_json(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
-    aioclient_mock.get(CHALLENGE_URL, text="<html>")
+@pytest.mark.parametrize("bad", ["challenge", "token"])
+async def test_invalid_json_is_not_attestation_failure(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, bad: str
+) -> None:
+    """A maintenance page served with a 200 mustn't count towards the repair issue."""
+    page = "<html>Down for maintenance</html>"
+    if bad == "challenge":
+        aioclient_mock.get(CHALLENGE_URL, text=page)
+    else:
+        aioclient_mock.get(CHALLENGE_URL, json=CHALLENGE)
+        aioclient_mock.post(TOKEN_URL, text=page)
 
-    with pytest.raises(AttestationError):
+    with pytest.raises(EcotricityResponseError) as err:
         await _manager(hass, Clock(1_000)).async_get_token()
+    assert not isinstance(err.value, AttestationError)
 
 
 async def test_connection_error(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:

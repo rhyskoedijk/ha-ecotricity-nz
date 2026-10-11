@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from .exceptions import AttestationError, EcotricityConnectionError
+from .exceptions import AttestationError, EcotricityConnectionError, EcotricityResponseError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -170,4 +170,5 @@ class AttestationTokenManager:
         except (aiohttp.ClientError, TimeoutError) as err:
             raise EcotricityConnectionError(f"Attestation {path} failed: {err}") from err
         except ValueError as err:
-            raise AttestationError(f"Attestation {path} returned invalid JSON") from err
+            # Most likely a maintenance page served with a 200, so it says nothing about tokens.
+            raise EcotricityResponseError(f"Attestation {path} returned invalid JSON") from err

@@ -145,7 +145,8 @@ async def test_consumption_page_reopened_after_login(
     [
         ({"status": HTTPStatus.SERVICE_UNAVAILABLE}, EcotricityConnectionError),
         ({"exc": TimeoutError()}, EcotricityConnectionError),
-        ({"status": HTTPStatus.FOUND}, AuthError),
+        # Still redirected after logging in again: an outage, not bad credentials.
+        ({"status": HTTPStatus.FOUND}, EcotricityConnectionError),
     ],
 )
 async def test_consumption_page_errors(
@@ -239,19 +240,36 @@ async def test_expired_session_logs_in_again(
     assert len(logins) == 2
 
 
+@pytest.mark.parametrize(
+    ("page", "init_data"),
+    [
+        (
+            {"text": "<html></html>"},
+            {
+                "status": HTTPStatus.FOUND,
+                "headers": {"Location": "/powercommerce/eco/fo/portal/start"},
+            },
+        ),
+        ({"text": "<html></html>"}, {"text": "<html>maintenance</html>"}),
+    ],
+    ids=["redirect", "html"],
+)
 async def test_session_cannot_be_restored(
-    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    page: dict[str, object],
+    init_data: dict[str, object],
 ) -> None:
+    """A refusal straight after a successful login is an outage, not bad credentials."""
     _mock_login(aioclient_mock)
-    aioclient_mock.get(f"{PORTAL}consumptionDetails", text="<html></html>")
-    aioclient_mock.post(
-        f"{PORTAL}analysis/initData",
-        status=HTTPStatus.FOUND,
-        headers={"Location": "/powercommerce/eco/fo/portal/start"},
-    )
+    aioclient_mock.get(f"{PORTAL}consumptionDetails", **page)
+    aioclient_mock.post(f"{PORTAL}analysis/initData", **init_data)
 
-    with pytest.raises(AuthError):
+    with pytest.raises(EcotricityConnectionError) as err:
         await _client(hass).async_get_indicator()
+    assert not isinstance(err.value, AuthError)
+    logins = [call for call in aioclient_mock.mock_calls if call[1].path.endswith("loginProcess")]
+    assert len(logins) == 2
 
 
 @pytest.mark.parametrize(

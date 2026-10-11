@@ -167,7 +167,7 @@ sequenceDiagram
 | Attestation rejected | As above, and after three failures in a row a repair issue says the site has probably changed. Only a 403 (or a challenge or token the integration can't make sense of) counts; any other error status from the attestation endpoints is treated as the site being unreachable. |
 | Chart unreadable or prices don't fit | Current price and period sensors go unavailable; everything else keeps working. Import and export are matched separately, so a mismatch on one side leaves the other working. Repair issue after three failures. |
 | Portal login rejected | `ConfigEntryAuthFailed` starts the reauthentication flow. |
-| Portal unreachable | The consumption import (including the first backfill) retries after 30 minutes; pricing doesn't use the portal. |
+| Portal unreachable | Includes the portal still refusing the session straight after a successful login. The consumption import (including the first backfill) retries after 30 minutes; pricing doesn't use the portal. |
 | Chosen plan no longer listed | The site's default plan is used, and a repair issue asks for a new choice in the options. |
 
 ## Data and privacy

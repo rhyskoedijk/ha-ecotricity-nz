@@ -120,7 +120,7 @@ Base URL `https://portal.ecotricity.co.nz/powercommerce/eco/fo/portal/`. It's a 
 2. `POST loginProcess` with form fields `login` (the customer account number) and `password`.
 3. Success redirects (302) to `.../portal/home`. Failure redirects to `.../portal/start`. The redirect is to plain `http://`, so the client checks the `Location` header rather than following it. Only a redirect to `/start` is treated as rejected credentials; any other response (an error status, a 200, or a redirect elsewhere) is treated as the portal being unavailable, so an outage doesn't trigger reauthentication.
 
-An expired session answers JSON requests with a redirect or with the HTML start page. The client logs in again once, then gives up with an authentication error.
+An expired session answers JSON requests with a redirect or with the HTML start page. The client logs in again once. If the same answer comes back straight after a successful login, the credentials are clearly fine, so it's treated as the portal being unavailable rather than an authentication error, and doesn't trigger reauthentication.
 
 The analysis endpoints only work after a page containing the analysis widget has been loaded in the session; the web app always loads `/home` or `consumptionDetails` first. Calling `analysis/initData` straight after logging in returned HTTP 503 in testing. So after each login the client loads `consumptionDetails` once before its first analysis call. This is inferred from the browser's behaviour and the 503; it hasn't been confirmed by Ecotricity.
 

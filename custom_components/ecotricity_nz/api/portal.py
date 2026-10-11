@@ -193,7 +193,11 @@ class PortalClient:
                 try:
                     return await self._async_session_call(method, path, body)
                 except _SessionExpiredError as err:
-                    raise AuthError("The portal session could not be re-established") from err
+                    # The login just succeeded, so the credentials are fine; the portal is
+                    # misbehaving rather than refusing us.
+                    raise EcotricityConnectionError(
+                        f"Portal {path} still refused the session after logging in again"
+                    ) from err
 
     async def _async_session_call(
         self, method: str, path: str, body: Mapping[str, Any] | None

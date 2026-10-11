@@ -41,6 +41,7 @@ from custom_components.ecotricity_nz.const import (
     CONF_PLAN_ID,
     DOMAIN,
     FAILURE_ISSUE_THRESHOLD,
+    RETRY_AFTER_FAILURE,
 )
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
 from tests.conftest import LOW_OFF_PEAK_PLAN_ID, NZ, TEST_ICP, WINTER_PEAK
@@ -357,6 +358,50 @@ async def test_consumption_errors(
     assert _state(hass, "last_day_imported") == "unavailable"
     flows = [flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()]
     assert ("reauth" in flows) is reauth
+
+
+async def test_pricing_retries_soon_after_a_failure(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A failed refresh is retried well before the next daily refresh."""
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    coordinator = config_entry.runtime_data.pricing
+
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+
+    mock_onboarding.async_get_icp.side_effect = None
+    freezer.tick(RETRY_AFTER_FAILURE + timedelta(seconds=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert coordinator.last_update_success
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_consumption_retries_soon_after_a_failure(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A failed import, including the first backfill, is retried well before the next day."""
+    freezer.move_to(WINTER_PEAK)
+    mock_portal.async_get_indicator.side_effect = EcotricityConnectionError("down")
+    await _setup(hass, portal_config_entry)
+    consumption = portal_config_entry.runtime_data.consumption
+    assert consumption is not None
+    assert not consumption.last_update_success
+
+    mock_portal.async_get_indicator.side_effect = None
+    freezer.tick(RETRY_AFTER_FAILURE + timedelta(seconds=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert consumption.last_update_success
 
 
 def _with_new_season(plans: PlanList) -> PlanList:

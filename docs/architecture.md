@@ -163,11 +163,11 @@ sequenceDiagram
 
 | What goes wrong | What happens |
 | --- | --- |
-| Onboarding site unreachable | `UpdateFailed`; sensors go unavailable until the next successful refresh. At setup, the entry retries. |
+| Onboarding site unreachable | `UpdateFailed` with a `retry_after` of 30 minutes; sensors go unavailable until a retry succeeds, rather than for the rest of the day. At setup, the entry retries. |
 | Attestation rejected | As above, and after three failures in a row a repair issue says the site has probably changed. |
 | Chart unreadable or prices don't fit | Current price and period sensors go unavailable; everything else keeps working. Import and export are matched separately, so a mismatch on one side leaves the other working. Repair issue after three failures. |
 | Portal login rejected | `ConfigEntryAuthFailed` starts the reauthentication flow. |
-| Portal unreachable | The consumption import retries at the next refresh; pricing doesn't use the portal. |
+| Portal unreachable | The consumption import (including the first backfill) retries after 30 minutes; pricing doesn't use the portal. |
 | Chosen plan no longer listed | The site's default plan is used, and a repair issue asks for a new choice in the options. |
 
 ## Data and privacy

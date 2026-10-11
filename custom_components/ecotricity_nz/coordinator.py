@@ -43,6 +43,7 @@ from .const import (
     ISSUE_TOU_CHART,
     LOGGER,
     PRICING_UPDATE_INTERVAL,
+    RETRY_AFTER_FAILURE,
 )
 from .statistics import (
     CARBON,
@@ -177,13 +178,16 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             if self._attestation_failures >= FAILURE_ISSUE_THRESHOLD:
                 self._raise_issue(ISSUE_ATTESTATION)
             raise UpdateFailed(
-                translation_domain=DOMAIN, translation_key="attestation_failed"
+                translation_domain=DOMAIN,
+                translation_key="attestation_failed",
+                retry_after=RETRY_AFTER_FAILURE.total_seconds(),
             ) from err
         except EcotricityError as err:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="update_failed",
                 translation_placeholders={"error": str(err)},
+                retry_after=RETRY_AFTER_FAILURE.total_seconds(),
             ) from err
         self._attestation_failures = 0
         self._clear_issue(ISSUE_ATTESTATION)
@@ -363,6 +367,7 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
                 translation_domain=DOMAIN,
                 translation_key="update_failed",
                 translation_placeholders={"error": str(err)},
+                retry_after=RETRY_AFTER_FAILURE.total_seconds(),
             ) from err
 
     async def _async_import(self) -> ConsumptionSummary:

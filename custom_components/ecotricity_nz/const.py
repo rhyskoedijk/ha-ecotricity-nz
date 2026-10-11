@@ -25,6 +25,8 @@ PORTAL_SERVER_TIME_ZONE: Final = "Europe/Berlin"
 
 PRICING_UPDATE_INTERVAL: Final = timedelta(hours=24)
 CONSUMPTION_UPDATE_INTERVAL: Final = timedelta(hours=24)
+# After a failed update, try again this soon instead of waiting a whole update interval.
+RETRY_AFTER_FAILURE: Final = timedelta(minutes=30)
 # The portal is asked for at most this much half-hourly data per request.
 CONSUMPTION_CHUNK: Final = timedelta(days=7)
 # Pause between backfill requests so a first run doesn't hammer the portal.

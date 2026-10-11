@@ -110,7 +110,7 @@ automation:
 ## How it updates
 
 - Plan, season and pricing details refresh once a day and again just after midnight. Ecotricity's seasons change every few months and can be updated at any time, so a new season starts on its first day and any price change shows up within a day. The current price and period update every half hour on their own.
-- Portal usage is fetched once a day. The first time, the whole history is imported in the background, which can take a few minutes.
+- Portal usage is fetched once a day. The first time, the whole history is imported in the background, which can take a few minutes. If either site can't be reached, the integration tries again after 30 minutes instead of waiting until the next day.
 
 ## Known limitations
 

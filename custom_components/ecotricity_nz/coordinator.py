@@ -249,25 +249,38 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             self._chart_failures = 0
             return flat_import, flat_export, None
 
+        import_slots, export_slots = flat_import, flat_export
+        errors: list[str] = []
         try:
             weekday = await self._async_chart(plan.timeframe_chart_weekday, season)
             weekend = await self._async_chart(plan.timeframe_chart_weekend, season)
-            import_slots = flat_import or SlotMap(
-                weekday=match_tiers(weekday.import_tiers, pricing.import_buckets),
-                weekend=match_tiers(weekend.import_tiers, pricing.import_buckets),
-            )
-            export_slots = flat_export
-            if need_export:
-                export_slots = SlotMap(
-                    weekday=match_tiers(weekday.export_tiers, pricing.export_buckets),
-                    weekend=match_tiers(weekend.export_tiers, pricing.export_buckets),
-                )
         except (ChartReadError, EcotricityError) as err:
+            errors.append(str(err))
+        else:
+            # Match import and export separately, so a problem with one keeps the other.
+            if need_import:
+                try:
+                    import_slots = SlotMap(
+                        weekday=match_tiers(weekday.import_tiers, pricing.import_buckets),
+                        weekend=match_tiers(weekend.import_tiers, pricing.import_buckets),
+                    )
+                except ChartReadError as err:
+                    errors.append(f"Import: {err}")
+            if need_export:
+                try:
+                    export_slots = SlotMap(
+                        weekday=match_tiers(weekday.export_tiers, pricing.export_buckets),
+                        weekend=match_tiers(weekend.export_tiers, pricing.export_buckets),
+                    )
+                except ChartReadError as err:
+                    errors.append(f"Export: {err}")
+        if errors:
+            error = "; ".join(errors)
             self._chart_failures += 1
-            LOGGER.warning("Could not read the time-of-use windows for %s: %s", plan.code, err)
+            LOGGER.warning("Could not read the time-of-use windows for %s: %s", plan.code, error)
             if self._chart_failures >= FAILURE_ISSUE_THRESHOLD:
                 self._raise_issue(ISSUE_TOU_CHART, {"plan": plan.description})
-            return flat_import, flat_export, str(err)
+            return import_slots, export_slots, error
         self._chart_failures = 0
         self._clear_issue(ISSUE_TOU_CHART)
         return import_slots, export_slots, None

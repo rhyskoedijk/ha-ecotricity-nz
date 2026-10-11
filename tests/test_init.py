@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
 
+from custom_components.ecotricity_nz import coordinator as coordinator_module
 from custom_components.ecotricity_nz.api import (
     AttestationError,
     AuthError,
@@ -34,6 +35,7 @@ from custom_components.ecotricity_nz.api import (
     RateUnit,
     Season,
 )
+from custom_components.ecotricity_nz.api.timeframes import ChartReadError
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST,
     CONF_PLAN_ID,
@@ -1002,3 +1004,24 @@ async def test_series_listed_without_readings_is_not_reread(
     start, _ = mock_portal.async_get_half_hourly.await_args.args
     assert mock_portal.async_get_half_hourly.await_count == calls + 1
     assert start == datetime(2026, 4, 5, 0, 0, tzinfo=NZ)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_export_chart_mismatch_keeps_import_windows(
+    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    # Low ecoSOLAR in winter has time-of-use import and export prices.
+    freezer.move_to(WINTER_PEAK)
+    real_match = coordinator_module.match_tiers
+
+    def match(tiers: Any, bucket_prices: dict[str, float], **kwargs: Any) -> tuple[str, ...]:
+        if any(bucket.startswith("EG_") for bucket in bucket_prices):
+            raise ChartReadError("Chart bar heights don't match the plan's prices")
+        return real_match(tiers, bucket_prices, **kwargs)
+
+    with patch.object(coordinator_module, "match_tiers", side_effect=match):
+        await _setup(hass, config_entry, {CONF_PLAN_ID: "2999"})
+
+    assert _state(hass, "current_import_period") == "peak"
+    assert _state(hass, "current_export_period") == "unavailable"
+    assert "Export:" in _extra(hass, "current_import_price")["tou_error"]

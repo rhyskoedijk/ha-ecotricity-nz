@@ -88,7 +88,7 @@ stat_types:
 days_to_show: 7
 ```
 
-Carbon savings are in kilograms, so they're easiest to read in a card of their own. Statistics are hourly, so each bar adds up two of the portal's half-hourly readings.
+Carbon savings are in kilograms, so they're easiest to read in a card of their own. Statistics are hourly, so each bar adds up two of the portal's half-hourly readings. If the portal is missing a reading, the hours from that point on wait until it appears, for up to a week; after that the hour is imported with what the portal has.
 
 ## Example automation
 

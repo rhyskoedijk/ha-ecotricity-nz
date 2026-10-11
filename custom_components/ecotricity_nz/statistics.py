@@ -4,6 +4,11 @@ Portal data arrives a day or more late, so it can't be recorded as sensor state 
 time. Instead each half-hourly series is summed into hourly external statistics, which the Energy
 dashboard reads with their real timestamps. The last imported statistic doubles as the backfill
 checkpoint: every run continues from the hour after it.
+
+Because nothing before the checkpoint is read again, recent hours are only imported once every
+earlier hour is complete. An hour with a missing half-hour holds the checkpoint back until the
+portal fills it in, or until it's old enough to count as settled, when it's imported as it stands
+so a permanent gap can't stop the import.
 """
 
 from __future__ import annotations
@@ -92,11 +97,13 @@ def statistic_id(icp: str, series: Series) -> str:
     return f"{DOMAIN}:{icp.lower()}_{series.key}"
 
 
-def hourly_totals(readings: Iterable[IntervalReading]) -> dict[datetime, float]:
-    """Sum half-hourly readings into complete UTC hours.
+def hourly_totals(
+    readings: Iterable[IntervalReading], settled_before: datetime
+) -> dict[datetime, float]:
+    """Sum half-hourly readings into UTC hours.
 
-    Hours missing a half-hour are left out, so a partly imported day is picked up in full on a
-    later run instead of being recorded short.
+    Hours missing a half-hour are left out unless they start before `settled_before`, so a recent
+    gap is picked up in full on a later run instead of being recorded short.
     """
     totals: dict[datetime, float] = defaultdict(float)
     counts: dict[datetime, int] = defaultdict(int)
@@ -107,7 +114,7 @@ def hourly_totals(readings: Iterable[IntervalReading]) -> dict[datetime, float]:
     return {
         hour: round(total, 4)
         for hour, total in sorted(totals.items())
-        if counts[hour] == READINGS_PER_HOUR
+        if counts[hour] == READINGS_PER_HOUR or hour < settled_before
     }
 
 
@@ -129,16 +136,20 @@ async def async_last_point(hass: HomeAssistant, stat_id: str) -> StatisticPoint 
     return StatisticPoint(start=start, sum=float(row.get("sum") or 0.0))
 
 
-def async_import_hours(
+def async_import_hours(  # noqa: PLR0913 - writing a series needs all of these
     hass: HomeAssistant,
     icp: str,
     series: Series,
     totals: dict[datetime, float],
     last: StatisticPoint | None,
+    *,
+    settled_before: datetime,
 ) -> tuple[StatisticPoint | None, int]:
     """Add hourly totals after the last imported hour, continuing its running sum.
 
-    Returns the new last point and the number of hours added.
+    Stops at the first hour missing from `totals` that starts at or after `settled_before`, so
+    the checkpoint doesn't move past a recent gap the portal may still fill. Returns the new last
+    point and the number of hours added.
     """
     running = last.sum if last else 0.0
     rows: list[StatisticData] = []
@@ -146,6 +157,8 @@ def async_import_hours(
     for hour, value in sorted(totals.items()):
         if last is not None and hour <= last.start:
             continue
+        if newest is not None and hour > max(newest.start + HOUR, settled_before):
+            break
         running = round(running + value, 4)
         rows.append(StatisticData(start=hour, state=value, sum=running))
         newest = StatisticPoint(start=hour, sum=running)

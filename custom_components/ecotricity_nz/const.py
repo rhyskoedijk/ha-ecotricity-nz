@@ -29,6 +29,9 @@ CONSUMPTION_UPDATE_INTERVAL: Final = timedelta(hours=24)
 RETRY_AFTER_FAILURE: Final = timedelta(minutes=30)
 # The portal is asked for at most this much half-hourly data per request.
 CONSUMPTION_CHUNK: Final = timedelta(days=7)
+# A missing half-hour newer than this (before the portal's latest data) holds back the import in
+# case the portal fills it in; an older one is imported as it stands.
+CONSUMPTION_SETTLE_PERIOD: Final = timedelta(days=7)
 # Pause between backfill requests so a first run doesn't hammer the portal.
 BACKFILL_PAUSE_SECONDS: Final = 2.0
 

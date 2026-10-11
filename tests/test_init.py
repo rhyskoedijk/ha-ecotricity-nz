@@ -1089,3 +1089,68 @@ async def test_export_chart_mismatch_keeps_import_windows(
     assert _state(hass, "current_import_period") == "peak"
     assert _state(hass, "current_export_period") == "unavailable"
     assert "Export:" in _extra(hass, "current_import_price")["tou_error"]
+
+
+def _drop_import_reading(mock_portal: MagicMock, missing: datetime) -> list[bool]:
+    """Leave one half-hour out of the portal's import readings while the flag is set."""
+    fetch = mock_portal.async_get_half_hourly.side_effect
+    dropping = [True]
+
+    async def half_hourly(start: datetime, end: datetime) -> Any:
+        data = await fetch(start, end)
+        if not dropping[0]:
+            return data
+        kept = tuple(r for r in data.imported_kwh if r.start != missing)
+        return replace(data, imported_kwh=kept)
+
+    mock_portal.async_get_half_hourly.side_effect = half_hourly
+    return dropping
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_recent_gap_holds_back_the_import_until_filled(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A missing half-hour mid-day isn't skipped over, so it's imported once the portal has it."""
+    freezer.move_to(WINTER_PEAK)
+    missing = datetime(2026, 4, 5, 10, 30, tzinfo=NZ).astimezone(UTC)
+    dropping = _drop_import_reading(mock_portal, missing)
+    await _setup(hass, portal_config_entry)
+    await async_wait_recording_done(hass)
+
+    # Nothing from the incomplete hour onwards is imported yet.
+    stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
+    assert datetime.fromtimestamp(stats["start"], UTC) == missing - timedelta(minutes=90)
+
+    # The portal fills the gap: the rest of the day follows, and the total is complete.
+    dropping[0] = False
+    await portal_config_entry.runtime_data.consumption.async_refresh()
+    await hass.async_block_till_done()
+    await async_wait_recording_done(hass)
+    stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
+    assert stats["sum"] == pytest.approx(37.25)
+    assert datetime.fromtimestamp(stats["start"], UTC) == datetime(2026, 4, 5, 11, 0, tzinfo=UTC)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_settled_gap_is_imported_as_it_stands(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """An old gap the portal never fills doesn't stop later hours being imported."""
+    freezer.move_to(WINTER_PEAK)
+    missing = datetime(2026, 4, 5, 10, 30, tzinfo=NZ).astimezone(UTC)
+    _drop_import_reading(mock_portal, missing)
+    with patch.object(coordinator_module, "CONSUMPTION_SETTLE_PERIOD", timedelta(hours=6)):
+        await _setup(hass, portal_config_entry)
+        await async_wait_recording_done(hass)
+
+    # Counting the repeated daylight-saving hour, 10:30 is the 24th reading (0.73 kWh).
+    stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
+    assert stats["sum"] == pytest.approx(37.25 - 0.73)
+    assert datetime.fromtimestamp(stats["start"], UTC) == datetime(2026, 4, 5, 11, 0, tzinfo=UTC)

@@ -35,6 +35,7 @@ from .const import (
     CONF_ICP,
     CONF_PLAN_ID,
     CONSUMPTION_CHUNK,
+    CONSUMPTION_SETTLE_PERIOD,
     CONSUMPTION_UPDATE_INTERVAL,
     DOMAIN,
     FAILURE_ISSUE_THRESHOLD,
@@ -387,6 +388,8 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         }
 
         data_end = indicator.data_end
+        # Gaps older than this are imported as they stand rather than waited on.
+        settled_before = data_end - CONSUMPTION_SETTLE_PERIOD
         last_day_start = self._local_midnight(data_end - timedelta(seconds=1))
         # Continue from the earliest last-imported hour, so a series added later (or one that
         # fell behind) catches up. Hours already imported are skipped. A series with no
@@ -418,7 +421,12 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
                 if series not in last_points or not readings:
                     continue
                 last_points[series], added = async_import_hours(
-                    self.hass, self.icp, series, hourly_totals(readings), last_points[series]
+                    self.hass,
+                    self.icp,
+                    series,
+                    hourly_totals(readings, settled_before),
+                    last_points[series],
+                    settled_before=settled_before,
                 )
                 if series is IMPORT:
                     hours_imported += added

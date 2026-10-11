@@ -118,7 +118,7 @@ Base URL `https://portal.ecotricity.co.nz/powercommerce/eco/fo/portal/`. It's a 
 
 1. `GET` the base URL to get a `JSESSIONID` cookie (path `/powercommerce/eco/fo`).
 2. `POST loginProcess` with form fields `login` (the customer account number) and `password`.
-3. Success redirects (302) to `.../portal/home`. Failure redirects to `.../portal/start`. The redirect is to plain `http://`, so the client checks the `Location` header rather than following it.
+3. Success redirects (302) to `.../portal/home`. Failure redirects to `.../portal/start`. The redirect is to plain `http://`, so the client checks the `Location` header rather than following it. Only a redirect to `/start` is treated as rejected credentials; any other response (an error status, a 200, or a redirect elsewhere) is treated as the portal being unavailable, so an outage doesn't trigger reauthentication.
 
 An expired session answers JSON requests with a redirect or with the HTML start page. The client logs in again once, then gives up with an authentication error.
 

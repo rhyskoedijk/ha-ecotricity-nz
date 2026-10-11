@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 PORTAL_URL = "https://portal.ecotricity.co.nz"
 PORTAL_PATH = "/powercommerce/eco/fo/portal/"
 LOGIN_SUCCESS_PATH = "home"
+LOGIN_REJECTED_PATH = "start"
 # Analysis calls need the consumption page to have been loaded in the session first.
 ANALYSIS_PREFIX = "analysis/"
 CONSUMPTION_PAGE = "consumptionDetails"
@@ -37,6 +38,17 @@ _LOGGER = logging.getLogger(__name__)
 # The portal redirects to the start page, or refuses, once a session has expired.
 _SESSION_EXPIRED_STATUSES = frozenset(
     {HTTPStatus.FOUND, HTTPStatus.SEE_OTHER, HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}
+)
+
+
+_REDIRECT_STATUSES = frozenset(
+    {
+        HTTPStatus.MOVED_PERMANENTLY,
+        HTTPStatus.FOUND,
+        HTTPStatus.SEE_OTHER,
+        HTTPStatus.TEMPORARY_REDIRECT,
+        HTTPStatus.PERMANENT_REDIRECT,
+    }
 )
 
 
@@ -153,11 +165,18 @@ class PortalClient:
                 allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as response:
+                status = response.status
                 location = response.headers.get("Location", "")
         except (aiohttp.ClientError, TimeoutError) as err:
             raise EcotricityConnectionError(f"Portal login failed: {err}") from err
-        if URL(location).path.rstrip("/").rsplit("/", 1)[-1] != LOGIN_SUCCESS_PATH:
+        target = URL(location).path.rstrip("/").rsplit("/", 1)[-1]
+        if status in _REDIRECT_STATUSES and target == LOGIN_REJECTED_PATH:
             raise AuthError("The portal rejected the account number or password")
+        # Anything else, such as a maintenance page, says nothing about the credentials.
+        if status not in _REDIRECT_STATUSES or target != LOGIN_SUCCESS_PATH:
+            raise EcotricityConnectionError(
+                f"Portal login returned HTTP {status} without the expected redirect"
+            )
         self._logged_in = True
 
     async def _async_call(

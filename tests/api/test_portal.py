@@ -67,6 +67,31 @@ async def test_login_rejected(hass: HomeAssistant, aioclient_mock: AiohttpClient
         await _client(hass).async_login()
 
 
+@pytest.mark.parametrize(
+    ("status", "headers"),
+    [
+        (HTTPStatus.SERVICE_UNAVAILABLE, {}),
+        (HTTPStatus.INTERNAL_SERVER_ERROR, {"Location": "http://portal.test/x/start"}),
+        (HTTPStatus.OK, {}),
+        (HTTPStatus.FOUND, {}),
+        (HTTPStatus.FOUND, {"Location": "http://portal.test/x/maintenance"}),
+    ],
+)
+async def test_login_unexpected_response_is_not_auth_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    status: HTTPStatus,
+    headers: dict[str, str],
+) -> None:
+    """Only a redirect back to the start page means the credentials were wrong."""
+    aioclient_mock.get(PORTAL, text="<html></html>")
+    aioclient_mock.post(f"{PORTAL}loginProcess", status=status, headers=headers)
+
+    with pytest.raises(EcotricityConnectionError) as err:
+        await _client(hass).async_login()
+    assert not isinstance(err.value, AuthError)
+
+
 async def test_login_connection_error(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:

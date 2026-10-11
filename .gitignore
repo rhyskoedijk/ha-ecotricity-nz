@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments and uv
+.venv/
+venv/
+
+# Test, lint and type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Secrets and raw browser captures
+.env
+.env.*
+*.har
+/.captures/
+
+# Local Home Assistant development instance
+/config/
+
+# IDE and OS files
+.vscode/

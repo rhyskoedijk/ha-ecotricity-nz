@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 18 * * 1"
+    - cron: "0 12 * * 6" # Midnight Sunday NZT
   workflow_dispatch:
 
 permissions:
@@ -28,5 +28,4 @@ jobs:
       - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
           category: integration
-          # Re-enable once the GitHub repository has topics and a description.
-          ignore: brands topics description
+          ignore: brands

@@ -28,7 +28,7 @@ uv run mypy custom_components
 uv run pre-commit run --all-files
 ```
 
-CI runs the same commands and fails below 95% coverage.
+CI runs the same commands and fails below 95% coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked. One of them fails if `translations/en.json` isn't an exact copy of `strings.json`.
 
 Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using synthetic fixtures in `tests/fixtures`. The chart images there are real Ecotricity charts; they contain only public pricing.
 

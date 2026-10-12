@@ -27,6 +27,11 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check --output-format github .
       - run: uv run mypy custom_components
+      - name: Other pre-commit hooks
+        # Ruff and mypy already ran above, with annotations.
+        env:
+          SKIP: ruff-format,ruff-check,mypy
+        run: uv run pre-commit run --all-files --show-diff-on-failure
 
   test:
     name: Tests

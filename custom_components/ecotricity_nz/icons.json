@@ -108,17 +108,17 @@
       "next_export_period_change": {
         "default": "mdi:clock-end"
       },
-      "last_day_imported": {
+      "latest_day_imported": {
         "default": "mdi:transmission-tower-import"
       },
-      "last_day_exported": {
+      "latest_day_exported": {
         "default": "mdi:transmission-tower-export"
       },
-      "last_day_carbon_savings": {
+      "latest_day_carbon_savings": {
         "default": "mdi:molecule-co2"
       },
-      "last_meter_reading": {
-        "default": "mdi:update"
+      "latest_day_of_usage": {
+        "default": "mdi:calendar-check"
       },
       "last_data_sync": {
         "default": "mdi:cloud-download-outline"

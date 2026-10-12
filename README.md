@@ -25,10 +25,10 @@ With just your ICP number:
 With your customer portal login as well:
 
 - Hourly import, export and carbon savings statistics going back as far as the portal has data, for the Energy dashboard and statistics graphs
-- **Last day imported**, **last day exported** and **last day carbon savings**, for the latest complete day. Each has a `statistic_id` attribute naming the statistic that holds its full history.
-- **Last meter reading** and **last data sync** times
+- **Latest day imported**, **latest day exported** and **latest day carbon savings**, for the latest complete day the portal has, named in their `date` attribute. Each has a `statistic_id` attribute naming the statistic that holds its full history.
+- **Latest day of usage**, the date those totals cover, and **last data sync**, when Ecotricity last loaded meter data into the portal
 
-Details about your connection and settings (ICP, network, pricing category, meter, plan, pricing season, registered generation capacity, last meter reading and last data sync) are listed under **Diagnostic** on the device page. They work in automations and dashboards like any other sensor.
+Details about your connection and settings (ICP, network, pricing category, meter, plan, pricing season, registered generation capacity and last data sync) are listed under **Diagnostic** on the device page. They work in automations and dashboards like any other sensor.
 
 Import prices and daily charges include 15% GST unless you turn that off in the options. Export credits are always shown as published, without GST, because that's what customers who aren't GST-registered are paid.
 
@@ -74,7 +74,7 @@ The usage history is stored as long-term statistics, not as a sensor's history. 
 - `ecotricity_nz:<icp>_energy_export` (kWh)
 - `ecotricity_nz:<icp>_carbon_savings` (kg)
 
-Each one is also shown as the `statistic_id` attribute of the matching **Last day imported**, **Last day exported** or **Last day carbon savings** sensor, ready to copy. **Developer tools > Statistics** lists them too. A statistics graph card shows hourly bars, like the portal's chart:
+Each one is also shown as the `statistic_id` attribute of the matching **Latest day imported**, **Latest day exported** or **Latest day carbon savings** sensor, ready to copy. **Developer tools > Statistics** lists them too. A statistics graph card shows hourly bars, like the portal's chart:
 
 ```yaml
 type: statistics-graph

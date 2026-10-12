@@ -177,17 +177,17 @@
       "next_export_period_change": {
         "name": "Next export period change"
       },
-      "last_day_imported": {
-        "name": "Last day imported"
+      "latest_day_imported": {
+        "name": "Latest day imported"
       },
-      "last_day_exported": {
-        "name": "Last day exported"
+      "latest_day_exported": {
+        "name": "Latest day exported"
       },
-      "last_day_carbon_savings": {
-        "name": "Last day carbon savings"
+      "latest_day_carbon_savings": {
+        "name": "Latest day carbon savings"
       },
-      "last_meter_reading": {
-        "name": "Last meter reading"
+      "latest_day_of_usage": {
+        "name": "Latest day of usage"
       },
       "last_data_sync": {
         "name": "Last data sync"

@@ -582,42 +582,41 @@ class NextPeriodChangeSensor(_HalfHourlyEntity):
 
 # The long-term statistic holding each daily sensor's full half-hourly history.
 _HISTORY_SERIES = {
-    "last_day_imported": IMPORT,
-    "last_day_exported": EXPORT,
-    "last_day_carbon_savings": CARBON,
+    "latest_day_imported": IMPORT,
+    "latest_day_exported": EXPORT,
+    "latest_day_carbon_savings": CARBON,
 }
 
 CONSUMPTION_SENSORS: tuple[ConsumptionSensorDescription, ...] = (
     ConsumptionSensorDescription(
-        key="last_day_imported",
-        translation_key="last_day_imported",
+        key="latest_day_imported",
+        translation_key="latest_day_imported",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         suggested_display_precision=2,
         value_fn=lambda data: data.imported_kwh,
     ),
     ConsumptionSensorDescription(
-        key="last_day_exported",
-        translation_key="last_day_exported",
+        key="latest_day_exported",
+        translation_key="latest_day_exported",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         suggested_display_precision=2,
         value_fn=lambda data: data.exported_kwh,
     ),
     ConsumptionSensorDescription(
-        key="last_day_carbon_savings",
-        translation_key="last_day_carbon_savings",
+        key="latest_day_carbon_savings",
+        translation_key="latest_day_carbon_savings",
         device_class=SensorDeviceClass.WEIGHT,
         native_unit_of_measurement=UnitOfMass.KILOGRAMS,
         suggested_display_precision=2,
         value_fn=lambda data: data.carbon_savings_kg,
     ),
     ConsumptionSensorDescription(
-        key="last_meter_reading",
-        translation_key="last_meter_reading",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=lambda data: data.indicator.data_end,
+        key="latest_day_of_usage",
+        translation_key="latest_day_of_usage",
+        device_class=SensorDeviceClass.DATE,
+        value_fn=lambda data: data.day,
     ),
     ConsumptionSensorDescription(
         key="last_data_sync",
@@ -651,12 +650,12 @@ class ConsumptionSensor(EcotricityEntity[ConsumptionCoordinator], SensorEntity):
         The history is imported as long-term statistics, which aren't entities, so the
         statistic ID is shown here where it's easy to find and copy into a chart.
         """
-        if not self.entity_description.key.startswith("last_day"):
+        if (series := _HISTORY_SERIES.get(self.entity_description.key)) is None:
             return None
-        attributes: dict[str, Any] = {"date": self.coordinator.data.day}
-        if (series := _HISTORY_SERIES.get(self.entity_description.key)) is not None:
-            attributes["statistic_id"] = statistic_id(self.coordinator.icp, series)
-        return attributes
+        return {
+            "date": self.coordinator.data.day,
+            "statistic_id": statistic_id(self.coordinator.icp, series),
+        }
 
 
 def _daily_charge_key(charge: DailyCharge) -> str:

@@ -159,18 +159,18 @@ async def test_consumption_imports_statistics(
     assert plan.attributes["internal_name"] == "Low User"
 
     # The DST-end fixture day has 50 half-hours: 0.50, 0.51, ... 0.99 kWh.
-    assert float(_state(hass, "last_day_imported")) == pytest.approx(37.25)
+    assert float(_state(hass, "latest_day_imported")) == pytest.approx(37.25)
     # Export repeats 0, 0.1, 0.2, 0.3: twelve full cycles plus 0 and 0.1.
-    assert float(_state(hass, "last_day_exported")) == pytest.approx(7.3)
-    assert float(_state(hass, "last_day_carbon_savings")) == pytest.approx(2.5)
+    assert float(_state(hass, "latest_day_exported")) == pytest.approx(7.3)
+    assert float(_state(hass, "latest_day_carbon_savings")) == pytest.approx(2.5)
 
     stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
     assert stats["sum"] == pytest.approx(37.25)
     assert datetime.fromtimestamp(stats["start"], UTC) == datetime(2026, 4, 5, 11, 0, tzinfo=UTC)
     # The daily sensors point at the statistics holding the full history.
-    assert _extra(hass, "last_day_imported")["statistic_id"] == statistic_id(TEST_ICP, IMPORT)
-    assert _extra(hass, "last_day_exported")["statistic_id"] == statistic_id(TEST_ICP, EXPORT)
-    assert _extra(hass, "last_day_carbon_savings")["statistic_id"] == (
+    assert _extra(hass, "latest_day_imported")["statistic_id"] == statistic_id(TEST_ICP, IMPORT)
+    assert _extra(hass, "latest_day_exported")["statistic_id"] == statistic_id(TEST_ICP, EXPORT)
+    assert _extra(hass, "latest_day_carbon_savings")["statistic_id"] == (
         "ecotricity_nz:0000123456ab1c2_carbon_savings"
     )
 
@@ -332,7 +332,7 @@ async def test_portal_without_data_yet(
     )
     await _setup(hass, portal_config_entry)
 
-    assert _state(hass, "last_day_imported") == "unknown"
+    assert _state(hass, "latest_day_imported") == "unknown"
     mock_portal.async_get_half_hourly.assert_not_awaited()
 
 
@@ -356,7 +356,7 @@ async def test_consumption_errors(
     consumption = portal_config_entry.runtime_data.consumption
     assert consumption is not None
     assert not consumption.last_update_success
-    assert _state(hass, "last_day_imported") == "unavailable"
+    assert _state(hass, "latest_day_imported") == "unavailable"
     flows = [flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()]
     assert ("reauth" in flows) is reauth
 
@@ -676,7 +676,7 @@ async def test_network_and_sync_sensors(
     }
     assert _state(hass, "pricing_category") == "Residential Time of Use"
     assert _extra(hass, "pricing_category") == {"code": "RTOU24"}
-    assert _state(hass, "last_meter_reading") == "2026-04-05T12:00:00+00:00"
+    assert _state(hass, "latest_day_of_usage") == "2026-04-05"
     assert _state(hass, "last_data_sync") == "2026-04-05T15:06:00+00:00"
 
 
@@ -908,7 +908,6 @@ async def test_entity_categories(
         "registered_generation_capacity",
         "plan",
         "pricing_season",
-        "last_meter_reading",
         "last_data_sync",
     }
 

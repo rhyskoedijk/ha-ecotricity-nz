@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.1.2 (2026-10-13)
+
+- HACS now lists the integration as New Zealand only, and the repository passes every HACS validation check, ready for inclusion in the HACS default store.
+
 ## v0.1.1 (2026-10-13)
 
 - New **Refresh data** action (`ecotricity_nz.refresh`) fetches the latest pricing and usage straight away, for example from a dashboard button.

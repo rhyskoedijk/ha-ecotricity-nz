@@ -1,0 +1,11 @@
+{
+  "mappings": [
+    { "name": "eco off peak", "title": "ecoSAVER", "type": "standard", "sort": 1 },
+    { "name": "eco anytime", "title": "ecoANYTIME", "type": "standard", "sort": 0 },
+    { "name": "low off peak", "title": "Low ecoSAVER", "type": "standard", "sort": 1 },
+    { "name": "low user", "title": "Low ecoANYTIME", "type": "standard", "sort": 0 },
+    { "name": "ecobattery anytime", "title": "ecoSOLAR", "type": "standard", "sort": 4 },
+    { "name": "lowbattery user", "title": "Low ecoSOLAR", "type": "standard", "sort": 4 },
+    { "name": "default", "title": "ecoSPECIAL", "type": "standard", "sort": 9 }
+  ]
+}

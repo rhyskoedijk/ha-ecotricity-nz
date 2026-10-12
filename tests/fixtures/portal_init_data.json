@@ -1,0 +1,38 @@
+{
+ "featureDescriptions": {},
+ "currentIndicator": {
+  "indicatorID": "00000000-0000-0000-0000-000000000001",
+  "indicatorType": "INDICATOR_GROUP",
+  "displayName": "0000123456AB1C2",
+  "lastImportDate": "2026-04-10T03:06:24.000+02:00",
+  "features": {
+   "EMISSION|POWER_ACTIVE_PURCHASE_CONSUMPTION|Carbon Savings": [
+    {
+     "nativeGranularityType": "HALF_HOUR",
+     "aggregated": false,
+     "measuredValueRange": {
+      "2026-03-01T00:00:00.000+01:00": "2026-04-09T00:00:00.000+02:00"
+     }
+    }
+   ],
+   "POWER_ACTIVE_PURCHASE_CONSUMPTION": [
+    {
+     "nativeGranularityType": "HALF_HOUR",
+     "aggregated": false,
+     "measuredValueRange": {
+      "2026-03-01T00:00:00.000+01:00": "2026-04-09T00:00:00.000+02:00"
+     }
+    }
+   ],
+   "POWER_ACTIVE_SUPPLY_CONSUMPTION": [
+    {
+     "nativeGranularityType": "HALF_HOUR",
+     "aggregated": false,
+     "measuredValueRange": {
+      "2026-03-01T00:00:00.000+01:00": "2026-04-09T00:00:00.000+02:00"
+     }
+    }
+   ]
+  }
+ }
+}

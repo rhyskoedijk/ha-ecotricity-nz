@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Install the development environment and git hooks.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+uv sync
+uv run pre-commit install

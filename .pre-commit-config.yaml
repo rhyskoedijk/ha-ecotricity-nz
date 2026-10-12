@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        exclude: ^uv\.lock$
+      - id: detect-private-key
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+
+  # Run the project's own pinned tools, so pre-commit and CI always agree.
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: uv run mypy custom_components
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: translations-match
+        name: translations/en.json matches strings.json
+        entry: cmp custom_components/ecotricity_nz/strings.json custom_components/ecotricity_nz/translations/en.json
+        language: system
+        files: ^custom_components/ecotricity_nz/(strings\.json|translations/en\.json)$
+        pass_filenames: false

@@ -1,0 +1,14 @@
+{
+  "domain": "ecotricity_nz",
+  "name": "Ecotricity NZ",
+  "codeowners": ["@rhyskoedijk"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/rhyskoedijk/ha-ecotricity-nz",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/rhyskoedijk/ha-ecotricity-nz/issues",
+  "loggers": ["custom_components.ecotricity_nz"],
+  "requirements": [],
+  "version": "0.0.0"
+}

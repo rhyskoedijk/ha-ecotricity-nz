@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Run a local Home Assistant instance with this integration loaded, at http://localhost:8123.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+mkdir -p config/custom_components
+ln -sfn "$PWD/custom_components/ecotricity_nz" config/custom_components/ecotricity_nz
+
+# Only what's needed to work on this integration. default_config also loads Bluetooth, network
+# discovery, cloud and mobile app support, which add noise and need extra system packages.
+# Older dev configs that used default_config are replaced.
+if [[ ! -f config/configuration.yaml ]] || grep -q "^default_config:" config/configuration.yaml; then
+  cat > config/configuration.yaml <<'YAML'
+homeassistant:
+  name: Ecotricity dev
+  time_zone: Pacific/Auckland
+  country: NZ
+  currency: NZD
+  unit_system: metric
+
+frontend:
+config:
+history:
+logbook:
+energy:
+system_health:
+
+logger:
+  default: info
+  logs:
+    custom_components.ecotricity_nz: debug
+YAML
+fi
+
+exec uv run hass --config config --debug

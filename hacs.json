@@ -3,5 +3,5 @@
   "homeassistant": "2026.10.0",
   "render_readme": true,
   "zip_release": true,
-  "filename": "ecotricity_nz.zip"
+  "filename": "ha_ecotricity_nz.zip"
 }

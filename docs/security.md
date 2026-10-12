@@ -47,7 +47,7 @@ Nothing goes back from Ecotricity's sites to anyone else through this integratio
 - **Watch the network.** If you use a DNS filter or firewall that logs requests (Pi-hole, AdGuard Home or your router), the integration's only destinations will be `onboarding.ecotricity.co.nz` and `portal.ecotricity.co.nz`.
 - **Check the diagnostics.** On the integration's page choose **Download diagnostics**, and look for your account number, password and ICP number. They should all show as `**REDACTED**`.
 - **Check the logs.** Turn on debug logging for the integration, let it run for a while, and search the log for your password. It won't be there.
-- **Check what you installed.** HACS installs the zip attached to a GitHub release, built by the release workflow (`.github/workflows/release.yml`) from the tagged source. You can compare the installed `custom_components/ecotricity_nz` folder with that tag; the only difference is the version number the workflow writes into `manifest.json`.
+- **Check what you installed.** HACS installs the zip attached to a GitHub release, built by the CD workflow (`.github/workflows/cd.yml`) from the tagged source. You can compare the installed `custom_components/ecotricity_nz` folder with that tag; the only difference is the version number the workflow writes into `manifest.json`.
 
 ## Keeping your login safe
 

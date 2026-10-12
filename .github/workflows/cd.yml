@@ -1,4 +1,4 @@
-name: Release
+name: CD
 
 on:
   release:
@@ -29,8 +29,8 @@ jobs:
       - name: Build the zip
         run: |
           cd custom_components/ecotricity_nz
-          zip -r "$GITHUB_WORKSPACE/ecotricity_nz.zip" . -x "__pycache__/*" "*.pyc"
+          zip -r "$GITHUB_WORKSPACE/ha_ecotricity_nz.zip" . -x "__pycache__/*" "*.pyc"
 
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          files: ecotricity_nz.zip
+          files: ha_ecotricity_nz.zip

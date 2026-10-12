@@ -58,7 +58,7 @@ class Series:
     """A half-hourly series from the portal, imported as an hourly statistic."""
 
     key: str
-    """The statistic ID suffix, for example "energy_import"."""
+    """The statistic ID suffix, for example "energy_imported"."""
     feature: str
     """The portal feature ID the readings come from."""
     label: str
@@ -67,14 +67,14 @@ class Series:
 
 
 IMPORT = Series(
-    "energy_import",
+    "energy_imported",
     FEATURE_IMPORT,
     "imported",
     UnitOfEnergy.KILO_WATT_HOUR,
     EnergyConverter.UNIT_CLASS,
 )
 EXPORT = Series(
-    "energy_export",
+    "energy_exported",
     FEATURE_EXPORT,
     "exported",
     UnitOfEnergy.KILO_WATT_HOUR,
@@ -92,7 +92,7 @@ CARBON = Series(
 def statistic_id(icp: str, series: Series) -> str:
     """Return the external statistic ID for one of an ICP's series.
 
-    IDs are lower case, for example ecotricity_nz:0000123456ab1c2_energy_import.
+    IDs are lower case, for example ecotricity_nz:0000123456ab1c2_energy_imported.
     """
     return f"{DOMAIN}:{icp.lower()}_{series.key}"
 

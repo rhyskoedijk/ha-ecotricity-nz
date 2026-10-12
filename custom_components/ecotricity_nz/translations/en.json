@@ -206,6 +206,9 @@
     },
     "update_failed": {
       "message": "Couldn't update from Ecotricity: {error}"
+    },
+    "refresh_failed": {
+      "message": "Couldn't refresh the data from Ecotricity. Check the logs for details."
     }
   },
   "issues": {
@@ -220,6 +223,18 @@
     "plan_not_found": {
       "title": "Your Ecotricity plan is no longer listed",
       "description": "The plan chosen for this ICP isn't among the plans Ecotricity currently lists for it, so prices are being worked out from {default} instead. Choose your plan again in the integration's options."
+    }
+  },
+  "services": {
+    "refresh": {
+      "name": "Refresh data",
+      "description": "Fetches the latest pricing and usage from Ecotricity now, instead of waiting for the next scheduled update.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The ICP to refresh. Can be left out if you only have one."
+        }
+      }
     }
   }
 }

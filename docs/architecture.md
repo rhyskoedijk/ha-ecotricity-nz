@@ -28,6 +28,7 @@ flowchart LR
         SE["sensor.py"]
         IM["image.py<br/>TOU chart"]
         DG["diagnostics.py"]
+        SV["services.py<br/>refresh action"]
     end
 
     REC[("Recorder<br/>long-term statistics")]
@@ -55,11 +56,13 @@ flowchart LR
     SE -- "current price" --> EN
     PCO --> DG
     CCO --> DG
+    SV -. "refresh now" .-> PCO
+    SV -. "refresh now" .-> CCO
 ```
 
 The `custom_components/ecotricity_nz/api/` package is a small client library. It knows nothing about Home Assistant, which keeps it testable on its own and lets it move to PyPI later, as the Home Assistant guidelines prefer.
 
-Everything above it follows the standard integration pattern: a config entry, two `DataUpdateCoordinator`s held in `entry.runtime_data`, and a sensor platform reading from them.
+Everything above it follows the standard integration pattern: a config entry, two `DataUpdateCoordinator`s held in `entry.runtime_data`, and a sensor platform reading from them. The `ecotricity_nz.refresh` action, registered in `async_setup` so it exists even when no entry is loaded, refreshes both coordinators of an entry on demand and raises `HomeAssistantError` if either update fails.
 
 ## Setting up an entry
 
@@ -126,7 +129,7 @@ sequenceDiagram
     C-->>C: totals for the last complete day
 ```
 
-Portal data arrives a day or two late, so recording it as sensor state would put every reading at the wrong time. Instead the readings become external statistics (`ecotricity_nz:<icp>_energy_import`, `_energy_export` and `_carbon_savings`), which carry their own timestamps and plug straight into the Energy dashboard.
+Portal data arrives a day or two late, so recording it as sensor state would put every reading at the wrong time. Instead the readings become external statistics (`ecotricity_nz:<icp>_energy_imported`, `_energy_exported` and `_carbon_savings`), which carry their own timestamps and plug straight into the Energy dashboard.
 
 The last imported hour of each statistic is its checkpoint, and each sync continues from the earliest of them, so a statistic added later catches up on the full history. Only the series the portal says it holds are tracked, so an ICP with no export never forces a full re-read. If the portal lists a series but returns no readings for it, the coordinator remembers how far it has read that series, so it's read in full once per Home Assistant start rather than on every sync. Requests always start and end at NZ midnight, even when resuming partway through a day, and hours already imported are skipped. Midnight never falls inside a daylight saving change, so every response starts with an hour whose occurrence is known, and no hour is split between two chunks. Each chunk is written as soon as it's fetched, so an interrupted backfill carries on from where it stopped on the next run. Because the checkpoint never moves backwards, the import stops at the first hour that's missing or short of a half-hour, and later hours wait until the portal fills it in. That keeps the running sum complete. A gap more than seven days older than the portal's latest data is treated as settled and imported as it stands, so a reading the portal never supplies can't hold up everything after it.
 

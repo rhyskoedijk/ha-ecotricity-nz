@@ -127,5 +127,10 @@
         "default": "mdi:solar-power-variant"
       }
     }
+  },
+  "services": {
+    "refresh": {
+      "service": "mdi:refresh"
+    }
   }
 }

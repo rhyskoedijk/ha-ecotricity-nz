@@ -1,103 +1,193 @@
 # Ecotricity NZ for Home Assistant
 
-A custom integration that brings your [Ecotricity](https://ecotricity.co.nz) electricity plan and usage into Home Assistant: the prices on your plan, the price right now under time-of-use pricing, and your half-hourly import and export from the customer portal, ready for the Energy dashboard.
+A custom integration for [Ecotricity NZ](https://ecotricity.co.nz) customers. It brings your plan's prices, time-of-use periods and half-hourly usage into Home Assistant.
 
-It isn't made by or affiliated with Ecotricity, and it reads their websites rather than an official API, so a change on their side can break it until it's updated. The Ecotricity name and logo belong to their owner and are used only to identify the service.
+This is a community integration and isn't affiliated with Ecotricity NZ. The Ecotricity name and logo belong to Ecotricity NZ and are used only to identify the service.
 
-## What you get
+![Service](/docs/screenshots/screenshot.service.png)
 
-With just your ICP number:
+## Features
 
-- **Plan**, by the name the Ecotricity website uses ("Low ecoSOLAR", say), with the internal name (`internal_name`) and plan `code` as attributes
-- **Network**, with its code and the network's loss factors as attributes, and **Pricing category**, your network pricing category (such as "Residential Time of Use"), with its `code` as an attribute
-- **Pricing season**, the current pricing season, with its dates and every published season as attributes
-- **Current import price** and **current export price** in NZD/kWh, which change at the start of each peak or off-peak window. Use them as the price entities in the Energy dashboard. Their attributes break the price into its parts: `supplier_rate`, `network_rate` and (for import) `ea_levy`, plus the current `period`. Only the parts your plan has are shown.
-- **Current import period** and **current export period**: anytime, peak, off-peak or shoulder, each with today's windows (such as `07:00-11:00 peak`) as a `windows` attribute. Import and export can have different windows; on Low ecoSOLAR, for example, import is one price all day but export has peak hours.
-- **Next import period change** and **next export period change**: when the period next changes, with the `period` and `price` from then as attributes. Handy for automations. Unknown when the period doesn't change again before the season ends.
-- **Next pricing season change**: the date the next pricing season starts, when prices or time-of-use windows can change.
-- **Time-of-use chart**: an image of Ecotricity's chart for today (weekday or weekend) and the current season. It follows the GST option, but Ecotricity's own GST-inclusive chart also adds GST to export prices, unlike the price sensors. If Ecotricity hasn't published a season covering today yet, there's no chart to show until it does.
-- **Daily charge**: the total fixed charge per day, broken down into `supplier_rate` (Ecotricity's own fee), `metering_rate` (the metering fee) and `network_rate` (the lines company's charge) as attributes. Any other item on your plan appears under its own name.
-- A price sensor for each period on the plan, such as **Peak import price** and **Off-peak export price**, with the same breakdown attributes. These are disabled by default; enable the ones you want. If a season doesn't price a period separately (no peak rate outside winter, for example) and one price applies all day, that period's sensor shows the price you're actually charged, with a `charged_as` attribute saying which period it is. Parts that are zero, such as a 0c network export rate, aren't listed.
-- **Current controlled price**, if your plan has a controlled-load rate (for example ripple-controlled hot water), with the same breakdown attributes, plus per-period controlled price sensors (disabled by default). Controlled load is switched by your network rather than by the clock, so it has no time windows. Without a controlled-load rate, none of these sensors are created.
-- Prices are shown to 4 decimal places, so a value like $0.1580 isn't rounded up to look like $0.16.
-- Diagnostic details from the electricity registry: **Registered generation capacity** (the solar or other generation the network has approved, in kW), and the meter's `type`, whether it's `smart`, and its `certification_expiry` as attributes of the **Meter** sensor, which shows the meter's serial number.
-
-With your customer portal login as well:
-
-- Hourly import, export and carbon savings statistics going back as far as the portal has data, for the Energy dashboard and statistics graphs
-- **Latest day imported**, **latest day exported** and **latest day carbon savings**, for the latest complete day the portal has, named in their `date` attribute. Each has a `statistic_id` attribute naming the statistic that holds its full history.
-- **Latest day of usage**, the date those totals cover, and **last data sync**, when Ecotricity last loaded meter data into the portal
-
-Details about your connection and settings (ICP, network, pricing category, meter, plan, pricing season, registered generation capacity and last data sync) are listed under **Diagnostic** on the device page. They work in automations and dashboards like any other sensor.
-
-Import prices and daily charges include 15% GST unless you turn that off in the options. Export credits are always shown as published, without GST, because that's what customers who aren't GST-registered are paid.
+- **Current prices**: the import and export price right now, following your plan's peak, off-peak and shoulder windows. Each price is broken down into supplier, network and levy rates via sensor attributes.
+- **Time-of-use periods**: the current period, today's windows, and when the period next changes. Useful for automations and utility meter helpers.
+- **Every price on your plan**: a sensor for each period's price, plus the fixed daily charge. The fixed daily charge is broken down into supplier, network, and metering hire rates via asensor attributes.
+- **Pricing seasons**: the current season and when the next one starts, as prices and windows can change between them.
+- **Time-of-use chart**: Ecotricity's own chart for today, as an image.
+- **Usage history**: hourly import, export and carbon savings statistics, backfilled as far back as the Ecotricity portal data goes. This functionality requires your customer portal login.
+- **Controlled load**: prices for controlled-load supply such as ripple-controlled hot water, if your plan has them.
+- **ICP, smart meter, and regional network info**: sensors for your ICP number, smart meter serial number (with type and certification expiry attributes), and regional network (with import and export loss factor multiplier attributes).
 
 ## Installation
+
+Home Assistant **2026.10** or later is required.
+
+### Automatic via HACS (recommended)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=rhyskoedijk&repository=ha-ecotricity-nz&category=Integration)
+
+Click **Download** in HACS, then restart Home Assistant.
+
+### Manual via HACS
 
 1. In HACS, open the menu, choose **Custom repositories**, and add `https://github.com/rhyskoedijk/ha-ecotricity-nz` as an **Integration**.
 2. Search HACS for **Ecotricity NZ** and download it.
 3. Restart Home Assistant.
 4. Go to **Settings > Devices & services > Add integration** and choose **Ecotricity NZ**.
 
-Home Assistant 2026.10 or later is required.
-
 ## Setup
 
-| Field | Required | Notes |
-| --- | --- | --- |
-| ICP number | Yes | The 15-character number on your bill, for example `0000123456AB1C2` |
-| Customer account number | No | What you log in to the [customer portal](https://portal.ecotricity.co.nz) with |
-| Portal password | No | Your customer portal password |
+| Field                              | Required | Notes                                                                                                                                                                                       |
+| ---------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ICP number                         | Yes      | The 15-character number on your bill, for example `0000123456AB1C2`. You can also [look it up on the Electricity Authority website](https://www.ea.govt.nz/your-power/your-meter/address/). |
+| Ecotricity customer account number | No       | The account number you log in to the [Ecotricity portal](https://portal.ecotricity.co.nz) with.                                                                                             |
+| Ecotricity password                | No       | Your [Ecotricity portal](https://portal.ecotricity.co.nz) password. See [docs/security.md](docs/security.md) for how your login is kept safe.                                               |
 
-Leave the login blank to skip usage data. Next you'll choose your plan from the plans Ecotricity lists for your ICP, by the same names the Ecotricity website uses ("Low ecoSOLAR", for example). Ecotricity's sites don't reliably say which plan you're on, so it's always your choice.
+With only the ICP number you get the pricing sensors. Add your portal login to get the usage sensors and statistics too.
 
-Options (the cog on the integration):
+Next, choose your plan from the plans Ecotricity offers for your ICP. Ecotricity's data doesn't reliably say which plan you're on, so you always pick it yourself.
 
-- **Include GST in prices**: on by default.
-- **Plan**: the plan your ICP is on. Change it here if you switch plans. It's only offered while the integration is running, because the list of plans comes from Ecotricity.
+Once it's set up, these can be changed under <kbd>Options</kbd> (the cog on the integration):
 
-To change or remove the portal login later, use **Reconfigure** on the integration. If the portal starts rejecting the saved login, Home Assistant will ask you to sign in again.
+- **Include GST in prices**: on by default. Adds GST to import prices and daily charges; export prices never include it.
+- **Plan**: the Ecotricity plan your ICP is on. Change it here if you switch plans.
+
+To change or remove your portal login later, use <kbd>Reconfigure</kbd> on the integration. If the portal starts rejecting the saved login, Home Assistant asks you to sign in again.
+
+## Sensor Entities
+
+All entities belong to a device named **ICP &lt;icp&gt;**, so entity IDs look like `sensor.icp_0000123456ab1c2_current_import_price`. Prices are in NZD/kWh and are broken down in their attributes into `supplier_rate`, `network_rate` and any levies such as `ea_levy`. Only the parts your plan has are shown.
+
+### Pricing
+
+| Entity                                      | Description                                                                                 | Attributes                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Current import price                        | Import price for the current half-hour.                                                     | `period`, `supplier_rate`, `network_rate`, `ea_levy`     |
+| Current export price                        | Export credit for the current half-hour. Only created if you export.                        | `period`, `supplier_rate`, `network_rate`                |
+| Current controlled price                    | Controlled-load price. Only created if your plan has one.                                   | `supplier_rate`, `network_rate`                          |
+| Daily charge                                | Total fixed charge per day, in NZD/d.                                                       | `supplier_rate`, `network_rate`, `metering_rate`         |
+| _Period_ import, export or controlled price | One sensor per period on your plan, for example **Peak import price**. Disabled by default. | `charged_as`, `supplier_rate`, `network_rate`, `ea_levy` |
+
+If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is.
+
+### Time of use
+
+| Entity                     | Description                                                         | Attributes                                                    |
+| -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Current import period      | `anytime`, `peak`, `off_peak` or `shoulder`.                        | `windows`, list of today's windows such as `07:00-11:00 peak` |
+| Current export period      | As above, for export. Import and export can have different windows. | `windows`                                                     |
+| Next import period change  | When the import period next changes.                                | `period`, `price`                                             |
+| Next export period change  | When the export period next changes.                                | `period`, `price`                                             |
+| Next pricing season change | When the pricing season next starts.                                |                                                               |
+| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.        |                                                               |
+
+### Usage
+
+These sensors are only enabled if you have supplied your Ecotricity customer account details during integration configuration.
+
+| Entity                    | Description                                                                                                                                                                                         | Attributes             |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Latest day of usage       | The latest complete day that contains meter consumption data in the Ecotricity portal. This generally lags a few days behind todays date, due to the delay in receiving data from your smart meter. |                        |
+| Latest day imported       | kWh imported on the latest day of data.                                                                                                                                                             | `date`, `statistic_id` |
+| Latest day exported       | kWh exported on the latest day of data.                                                                                                                                                             | `date`, `statistic_id` |
+| Latest day carbon savings | kg of carbon saved on the latest day of data.                                                                                                                                                       | `date`, `statistic_id` |
+
+### Diagnostic
+
+These describe your electricity connection and integration settings. They're listed under **Diagnostic** on the device page.
+
+| Entity                         | Description                                                                                  | Attributes                                                  |
+| ------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| ICP                            | Your ICP number.                                                                             |                                                             |
+| Network                        | Your network lines company.                                                                  | `code`, `loss_factor_consumption`, `loss_factor_generation` |
+| Pricing category               | Your network pricing category, such as "Residential Time of Use".                            | `code`                                                      |
+| Meter                          | Your meter serial number.                                                                    | `type`, `smart`, `certification_expiry`                     |
+| Plan                           | Your current Ecotricity plan.                                                                | `internal_name`, `code`                                     |
+| Pricing season                 | The current pricing season and its dates.                                                    | `start`, `end`, `published`                                 |
+| Registered generation capacity | The solar or other generation your network has approved, in kW.                              |                                                             |
+| Last data sync                 | When the last sucessful meter data synchronisation was performed with the Ecotricity portal. |                                                             |
+
+## Statistic Entities
+
+Consumption history is imported as hourly long-term statistics rather, going back as far as the Ecotricity portal has data for (max 5 years). The first import runs in the background and can take a few minutes. Statistic IDs use your ICP **in lower case**.
+
+| Statistic ID                         | Name                                  | Unit |
+| ------------------------------------ | ------------------------------------- | ---- |
+| `ecotricity_nz:<icp>_energy_import`  | Ecotricity &lt;ICP&gt; imported       | kWh  |
+| `ecotricity_nz:<icp>_energy_export`  | Ecotricity &lt;ICP&gt; exported       | kWh  |
+| `ecotricity_nz:<icp>_carbon_savings` | Ecotricity &lt;ICP&gt; carbon savings | kg   |
+
+Each ID is also shown in the `statistic_id` attribute of the matching **Latest day** sensor, ready to copy, and under **Developer tools > Statistics**.
+
+Each hour adds up two of the portal's half-hourly readings. The minimum time period supported by Home Assistant is one hour, so half-hourly readings must be merged to the nearest full hour. If a reading is missing, the hours from that point on wait for it for up to a week, then are imported with whatever the portal has.
 
 ## Using it with the Energy dashboard
 
 1. Go to **Settings > Dashboards > Energy**.
-2. Under **Grid consumption**, add **Ecotricity &lt;ICP&gt; import**. Choose **Use an entity with current price** and pick **Current import price**.
-3. If you export, add **Ecotricity &lt;ICP&gt; export** under **Return to grid**, priced with **Current export price**.
+2. Under **Grid consumption**, add **Ecotricity &lt;ICP&gt; imported** as your energy import sensor.
+3. If you export, add **Ecotricity &lt;ICP&gt; exported** as your energy export sensor.
 
-Usage appears a day or two after it happens, because that's when Ecotricity's portal receives it from the meter.
+Usage will appears a day or two after it happens, depending on when Ecotricity receives and processes your meter data.
 
-## Charting usage history
+![Energy Dashboard](/docs/screenshots/screenshot.energy.dashboard.png)
 
-The usage history is stored as long-term statistics, not as a sensor's history. Their IDs use your ICP in lower case:
+## Using it in charts
 
-- `ecotricity_nz:<icp>_energy_import` (kWh)
-- `ecotricity_nz:<icp>_energy_export` (kWh)
-- `ecotricity_nz:<icp>_carbon_savings` (kg)
+You can emulate the Ecotricity portal consumption chart using a energy date selector and statistics graph cards:
 
-Each one is also shown as the `statistic_id` attribute of the matching **Latest day imported**, **Latest day exported** or **Latest day carbon savings** sensor, ready to copy. **Developer tools > Statistics** lists them too. A statistics graph card shows hourly bars, like the portal's chart:
+![Example Chart](/docs/screenshots/screenshot.example.chart.png)
 
 ```yaml
-type: statistics-graph
-title: Ecotricity usage
-entities:
-  - ecotricity_nz:0000123456ab1c2_energy_import
-  - ecotricity_nz:0000123456ab1c2_energy_export
-chart_type: bar
-period: hour   # or day, week, month
-stat_types:
-  - change
-days_to_show: 7
+type: grid
+cards:
+  - type: energy-date-selection
+    collection_key: energy_ecotricity
+    disable_compare: true
+    grid_options:
+      columns: full
+  - type: statistics-graph
+    chart_type: bar
+    stat_types:
+      - change
+    energy_date_selection: true
+    collection_key: energy_ecotricity
+    entities:
+      - entity: ecotricity_nz:0000123456ab1c2_energy_import
+        name: Electricity consumed
+        color: "#7cb5ec"
+      - entity: ecotricity_nz:0000123456ab1c2_energy_export
+        name: Solar/Export
+        color: "#f2d21b"
+  - type: statistic
+    name: Electricity consumed
+    entity: ecotricity_nz:0000123456ab1c2_energy_import
+    icon: mdi:transmission-tower-import
+    stat_type: change
+    energy_date_selection: true
+    collection_key: energy_ecotricity
+    period:
+      calendar:
+        period: day
+  - type: statistic
+    name: Solar/Export
+    entity: ecotricity_nz:0000123456ab1c2_energy_export
+    icon: mdi:solar-power-variant
+    stat_type: change
+    energy_date_selection: true
+    period:
+      calendar:
+        period: day
+    collection_key: energy_ecotricity
 ```
 
-Carbon savings are in kilograms, so they're easiest to read in a card of their own. Statistics are hourly, so each bar adds up two of the portal's half-hourly readings. If the portal is missing a reading, the hours from that point on wait until it appears, for up to a week; after that the hour is imported with what the portal has.
+Carbon savings are in kilograms, so they're easiest to read in a card of their own.
 
-## Example automation
+## Using it in automations
 
-Run the dishwasher once the off-peak window starts:
+Run the dishwasher once the import off-peak window starts:
 
 ```yaml
 automation:
-  - alias: Dishwasher on off peak
+  - alias: Switch dishwasher on when import price is off-peak
     triggers:
       - trigger: state
         entity_id: sensor.icp_0000123456ab1c2_current_import_period
@@ -108,24 +198,38 @@ automation:
           entity_id: switch.dishwasher
 ```
 
-## How it updates
+Switch a solar inverter to prioritise exporting when export is paid at the peak rate, then back to prioritising battery storage when off-peak starts:
 
-- Plan, season and pricing details refresh once a day and again just after midnight. Ecotricity's seasons change every few months and can be updated at any time, so a new season starts on its first day and any price change shows up within a day. The current price and period update every half hour on their own.
-- Portal usage is fetched once a day. The first time, the whole history is imported in the background, which can take a few minutes. If either site can't be reached, the integration tries again after 30 minutes instead of waiting until the next day.
+```yaml
+automation:
+  - alias: Prioritise solar exporting over battery when export price is peak
+    triggers:
+      - trigger: state
+        entity_id: sensor.icp_0000123456ab1c2_current_export_period
+        to: peak
+        id: peak
+      - trigger: state
+        entity_id: sensor.icp_0000123456ab1c2_current_export_period
+        to: off_peak
+        id: off_peak
+    actions:
+      - action: select.select_option
+        target:
+          entity_id: select.inverter_work_mode
+        data:
+          option: "{{ 'Export first' if trigger.id == 'peak' else 'Battery first' }}"
+```
 
 ## Known limitations
 
-- Ecotricity publishes the peak and off-peak hours only as chart images. The integration reads the bars on those charts and checks them against the plan's prices. If the bars could match more than one set of prices, the chart is treated as unreadable rather than guessed. If a chart can't be read, the current price and period sensors become unavailable and a repair notice appears. Import and export are checked separately, so if only the export bars don't match, the import sensors keep working.
-- Ecotricity's charts only cover weekdays and weekends, so public holidays are priced like any other day of the week. If your network charges public holidays at off-peak rates, the current price on those days may show the weekday rate.
 - Only residential plans are supported.
-- Controlled-load support is based on Ecotricity's site code and the electricity registry's codes, not yet on a real controlled-load ICP. If your controlled-load prices look wrong, please open an issue with your diagnostics.
-- Usage statistics are total imported energy. The portal doesn't separate controlled-load usage.
-- The onboarding website guards its data with a browser check, which the integration answers in code. If Ecotricity changes that check, pricing stops updating until the integration is updated. A repair notice will say so.
+- Ecotricity publishes peak and off-peak hours only as chart images, not as data. The integration reads the bars on those charts and checks them against the plan's prices. If the bars could match more than one set of prices, the chart is treated as unreadable rather than guessed. When a chart can't be read, the current price and period sensors become unavailable and a repair notice appears. Import and export are checked separately, so if only the export chart is unreadable, the import sensors keep working.
+- Controlled-load support hasn't been tested against a real controlled-load ICP. It's based on Ecotricity's site code and the electricity registry's codes. If your controlled-load prices look wrong, please open an issue.
+- Ecotricity's onboarding website guards its data with a browser check, which this integration reproduces in code. If Ecotricity changes that check, pricing updates stop until the integration is updated, and a repair notice tells you so. The pricing already fetched keeps working, so the current season's prices and windows carry on, but a new season won't be picked up.
 
 ## Troubleshooting
 
-- **Current price unavailable**: check **Settings > Repairs** for a notice about time-of-use hours, and the `tou_error` attribute on the sensor.
-- **No usage data**: make sure the portal login works at https://portal.ecotricity.co.nz, then check the **Last data sync** sensor. New accounts may have no data for a few days.
+- **No usage data**: make sure you can log in at https://portal.ecotricity.co.nz, then check the **Last data sync** sensor. New accounts may have no data for a few days.
 - **Wrong prices**: check the **Plan** sensor shows the plan you're on, and change it in the options if not. If Ecotricity stops listing your plan for your ICP, a repair notice asks you to choose again.
 - For anything else, turn on debug logging for the integration, reproduce the problem, and open an issue with the log and the downloaded diagnostics (they hide your ICP, login and address).
 
@@ -135,7 +239,7 @@ Go to **Settings > Devices & services**, open **Ecotricity NZ**, and delete the 
 
 ## Security and privacy
 
-See [SECURITY.md](SECURITY.md) for how your portal login is stored and used, what's sent to Ecotricity, and how to check it yourself.
+See [docs/security.md](docs/security.md) for how your portal login is stored and used, and what data is sent outside Home Assistant.
 
 ## Development
 

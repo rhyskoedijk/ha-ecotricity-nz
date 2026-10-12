@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.image import DATA_COMPONENT as IMAGE_DATA_COMPONENT
-from homeassistant.components.recorder.statistics import get_last_statistics
+from homeassistant.components.recorder.statistics import get_last_statistics, get_metadata
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -178,6 +178,14 @@ async def test_consumption_imports_statistics(
     assert statistic_id(TEST_ICP, CARBON) == "ecotricity_nz:0000123456ab1c2_carbon_savings"
     carbon = await _last_stat(hass, statistic_id(TEST_ICP, CARBON))
     assert carbon["sum"] == pytest.approx(2.5)
+
+    # The names match the daily sensors, which is how they're listed in the Energy dashboard.
+    metadata = await get_instance(hass).async_add_executor_job(get_metadata, hass)
+    assert {stat_id: meta["name"] for stat_id, (_, meta) in metadata.items()} == {
+        statistic_id(TEST_ICP, IMPORT): f"Ecotricity {TEST_ICP} imported",
+        statistic_id(TEST_ICP, EXPORT): f"Ecotricity {TEST_ICP} exported",
+        statistic_id(TEST_ICP, CARBON): f"Ecotricity {TEST_ICP} carbon savings",
+    }
 
     # A second run adds nothing: every complete hour is already imported.
     await portal_config_entry.runtime_data.consumption.async_refresh()

@@ -32,11 +32,11 @@ A change isn't finished until all of these are true:
 3. Every document the change affects is updated in the same change, even if it's only a sentence:
    - `README.md` for anything a user sees: entities, options, setup steps, behaviour, limitations, troubleshooting.
    - `docs/architecture.md` for design, data flow or diagrams.
+   - `docs/security.md` for anything that changes how credentials are stored, sent, logged or redacted, or what's sent outside Home Assistant.
    - `docs/api.md` for anything learnt about Ecotricity's services.
    - `docs/development.md` for tooling, scripts, setup or release steps.
    - `CLAUDE.md` for new conventions, commands, gotchas or architecture.
    - `CHANGELOG.md` under "Unreleased", for anything a user would notice.
-   - `SECURITY.md` for anything that changes how credentials are stored, sent, logged or redacted, or what's sent outside Home Assistant.
 4. UI text changes go in `strings.json`, and `translations/en.json` is an exact copy of it. New translation keys also get an entry in `icons.json`.
 5. `quality_scale.yaml` still matches what the code actually does.
 

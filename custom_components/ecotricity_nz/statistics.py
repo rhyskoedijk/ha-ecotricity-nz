@@ -69,14 +69,14 @@ class Series:
 IMPORT = Series(
     "energy_import",
     FEATURE_IMPORT,
-    "import",
+    "imported",
     UnitOfEnergy.KILO_WATT_HOUR,
     EnergyConverter.UNIT_CLASS,
 )
 EXPORT = Series(
     "energy_export",
     FEATURE_EXPORT,
-    "export",
+    "exported",
     UnitOfEnergy.KILO_WATT_HOUR,
     EnergyConverter.UNIT_CLASS,
 )

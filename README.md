@@ -110,15 +110,21 @@ These describe your electricity connection and integration settings. They're lis
 
 Consumption history is imported as hourly long-term statistics rather, going back as far as the Ecotricity portal has data for (max 5 years). The first import runs in the background and can take a few minutes. Statistic IDs use your ICP **in lower case**.
 
-| Statistic ID                         | Name                                  | Unit |
-| ------------------------------------ | ------------------------------------- | ---- |
-| `ecotricity_nz:<icp>_energy_import`  | Ecotricity &lt;ICP&gt; imported       | kWh  |
-| `ecotricity_nz:<icp>_energy_export`  | Ecotricity &lt;ICP&gt; exported       | kWh  |
-| `ecotricity_nz:<icp>_carbon_savings` | Ecotricity &lt;ICP&gt; carbon savings | kg   |
+| Statistic ID                          | Name                                  | Unit |
+| ------------------------------------- | ------------------------------------- | ---- |
+| `ecotricity_nz:<icp>_energy_imported` | Ecotricity &lt;ICP&gt; imported       | kWh  |
+| `ecotricity_nz:<icp>_energy_exported` | Ecotricity &lt;ICP&gt; exported       | kWh  |
+| `ecotricity_nz:<icp>_carbon_savings`  | Ecotricity &lt;ICP&gt; carbon savings | kg   |
 
 Each ID is also shown in the `statistic_id` attribute of the matching **Latest day** sensor, ready to copy, and under **Developer tools > Statistics**.
 
 Each hour adds up two of the portal's half-hourly readings. The minimum time period supported by Home Assistant is one hour, so half-hourly readings must be merged to the nearest full hour. If a reading is missing, the hours from that point on wait for it for up to a week, then are imported with whatever the portal has.
+
+## Actions
+
+| Action                  | Description                                                                                                                                | Fields                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `ecotricity_nz.refresh` | Fetches the latest pricing and usage now, instead of waiting for the next daily update. Usage only goes as far as the portal has data for. | `config_entry_id` (optional): the ICP to refresh. Can be left out if you only have one. |
 
 ## Using it with the Energy dashboard
 
@@ -151,15 +157,15 @@ cards:
     energy_date_selection: true
     collection_key: energy_ecotricity
     entities:
-      - entity: ecotricity_nz:0000123456ab1c2_energy_import
+      - entity: ecotricity_nz:0000123456ab1c2_energy_imported
         name: Electricity consumed
         color: "#7cb5ec"
-      - entity: ecotricity_nz:0000123456ab1c2_energy_export
+      - entity: ecotricity_nz:0000123456ab1c2_energy_exported
         name: Solar/Export
         color: "#f2d21b"
   - type: statistic
     name: Electricity consumed
-    entity: ecotricity_nz:0000123456ab1c2_energy_import
+    entity: ecotricity_nz:0000123456ab1c2_energy_imported
     icon: mdi:transmission-tower-import
     stat_type: change
     energy_date_selection: true
@@ -169,7 +175,7 @@ cards:
         period: day
   - type: statistic
     name: Solar/Export
-    entity: ecotricity_nz:0000123456ab1c2_energy_export
+    entity: ecotricity_nz:0000123456ab1c2_energy_exported
     icon: mdi:solar-power-variant
     stat_type: change
     energy_date_selection: true

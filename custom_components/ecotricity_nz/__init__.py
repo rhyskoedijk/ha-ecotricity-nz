@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
 from homeassistant.const import __version__ as HA_VERSION  # noqa: N812 - Home Assistant convention
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import (
     async_create_clientsession,
     async_get_clientsession,
@@ -27,11 +28,21 @@ from .coordinator import (
     EcotricityRuntimeData,
     PricingCoordinator,
 )
+from .services import async_setup_services
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.typing import ConfigType
 
 PLATFORMS: list[Platform] = [Platform.IMAGE, Platform.SENSOR]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001 - signature set by Home Assistant
+    """Register the integration's actions, so they exist even while no entry is loaded."""
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> bool:

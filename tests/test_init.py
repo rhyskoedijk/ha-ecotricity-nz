@@ -174,6 +174,10 @@ async def test_consumption_imports_statistics(
         "ecotricity_nz:0000123456ab1c2_carbon_savings"
     )
 
+    # The IDs match the statistic names and the daily sensors: imported and exported.
+    assert statistic_id(TEST_ICP, IMPORT) == "ecotricity_nz:0000123456ab1c2_energy_imported"
+    assert statistic_id(TEST_ICP, EXPORT) == "ecotricity_nz:0000123456ab1c2_energy_exported"
+
     # Carbon savings are a statistic too: 0.05 kg every half-hour.
     assert statistic_id(TEST_ICP, CARBON) == "ecotricity_nz:0000123456ab1c2_carbon_savings"
     carbon = await _last_stat(hass, statistic_id(TEST_ICP, CARBON))

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.1.1 (2026-10-13)
+
+- New **Refresh data** action (`ecotricity_nz.refresh`) fetches the latest pricing and usage straight away, for example from a dashboard button.
+
 ## v0.1.0 (2026-10-13)
 
 A custom integration for [Ecotricity NZ](https://ecotricity.co.nz) customers. It brings your plan's prices, time-of-use periods and half-hourly usage into Home Assistant.

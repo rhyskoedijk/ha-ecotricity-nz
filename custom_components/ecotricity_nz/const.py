@@ -38,6 +38,8 @@ BACKFILL_PAUSE_SECONDS: Final = 2.0
 # Raise a repair issue after this many consecutive failures to read TOU charts or mint tokens.
 FAILURE_ISSUE_THRESHOLD: Final = 3
 
+SERVICE_REFRESH: Final = "refresh"
+
 ISSUE_ATTESTATION: Final = "attestation_failed"
 ISSUE_TOU_CHART: Final = "tou_chart_unreadable"
 ISSUE_PLAN_NOT_FOUND: Final = "plan_not_found"

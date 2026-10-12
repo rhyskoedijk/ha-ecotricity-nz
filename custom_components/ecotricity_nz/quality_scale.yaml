@@ -1,8 +1,6 @@
 rules:
   # Bronze
-  action-setup:
-    status: exempt
-    comment: The integration registers no actions.
+  action-setup: done
   appropriate-polling: done
   brands:
     status: done
@@ -13,9 +11,7 @@ rules:
   dependency-transparency:
     status: done
     comment: No extra requirements. Pillow, used to read timeframe charts, ships with Home Assistant core.
-  docs-actions:
-    status: exempt
-    comment: The integration registers no actions.
+  docs-actions: done
   docs-high-level-description: done
   docs-installation-instructions: done
   docs-removal-instructions: done
@@ -28,9 +24,7 @@ rules:
   unique-config-entry: done
 
   # Silver
-  action-exceptions:
-    status: exempt
-    comment: The integration registers no actions.
+  action-exceptions: done
   config-entry-unloading: done
   docs-configuration-parameters: done
   docs-installation-parameters: done

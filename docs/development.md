@@ -97,7 +97,9 @@ They're rendered from the vector wordmark in the header of ecotricity.co.nz. The
 
 ## Releasing
 
-1. Update `CHANGELOG.md`.
+The git tag is the only place the version is set. `manifest.json` and `pyproject.toml` stay at `0.0.0` in the repository, so an install from a branch shows `0.0.0` rather than a version it isn't.
+
+1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section.
 2. Create a GitHub release with a tag like `v0.2.0`.
 3. The release workflow sets that version in `manifest.json`, zips `custom_components/ecotricity_nz` and attaches `ecotricity_nz.zip`, which HACS installs.
 

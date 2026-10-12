@@ -23,6 +23,15 @@ These apply to everything you write: chat replies, docs, code comments, docstrin
 - Never log or expose secrets. Passwords, tokens and session cookies must not appear in logs, exceptions, diagnostics or test output.
 - Before falling back to image or pixel parsing for any data, exhaust the structured sources (API responses, page data, public datasets) and show the evidence.
 
+## Commit messages
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), in the style of the existing history (`git log`).
+
+- Subject: `type: summary` in lower case, imperative and without a full stop, for example `fix: don't skip past gaps in portal readings`. Use `fix`, `feat`, `refactor`, `docs`, `test`, `build`, `ci` or `chore`.
+- Body: skip it when the subject says it all. Otherwise, a short paragraph or two wrapped at about 76 characters: first why the change was needed (what was wrong, and what it caused), then what changed. Name the sensors, functions or files involved.
+- Keep it brief. Don't list every file touched, restate the diff, or mention tests and docs updated as part of the definition of done.
+- Never add `Co-Authored-By` lines or any other mention of AI tools.
+
 ## Definition of done
 
 A change isn't finished until all of these are true:
@@ -83,6 +92,7 @@ See `docs/architecture.md` for diagrams and `docs/api.md` for the services.
 - Never block the event loop. CPU-bound work such as chart reading goes through `hass.async_add_executor_job`, and time zones load with `dt_util.async_get_time_zone`.
 - Use HA's shared aiohttp session for the onboarding site. The portal needs its own (`async_create_clientsession`) for its cookie jar. One created during entry setup is released by HA when the entry unloads; one created in a config flow isn't, so the flow creates it with `auto_cleanup=False` and calls `detach()` when the check is done.
 - Log with `LOGGER` and `%` formatting, not f-strings.
+- The version in `manifest.json` and `pyproject.toml` stays at `0.0.0`. The release workflow sets the real one from the git tag, so never bump it by hand.
 - Don't add `requirements` to `manifest.json` without a good reason. Pillow already ships with Home Assistant.
 - Brand images live in `brand/` and must keep the home-assistant/brands sizes; see `docs/development.md` before changing them.
 
@@ -114,4 +124,4 @@ Python and tooling:
 - [asyncio development](https://docs.python.org/3/library/asyncio-dev.html)
 - [pytest good practices](https://docs.pytest.org/en/stable/explanation/goodpractices.html)
 - [GitHub Actions security hardening](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions): pin actions to a full commit SHA, use least-privilege `permissions`, and set `persist-credentials: false`.
-- [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for commit messages.
+- [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for commit messages (see "Commit messages" above).

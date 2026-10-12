@@ -57,7 +57,7 @@ async def _setup(
     if options is not None:
         hass.config_entries.async_update_entry(entry, options=options)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
 
 def _state(hass: HomeAssistant, key: str) -> str:
@@ -90,7 +90,7 @@ async def test_pricing_sensors(
     # 11:05am is off peak, and the price changes at the half-hour boundary without a poll.
     freezer.move_to(WINTER_PEAK + timedelta(hours=2, minutes=50))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert _state(hass, "current_import_period") == "off_peak"
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.2765)
 
@@ -121,7 +121,7 @@ async def test_options_flow_reloads(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
     )
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert config_entry.options[CONF_INCLUDE_GST] is False
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.3735)
@@ -189,7 +189,7 @@ async def test_consumption_imports_statistics(
 
     # A second run adds nothing: every complete hour is already imported.
     await portal_config_entry.runtime_data.consumption.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
     stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
     assert stats["sum"] == pytest.approx(37.25)
@@ -223,7 +223,7 @@ async def test_unlisted_plan_falls_back_and_raises_issue(
         config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
     )
     await hass.config_entries.async_reload(config_entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert not issue_registry.async_get_issue(DOMAIN, issue_id)
 
 
@@ -255,7 +255,7 @@ async def test_options_flow_while_setup_is_retrying(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_INCLUDE_GST: False}
     )
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert config_entry.options == {CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
 
@@ -387,7 +387,7 @@ async def test_pricing_retries_soon_after_a_failure(
     mock_onboarding.async_get_icp.side_effect = None
     freezer.tick(RETRY_AFTER_FAILURE + timedelta(seconds=1))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert coordinator.last_update_success
 
 
@@ -409,7 +409,7 @@ async def test_consumption_retries_soon_after_a_failure(
     mock_portal.async_get_indicator.side_effect = None
     freezer.tick(RETRY_AFTER_FAILURE + timedelta(seconds=1))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert consumption.last_update_success
 
 
@@ -454,7 +454,7 @@ async def test_new_season_adds_sensors(
         mock_onboarding.async_get_plans.return_value
     )
     await config_entry.runtime_data.pricing.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is not None
     season = hass.states.get(f"{PREFIX}_pricing_season")
@@ -625,7 +625,7 @@ async def test_period_without_its_own_price_shows_the_price_charged(
     for entity_id in rate_sensors:
         entity_registry.async_update_entity(entity_id, disabled_by=None)
     await hass.config_entries.async_reload(config_entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert _state(hass, "peak_import_price") == _state(hass, "off_peak_import_price")
     peak = _extra(hass, "peak_import_price")
@@ -652,7 +652,7 @@ async def test_plan_names_fall_back_when_mappings_fail(
     # A failed fetch keeps the names from the last good one.
     mock_onboarding.async_get_plan_titles.side_effect = EcotricityConnectionError("down")
     await config_entry.runtime_data.pricing.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert _state(hass, "plan") == "Low ecoSAVER"
 
 
@@ -772,7 +772,7 @@ async def test_time_of_use_chart_image(
     # Saturday, after the midnight refresh: the weekend chart.
     freezer.move_to(datetime(2026, 6, 19, 12, 1, tzinfo=UTC))
     await config_entry.runtime_data.pricing.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert image.image_url == f"{base}{chart}-WE.png"
     assert image.image_last_updated != first_update
 
@@ -781,7 +781,7 @@ async def test_time_of_use_chart_image(
         config_entry, options={CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
     )
     await hass.config_entries.async_reload(config_entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
     assert image.image_url == f"{base}{chart}-WE-NOGST.png"
@@ -1034,7 +1034,7 @@ async def test_new_series_catches_up_without_duplicates(
         ),
     )
     await portal_config_entry.runtime_data.consumption.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
 
     assert (await _last_stat(hass, statistic_id(TEST_ICP, CARBON)))["sum"] == pytest.approx(2.5)
@@ -1070,7 +1070,7 @@ async def test_series_the_portal_lacks_is_skipped(
     # The missing export series doesn't make every sync re-read the whole history: with
     # everything imported, only the latest day is fetched again for the daily sensors.
     await portal_config_entry.runtime_data.consumption.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     start, _ = mock_portal.async_get_half_hourly.await_args.args
     assert mock_portal.async_get_half_hourly.await_count == calls + 1
     assert start == datetime(2026, 4, 5, 0, 0, tzinfo=NZ)
@@ -1115,7 +1115,7 @@ async def test_series_listed_without_readings_is_not_reread(
 
     # The next sync only fetches the latest day, not the whole history again.
     await portal_config_entry.runtime_data.consumption.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     start, _ = mock_portal.async_get_half_hourly.await_args.args
     assert mock_portal.async_get_half_hourly.await_count == calls + 1
     assert start == datetime(2026, 4, 5, 0, 0, tzinfo=NZ)
@@ -1179,7 +1179,7 @@ async def test_recent_gap_holds_back_the_import_until_filled(
     # The portal fills the gap: the rest of the day follows, and the total is complete.
     dropping[0] = False
     await portal_config_entry.runtime_data.consumption.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
     stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
     assert stats["sum"] == pytest.approx(37.25)
@@ -1212,7 +1212,7 @@ async def test_requests_start_at_nz_midnight(
     dropping[0] = False
     calls = mock_portal.async_get_half_hourly.await_count
     await portal_config_entry.runtime_data.consumption.async_refresh()
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
 
     requests = mock_portal.async_get_half_hourly.await_args_list[calls:]

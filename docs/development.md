@@ -4,7 +4,7 @@ Building and testing the integration locally. To install it as a user, see the [
 
 ## Prerequisites
 
-- Python 3.14.2 or later (Home Assistant 2026.10 requires it)
+- Python 3.14, 3.14.2 or later (Home Assistant 2026.10 requires it). `.python-version` pins the minor version, so uv uses 3.14 locally and in CI even when a newer Python is installed.
 - [uv](https://docs.astral.sh/uv/)
 - Linux or macOS. Home Assistant doesn't run natively on Windows; use WSL there.
 

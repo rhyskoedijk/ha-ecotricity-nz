@@ -1,11 +1,12 @@
 # Architecture
 
-This explains how the integration gets from two Ecotricity websites to sensors and Energy dashboard statistics. For the details of each endpoint, see [api.md](api.md).
+This page explains how the integration sensors and statistics are generated from the Ecotricity APIs and websites. For the details of each API endpoints, see [api.md](api.md).
 
 ## Components
 
 ```mermaid
-flowchart LR
+flowchart TB
+
     subgraph Ecotricity
         OB["Onboarding site<br/>(public)"]
         PT["Customer portal<br/>(login)"]
@@ -21,8 +22,9 @@ flowchart LR
 
     subgraph ha["Home Assistant integration"]
         CF["config_flow.py"]
-        PCO["PricingCoordinator<br/>daily + NZ midnight"]
-        CCO["ConsumptionCoordinator<br/>daily"]
+        PCO["PricingCoordinator<br/>weekly fetch, local daily"]
+        PS[("store.py<br/>saved pricing")]
+        CCO["ConsumptionCoordinator<br/>daily, rechecks until new data"]
         TA["tariff.py"]
         ST["statistics.py"]
         SE["sensor.py"]
@@ -45,6 +47,7 @@ flowchart LR
     CF --> OC
     CF --> PC
     OC --> PCO
+    PCO <--> PS
     TF --> PCO
     TA --> PCO
     PC -- "half-hourly readings" --> CCO
@@ -62,7 +65,7 @@ flowchart LR
 
 The `custom_components/ecotricity_nz/api/` package is a small client library. It knows nothing about Home Assistant, which keeps it testable on its own and lets it move to PyPI later, as the Home Assistant guidelines prefer.
 
-Everything above it follows the standard integration pattern: a config entry, two `DataUpdateCoordinator`s held in `entry.runtime_data`, and a sensor platform reading from them. The `ecotricity_nz.refresh` action, registered in `async_setup` so it exists even when no entry is loaded, refreshes both coordinators of an entry on demand and raises `HomeAssistantError` if either update fails.
+Everything above it follows the standard integration pattern: a config entry, two `DataUpdateCoordinator`s held in `entry.runtime_data`, and a sensor platform reading from them. The `ecotricity_nz.refresh` action, registered in `async_setup` so it exists even when no entry is loaded, makes both coordinators of an entry fetch straight away, whatever their schedule, and raises `HomeAssistantError` if either fetch fails.
 
 ## Setting up an entry
 
@@ -72,7 +75,7 @@ It checks the ICP straight away by fetching its details and plans, and checks th
 
 When the entry loads:
 
-1. The pricing coordinator does its first refresh. If it fails, setup is retried later (`ConfigEntryNotReady`).
+1. The pricing coordinator does its first refresh. It loads the saved pricing (see below) and only fetches if something is due, so a restart usually makes no requests and works without an internet connection. If there's no saved pricing and the fetch fails, setup is retried later (`ConfigEntryNotReady`).
 2. The sensors are created.
 3. If there's a portal login, the consumption coordinator starts its first refresh as a background task. A first run can backfill years of history, so it doesn't hold up setup.
 
@@ -87,13 +90,22 @@ flowchart TD
     Q & S --> G["Price today's buckets<br/>(tariff.py)"]
     G --> H{"More than one price<br/>in a direction?"}
     H -- no --> I["Same bucket all day"]
-    H -- yes --> J["Fetch weekday and weekend charts<br/>for the current season"]
+    H -- yes --> J["Weekday and weekend charts<br/>for the season, saved at the last fetch"]
     J --> K["Read bars and match heights<br/>to bucket prices"]
     K -- fits --> L["48 half-hour slots<br/>per day type"]
-    K -- "doesn't fit" --> M["Current price unavailable;<br/>repair issue after 3 failures"]
+    K -- "doesn't fit" --> M["Current price unavailable;<br/>repair issue after 3 fetches"]
 ```
 
-Seasons last a few months and start on the 1st, and Ecotricity can publish new ones or change dates and rates at any time. So the pricing coordinator assumes nothing stays put. It fetches the ICP details, plans, seasons and rates again every 24 hours and again just after each NZ midnight, which means a season starting on the 1st applies from 12:00am that day and any other change shows up within a day. Charts are cached for under a day, so they're downloaded again at least daily too.
+The pricing coordinator keeps fetching separate from working out prices. A fetch downloads the ICP details, plans (with their seasons and rates), plan names, and the chart readings for the current season and the next one once it's published. `store.py` saves all of it to `.storage/ecotricity_nz.<entry_id>.pricing`. Each day's prices and windows are worked out from that saved copy with no requests: rates and seasons carry their own dates, and `SlotMap` covers weekdays and weekends. So once a season's pricing has been fetched, everything keeps working through restarts and without an internet connection, into the next season too if Ecotricity had published it.
+
+Just after each NZ midnight, the coordinator works out the new day from the saved pricing and updates the entities. That isn't a coordinator refresh, and it never fetches. Separately, it checks once a day (`PRICING_CHECK_INTERVAL`), counted from when the entry loaded, so installs don't all fetch at midnight on the 1st. A check only fetches when `_fetch_reason` gives a reason:
+
+- Nothing is saved yet, or the refresh action asked for it.
+- A different plan was chosen in the options, since only the chosen plan's charts are downloaded.
+- A week has passed since the last fetch, to pick up rate changes and newly published seasons.
+- Once a day at most: on the 1st of the month (seasons start on the 1st), on the last day of a season, while no published season covers today or tomorrow, and while today's time-of-use windows can't be worked out.
+
+A reason stays true until a fetch succeeds. After a failure, the check interval backs off: 1 hour, then 2, 4 and 8 hours, staying at 8 hours (`PRICING_RETRY_INTERVAL` to `PRICING_RETRY_MAX_INTERVAL`). A short outage is recovered from at the first retry, an hour later, but a long one, or a broken attestation check, costs only a few requests a day. Once a fetch works, or a check finds nothing due, it goes back to daily. While the saved copy is in use, a failed fetch is logged once and doesn't make anything unavailable. The **Last pricing update** sensor shows when pricing was last fetched.
 
 Nothing here is specific to one network. Network codes, price categories, plan codes, charge buckets, seasons and time-of-use windows all come from the services for the ICP being set up; the fixtures in the tests use a made-up network.
 
@@ -119,7 +131,7 @@ sequenceDiagram
     C->>R: last imported import/export hour
     R-->>C: hour and running sum (or nothing on first run)
     Note over C: resume = hour after the last one,<br/>or the start of the portal's data,<br/>rounded back to NZ midnight
-    loop 7-day chunks, midnight to midnight, up to the end of the data
+    loop 31-day chunks, midnight to midnight, up to the end of the data
         C->>P: half-hourly readings (analysis/valueRequest)
         P-->>C: import, export, carbon
         C->>C: sum hours, stopping at a recent gap
@@ -132,6 +144,8 @@ sequenceDiagram
 Portal data arrives a day or two late, so recording it as sensor state would put every reading at the wrong time. Instead the readings become external statistics (`ecotricity_nz:<icp>_energy_imported`, `_energy_exported` and `_carbon_savings`), which carry their own timestamps and plug straight into the Energy dashboard.
 
 The last imported hour of each statistic is its checkpoint, and each sync continues from the earliest of them, so a statistic added later catches up on the full history. Only the series the portal says it holds are tracked, so an ICP with no export never forces a full re-read. If the portal lists a series but returns no readings for it, the coordinator remembers how far it has read that series, so it's read in full once per Home Assistant start rather than on every sync. Requests always start and end at NZ midnight, even when resuming partway through a day, and hours already imported are skipped. Midnight never falls inside a daylight saving change, so every response starts with an hour whose occurrence is known, and no hour is split between two chunks. Each chunk is written as soon as it's fetched, so an interrupted backfill carries on from where it stopped on the next run. Because the checkpoint never moves backwards, the import stops at the first hour that's missing or short of a half-hour, and later hours wait until the portal fills it in. That keeps the running sum complete. A gap more than seven days older than the portal's latest data is treated as settled and imported as it stands, so a reading the portal never supplies can't hold up everything after it.
+
+The portal takes in new meter data once a day, at a time that isn't known yet. The coordinator imports once a day, and when an import adds no new hours it switches to checking every 3 hours (`CONSUMPTION_RECHECK_INTERVAL`). A recheck only calls `analysis/initData`, and returns the previous summary while the portal's data range is unchanged. As soon as the range moves, a full import runs and the 24-hour interval resumes from then, so the daily import settles just after the portal's own. While rechecking, a full import still runs once a day, in case the portal has filled in an earlier gap.
 
 The coordinator always fetches the last complete day, even when it's already imported, to fill the "latest day" sensors.
 
@@ -164,18 +178,18 @@ sequenceDiagram
 
 ## Errors and recovery
 
-| What goes wrong | What happens |
-| --- | --- |
-| Onboarding site unreachable | `UpdateFailed` with a `retry_after` of 30 minutes; sensors go unavailable until a retry succeeds, rather than for the rest of the day. At setup, the entry retries. |
-| Attestation rejected | As above, and after three failures in a row a repair issue says the site has probably changed. Only a 403, or a challenge or token in JSON the integration can't make sense of, counts. Any other error status from the attestation endpoints, or a reply that isn't JSON at all (such as a maintenance page), is treated as the site being unreachable. |
-| Chart unreadable or prices don't fit | Current price and period sensors go unavailable; everything else keeps working. Import and export are matched separately, so a mismatch on one side leaves the other working. Repair issue after three failures. |
-| Portal login rejected | `ConfigEntryAuthFailed` starts the reauthentication flow. |
-| Portal unreachable | Includes the portal still refusing the session straight after a successful login. The consumption import (including the first backfill) retries after 30 minutes; pricing doesn't use the portal. |
-| Chosen plan no longer listed | The site's default plan is used, and a repair issue asks for a new choice in the options. |
+| What goes wrong                      | What happens                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Onboarding site unreachable          | The saved pricing carries on. The fetch is tried again after 1 hour, then 2, 4 and 8 hours, staying at 8 hours, and the daily check resumes once a fetch works or nothing is due. With nothing saved yet, `UpdateFailed` with the same `retry_after`, and at setup the entry retries.                                                                    |
+| Attestation rejected                 | As above, and after three failures in a row a repair issue says the site has probably changed. Only a 403, or a challenge or token in JSON the integration can't make sense of, counts. Any other error status from the attestation endpoints, or a reply that isn't JSON at all (such as a maintenance page), is treated as the site being unreachable. |
+| Chart unreadable or prices don't fit | Current price and period sensors go unavailable; everything else keeps working. Import and export are matched separately, so a mismatch on one side leaves the other working. Repair issue after three fetches in a row with the problem.                                                                                                                |
+| Portal login rejected                | `ConfigEntryAuthFailed` starts the reauthentication flow.                                                                                                                                                                                                                                                                                                |
+| Portal unreachable                   | Includes the portal still refusing the session straight after a successful login. The consumption import (including the first backfill) retries after 30 minutes; pricing doesn't use the portal.                                                                                                                                                        |
+| Chosen plan no longer listed         | The site's default plan is used, and a repair issue asks for a new choice in the options.                                                                                                                                                                                                                                                                |
 
 ## Data and privacy
 
-The config entry stores the ICP, and the portal account number and password if given. Nothing else is persisted apart from the statistics.
+The config entry stores the ICP, and the portal account number and password if given. The pricing coordinator saves what it fetches from the onboarding site in `.storage/ecotricity_nz.<entry_id>.pricing`, which is deleted with the entry. That includes the ICP number and meter serial numbers, which sensors show. The address and region aren't used by any entity, so they're saved blank. Apart from that, only the statistics are persisted.
 
 Diagnostics redact the ICP, account number, password, address, meter serial numbers and portal indicator ID.
 

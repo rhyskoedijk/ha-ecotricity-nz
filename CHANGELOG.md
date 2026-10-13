@@ -2,15 +2,25 @@
 
 ## Unreleased
 
+## v0.2.0 (2026-10-13)
+
+- Pricing is saved and keeps working through restarts and internet outages, including into the next pricing season (once Ecotricity has published it). Ecotricity's pricing data is now fetched weekly, on the 1st of each month and at the end of each season, instead of twice a day. If it can't be reached, retries slow down from hourly to every 8 hours until it eventually succeeds again.
+- New **Last pricing update** sensor shows when pricing data was last fetched.
+- The **Last data sync** sensor has been renamed to **Last meter data update**, which better describes its purpose: when Ecotricity's portal last received readings from your meter. It's a new entity, so the old one shows as no longer provided and can be safely deleted from the device page after the update.
+- When the daily usage import finds nothing new, the portal is checked again every 3 hours until the data for the day becomes available.
+- The first import of your usage history is now faster, as it asks the portal for 31 days at a time instead of only seven.
+
 ## v0.1.2 (2026-10-13)
 
-- HACS now lists the integration as New Zealand only, and the repository passes every HACS validation check, ready for inclusion in the HACS default store.
+- HACS now lists the integration as New Zealand only, and the repository passes all HACS validation checks.
 
 ## v0.1.1 (2026-10-13)
 
-- New **Refresh data** action (`ecotricity_nz.refresh`) fetches the latest pricing and usage straight away, for example from a dashboard button.
+- New **Refresh data** action (`ecotricity_nz.refresh`) fetches the latest pricing and usage immediately.
 
 ## v0.1.0 (2026-10-13)
+
+Initial release.
 
 A custom integration for [Ecotricity NZ](https://ecotricity.co.nz) customers. It brings your plan's prices, time-of-use periods and half-hourly usage into Home Assistant.
 

@@ -189,8 +189,11 @@
       "latest_day_of_usage": {
         "name": "Latest day of usage"
       },
-      "last_data_sync": {
-        "name": "Last data sync"
+      "last_meter_data_update": {
+        "name": "Last meter data update"
+      },
+      "last_pricing_update": {
+        "name": "Last pricing update"
       },
       "registered_generation_capacity": {
         "name": "Registered generation capacity"

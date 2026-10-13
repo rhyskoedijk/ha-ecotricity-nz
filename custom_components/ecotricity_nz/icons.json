@@ -120,8 +120,11 @@
       "latest_day_of_usage": {
         "default": "mdi:calendar-check"
       },
-      "last_data_sync": {
+      "last_meter_data_update": {
         "default": "mdi:cloud-download-outline"
+      },
+      "last_pricing_update": {
+        "default": "mdi:update"
       },
       "registered_generation_capacity": {
         "default": "mdi:solar-power-variant"

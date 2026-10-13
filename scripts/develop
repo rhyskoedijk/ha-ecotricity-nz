@@ -7,13 +7,13 @@ cd "$(dirname "$0")/.."
 mkdir -p config/custom_components
 ln -sfn "$PWD/custom_components/ecotricity_nz" config/custom_components/ecotricity_nz
 
-# Only what's needed to work on this integration. default_config also loads Bluetooth, network
-# discovery, cloud and mobile app support, which add noise and need extra system packages.
-# Older dev configs that used default_config are replaced.
-if [[ ! -f config/configuration.yaml ]] || grep -q "^default_config:" config/configuration.yaml; then
+# Only configure what's needed to work on this integration.
+# default_config loads Bluetooth, network, discovery, cloud and mobile app support,
+# which all add noise and need extra system packages, so we deploy our own config.
+if [[ ! -f config/configuration.yaml ]]; then
   cat > config/configuration.yaml <<'YAML'
 homeassistant:
-  name: Ecotricity dev
+  name: Ecotricity NZ develop
   time_zone: Pacific/Auckland
   country: NZ
   currency: NZD

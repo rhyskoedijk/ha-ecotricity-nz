@@ -1,12 +1,11 @@
 # Development
 
-Building and testing the integration locally. To install it as a user, see the [README](../README.md); that path goes through HACS and needs none of this.
+This page explains how to build and test the integration locally, for contributors only.
 
 ## Prerequisites
 
-- Python 3.14, 3.14.2 or later (Home Assistant 2026.10 requires it). `.python-version` pins the minor version, so uv uses 3.14 locally and in CI even when a newer Python is installed.
-- [uv](https://docs.astral.sh/uv/)
-- Linux or macOS. Home Assistant doesn't run natively on Windows; use WSL there.
+- Python 3.14 or later. `.python-version` pins the minor version, so uv uses 3.14 locally and in CI even when a newer Python is installed.
+- [uv](https://docs.astral.sh/uv/) package and project manager.
 
 ## Setup
 
@@ -19,16 +18,14 @@ This installs Home Assistant, the test harness and the tools into `.venv`, and i
 ## Checks
 
 ```bash
-uv run pytest                          # all tests
-uv run pytest tests/api                # just the API client tests
-uv run pytest -k reauth                # tests matching a name
-uv run pytest --cov --cov-report=term-missing
-uv run ruff format . && uv run ruff check .
-uv run mypy custom_components
-uv run pre-commit run --all-files
+uv run pytest                                  # all tests
+uv run pytest --cov --cov-report=term-missing  # code coverage
+uv run ruff format . && uv run ruff check .    # formatting and linting
+uv run mypy custom_components                  # type checking (strict)
+uv run pre-commit run --all-files              # git hook checks
 ```
 
-CI runs the same commands and fails below 95% coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked. One of them fails if `translations/en.json` isn't an exact copy of `strings.json`.
+CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
 
 Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using synthetic fixtures in `tests/fixtures`. The chart images there are real Ecotricity charts; they contain only public pricing.
 
@@ -38,9 +35,9 @@ Tests never touch the network. The API client tests mock HTTP responses, and the
 scripts/develop
 ```
 
-This creates a `config/` directory (git-ignored), links the integration into `config/custom_components`, writes a minimal `configuration.yaml` (NZ time zone and currency, debug logging for the integration, and none of `default_config`'s Bluetooth, discovery or cloud integrations), and starts Home Assistant. The first start takes a minute or two while Home Assistant installs its own runtime packages. Open http://localhost:8123, create a user, then go to Settings > Devices & services > Add integration > Ecotricity NZ.
+This creates a `config/` directory (git-ignored), links the integration into `config/custom_components`, writes a minimal `configuration.yaml`, and starts Home Assistant. The first start takes a minute or two while Home Assistant installs its own runtime packages. Open http://localhost:8123, create a user, then go to Settings > Devices & services > Add integration > Ecotricity NZ.
 
-Code changes need a restart: stop it with Ctrl+C and run `scripts/develop` again.
+Code changes need a restart: stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> and run `scripts/develop` again.
 
 The first portal import backfills the whole history in the background, which can take a few minutes on an account with years of data. Watch for it in the log, then check Developer tools > Statistics for `ecotricity_nz:` entries.
 
@@ -54,7 +51,7 @@ Any one of these works:
 
 ## Live smoke test
 
-`scripts/smoke_test.py` runs the real clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
+`scripts/api_smoke_test.py` runs the real clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
 
 Create a `.env` file in the repository root (it's git-ignored):
 
@@ -68,16 +65,14 @@ ECOTRICITY_PASSWORD=your portal password
 Everything except the ICP is optional. Without a plan, the site's default plan is used. Then:
 
 ```bash
-uv run python scripts/smoke_test.py
+uv run python scripts/api_smoke_test.py
 ```
 
 Run it after changing anything in `custom_components/ecotricity_nz/api/`, and whenever the integration starts failing, to see whether Ecotricity has changed something.
 
 ## Refreshing fixtures
 
-When Ecotricity's responses change, capture new ones with your browser's developer tools (Network tab, then Save all as HAR) into a `.captures/` folder in the repository root, which is git-ignored. Delete the captures once the fixtures are built.
-
-HAR files contain your password and session cookies in plain text, so never commit them or paste them anywhere.
+When Ecotricity's responses change, capture new ones with your browser's developer tools (Network tab, then Save all as HAR) into a `.captures/` folder in the repository root, which is git-ignored. Delete the captures once the fixtures are rebuilt.
 
 Build fixtures from the captures with fake data throughout:
 
@@ -93,7 +88,7 @@ Before committing, search the whole repository (not just `tests/fixtures`) for y
 
 `custom_components/ecotricity_nz/brand/` holds the icon and logos Home Assistant shows for the integration. They follow the [home-assistant/brands](https://github.com/home-assistant/brands) image rules: transparent PNGs trimmed to their content, with `icon.png` at 256×256, `logo.png` 128 px tall, and `@2x` versions at double size. `dark_logo.png` is a white version for the dark theme; the icon works on both themes as it is.
 
-They're rendered from the vector wordmark in the header of ecotricity.co.nz. The icon recreates Ecotricity's own favicon (the white wordmark on a `#333D47` circle) at full resolution. If Ecotricity changes its branding, render the new SVG at high resolution and rebuild the files at the same sizes; never upscale a bitmap.
+They're rendered from the vector wordmark in the header of ecotricity.co.nz. The icon recreates Ecotricity's own favicon (the white wordmark on a `#333D47` circle) at full resolution.
 
 ## Releasing
 
@@ -103,4 +98,4 @@ The git tag is the only place the version is set. `manifest.json` and `pyproject
 2. Create a GitHub release with a tag like `v0.2.0`.
 3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which HACS installs.
 
-Nothing is committed, pushed or released without the maintainer's approval; see `CLAUDE.md`.
+Nothing is committed, pushed or released without the maintainer's approval.

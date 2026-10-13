@@ -50,6 +50,7 @@ async def async_get_config_entry_diagnostics(
                     "seasons": [asdict(season) for season in pricing.plan.seasons],
                 },
                 "available_plans": [plan.name for plan in pricing.plans.all_plans],
+                "fetched_at": pricing.fetched_at,
                 "day": pricing.day,
                 "season": asdict(pricing.season) if pricing.season else None,
                 "pricing": asdict(pricing.pricing),

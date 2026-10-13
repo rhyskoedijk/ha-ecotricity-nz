@@ -74,6 +74,23 @@ async def test_refresh_reports_a_failed_update(
     assert err.value.translation_key == "refresh_failed"
 
 
+async def test_refresh_reports_a_failed_pricing_fetch(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+
+    # The saved pricing keeps the sensors going, but the action still says the fetch failed.
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(DOMAIN, SERVICE_REFRESH, blocking=True)
+    assert err.value.translation_key == "refresh_failed"
+    assert config_entry.runtime_data.pricing.last_update_success
+
+
 async def test_refresh_needs_a_loaded_entry(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:

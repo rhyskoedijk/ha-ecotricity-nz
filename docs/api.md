@@ -1,21 +1,23 @@
 # Ecotricity services reference
 
-What we know about the two Ecotricity websites this integration reads, worked out from the public web app's JavaScript and from browser captures in October 2026. Neither site has a published API, so any of this can change without notice. Examples use a made-up ICP (`0000123456AB1C2`) and placeholder IDs.
+This page explains what is known about the two Ecotricity websites this integration reads, worked out from the public web app's JavaScript and from browser captures. Neither site has a published API, so any of this can change without notice. Examples use a made-up ICP (`0000123456AB1C2`) and placeholder IDs.
 
 ## Onboarding site (public)
 
 Base URL `https://onboarding.ecotricity.co.nz`. This is the Angular sign-up app. It reads its service URLs from `/assets/config/config.json`:
 
-| Service | Path |
-| --- | --- |
-| ICP details | `/cgi-bin/RESTICP/energy/{icp}` |
-| Plans | `/cgi-bin/RESTPLAN/plan/` |
+| Service          | Path                                            |
+| ---------------- | ----------------------------------------------- |
+| ICP details      | `/cgi-bin/RESTICP/energy/{icp}`                 |
+| Plans            | `/cgi-bin/RESTPLAN/plan/`                       |
 | Monthly estimate | `/cgi-bin/RESTMONTHLYESTIMATE/monthlyestimate/` |
-| Sign-up session | `/cgi-bin/RESTUSER/user/` |
+| Sign-up session  | `/cgi-bin/RESTUSER/user/`                       |
 
 The integration only reads ICP details, plans and timeframe charts.
 
-The monthly estimate service returns `"Please Call"` for residential ICPs, so it's unused. **Never call `RESTUSER/user/change`.** It saves the visitor's address against a sign-up session and creates a lead at Ecotricity.
+The monthly estimate service returns `"Please Call"` for residential ICPs, so it's unused.
+
+**Never call `RESTUSER/user/change`.** It saves the visitor's address against a sign-up session and creates a lead at Ecotricity.
 
 ### Attestation token
 
@@ -40,13 +42,13 @@ One quirk: lists with a single item are collapsed into a bare object, for exampl
 
 `GET /cgi-bin/RESTPLAN/plan/list_unbundle/` takes these query parameters, all built from the ICP details:
 
-| Parameter | Source |
-| --- | --- |
-| `networkCode` | `network.networkIdentifier`, the distributor's four-letter code, for example `EXLN` |
+| Parameter      | Source                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| `networkCode`  | `network.networkIdentifier`, the distributor's four-letter code, for example `EXLN`         |
 | `capacityCode` | the active `PriceCategoryCode.code`, the distributor's price category, for example `RTOU24` |
-| `meterType` | every channel's `vRegisterContentCode`, comma-joined in order, for example `UN,EG` |
-| `customerType` | `Residential` |
-| `icpNumber` | the ICP |
+| `meterType`    | every channel's `vRegisterContentCode`, comma-joined in order, for example `UN,EG`          |
+| `customerType` | `Residential`                                                                               |
+| `icpNumber`    | the ICP                                                                                     |
 
 The example codes are made up. Real network codes, price categories, register codes and plan codes vary from network to network across the country, so the integration never hard-codes them; it passes on whatever the ICP details contain.
 
@@ -64,12 +66,13 @@ The `default` plan is not necessarily the customer's plan, and neither site reli
 
 ### Seasons change
 
-Seasons last a few months and start on the 1st of a month. The list in a plan response covers the current pricing year, but Ecotricity can add a season, change its dates, or change rates whenever it likes, and the next year's seasons may only appear shortly before 1 April. So nothing about seasons is cached for long:
+Seasons last a few months and start on the 1st of a month. The list in a plan response covers the current pricing year, but Ecotricity can add a season, change its dates, or change rates whenever it likes, and the next year's seasons may only appear shortly before 1 April. So the integration saves what it fetches and works out each day from that, but fetches again often enough to notice changes (the schedule is in [architecture.md](architecture.md#pricing)):
 
-- Plans, seasons and rates are fetched again every day, and again just after each NZ midnight, so a season that starts on the 1st applies from 12:00am that day.
-- Charts are downloaded again at least once a day, in case one is re-issued for the same season dates.
-- If no published season covers today, the plan's prices still apply (rates carry their own validity dates), but the time-of-use hours can't be read. The current price sensors go unavailable until the season is published, and a repair issue is raised after three refreshes in a row without one (about a day and a half).
-- A new season can bring a new bucket (a shoulder rate, say) or a new daily charge. Its price sensor is created at the next refresh.
+- Plans, seasons, rates and charts are fetched weekly, on the 1st of each month, and on the last day of each season. Rates and seasons carry their own dates, so a season that starts on the 1st applies from 12:00am that day without a fetch.
+- Once the next season appears in the plan list, the next fetch downloads its charts too, so the switch doesn't depend on a connection at midnight.
+- Charts are downloaded again at every fetch, in case one is re-issued for the same season dates.
+- If no published season covers today or tomorrow, pricing is fetched daily until one does. The plan's prices still apply meanwhile (rates carry their own validity dates), but the time-of-use hours can't be read for a day with no season. The current price sensors go unavailable until the season is published, and a repair issue is raised after three fetches in a row without one (about three days).
+- A new season can bring a new bucket (a shoulder rate, say) or a new daily charge. Its price sensor is created when the season starts, or straight away if it's already started.
 
 ### How the site combines rates
 
@@ -98,7 +101,7 @@ This hasn't been checked against a real controlled-load ICP yet; the captured IC
 
 Plan prices in the API exclude GST. The web app has a GST toggle that multiplies every row by 1.15, export rates included, but that's a display choice, not what customers are paid.
 
-For residential customers who aren't GST-registered, NZ export buy-back rates are paid as published, with GST added only for GST-registered customers ([Nova Energy](https://www.novaenergy.co.nz/electricity/solar-buy-back) states this outright; [Solar Scout](https://solarscout.co.nz/solar-news/solar-buy-back-rates-nz-2026/) puts it as "if you are not GST-registered the number you see is the number you get"). Ecotricity doesn't state its GST basis, but its [solar page](https://ecotricity.co.nz/solar) quotes ecoSOLAR at 21c peak and 16c off-peak export alongside an 18c low-user import rate, and 18c is the GST-exclusive figure the plan data gives, so the export figures are on the same basis.
+For residential customers who aren't GST-registered, NZ export buy-back rates are paid as published, with GST added only for GST-registered customers. Ecotricity doesn't state its GST basis, but its [solar page](https://ecotricity.co.nz/solar) quotes ecoSOLAR at 21c peak and 16c off-peak export alongside an 18c low-user import rate, and 18c is the GST-exclusive figure the plan data gives, so the export figures are on the same basis.
 
 So the integration adds GST to import prices and daily charges (when the option is on) and never to export credits.
 
@@ -131,13 +134,15 @@ All are called with `X-Requested-With: XMLHttpRequest`.
 - `POST analysis/initData` with `{"fetchCurrentIndicator": true, "fetchLastImport": true, ...}` returns `currentIndicator` with `indicatorID`, `displayName` (the ICP), `lastImportDate`, and, for each feature, `measuredValueRange`, the range of data held.
 - `POST analysis/valueRequest` with `dateType: "INDIVIDUAL"` accepts any range. Each feature request names a `featureID`, a `granularityType` (`HALF_HOUR`, `DAY`, `MONTH`, `YEAR`) and `aggregationType: "SUM"`. Values come back as `{"value", "measuringPeriod": {"from": "to"}}`.
 
-| Feature ID | Meaning | Unit |
-| --- | --- | --- |
-| `POWER_ACTIVE_PURCHASE_CONSUMPTION` | Imported energy | kWh |
-| `POWER_ACTIVE_SUPPLY_CONSUMPTION` | Exported energy | kWh |
-| `EMISSION\|POWER_ACTIVE_PURCHASE_CONSUMPTION\|Carbon Savings` | Carbon savings | kg |
+| Feature ID                                                    | Meaning         | Unit |
+| ------------------------------------------------------------- | --------------- | ---- |
+| `POWER_ACTIVE_PURCHASE_CONSUMPTION`                           | Imported energy | kWh  |
+| `POWER_ACTIVE_SUPPLY_CONSUMPTION`                             | Exported energy | kWh  |
+| `EMISSION\|POWER_ACTIVE_PURCHASE_CONSUMPTION\|Carbon Savings` | Carbon savings  | kg   |
 
 `analysis/csvDownload` takes no parameters and exports whatever the last `valueRequest` asked for. Its export column was a day out of step with the others in the capture, so the integration doesn't use it.
+
+Half-hourly requests for every length from 31 days to five years (1,826 days), all ending on the last full day, are accepted. Every reading came back half an hour long, so the portal doesn't switch to a coarser granularity for long ranges, and the held days matched a request covering only those days, so it doesn't silently shorten them either.
 
 ### Timestamps
 
@@ -151,7 +156,5 @@ When daylight saving starts, 2am to 3am is skipped. The same arithmetic would la
 
 ## Unknowns
 
-- The longest range one `valueRequest` accepts at half-hourly resolution. The integration asks for seven days at a time.
 - How long a portal session lasts.
 - What the portal returns for the hour repeated when daylight saving ends, and for the hour skipped when it starts.
-- Whether weekend charts ever differ from weekday charts on networks that charge peak rates at weekends. The integration always fetches both.

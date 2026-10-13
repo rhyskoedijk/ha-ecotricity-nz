@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import TYPE_CHECKING
 
@@ -42,6 +42,7 @@ from .const import (
     CONF_ICP,
     CONF_PLAN_ID,
     CONSUMPTION_CHUNK,
+    CONSUMPTION_RECHECK_INTERVAL,
     CONSUMPTION_SETTLE_PERIOD,
     CONSUMPTION_UPDATE_INTERVAL,
     DOMAIN,
@@ -50,7 +51,10 @@ from .const import (
     ISSUE_PLAN_NOT_FOUND,
     ISSUE_TOU_CHART,
     LOGGER,
-    PRICING_UPDATE_INTERVAL,
+    PRICING_CHECK_INTERVAL,
+    PRICING_FETCH_INTERVAL,
+    PRICING_RETRY_INTERVAL,
+    PRICING_RETRY_MAX_INTERVAL,
     RETRY_AFTER_FAILURE,
 )
 from .statistics import (
@@ -63,18 +67,13 @@ from .statistics import (
     hourly_totals,
     statistic_id,
 )
+from .store import PricingSnapshot, PricingStore
 from .tariff import DayPricing, SlotMap, price_day, season_for
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from homeassistant.core import HomeAssistant
-
-# Weekday and weekend charts for the current and previous season.
-MAX_CACHED_CHARTS = 4
-# Seasons, rates and charts can change at any time, so charts are downloaded again at least daily.
-# Slightly under a day, so the midnight refresh always gets a fresh copy.
-CHART_MAX_AGE = timedelta(hours=23)
 
 
 def _match_import(chart: ChartReading, pricing: DayPricing) -> tuple[str, ...]:
@@ -119,6 +118,8 @@ class PricingData:
     pricing: DayPricing
     import_slots: SlotMap | None
     export_slots: SlotMap | None
+    fetched_at: datetime
+    """When the pricing was last fetched from Ecotricity."""
     tou_error: str | None = None
 
 
@@ -135,11 +136,17 @@ class ConsumptionSummary:
 
 
 class PricingCoordinator(DataUpdateCoordinator[PricingData]):
-    """Fetch ICP details, plans, seasons and TOU windows.
+    """Work out today's prices and time-of-use windows from pricing fetched from Ecotricity.
 
-    Ecotricity can publish new seasons or change rates at any time, and seasons change every few
-    months (on the 1st). Everything is re-fetched daily and again just after each NZ midnight, so
-    a new season applies from its first day and any change is picked up within a day.
+    Everything fetched is saved (see store.py), and each day's prices and windows are worked out
+    from the saved copy, so they keep working across restarts and without an internet connection.
+    Rates and seasons carry their own dates, and the next season's charts are downloaded ahead of
+    time once it's published, so a new season applies from its first day without a fetch.
+
+    Pricing is fetched again only when Ecotricity might have changed it (see `_fetch_reason`). The
+    coordinator checks once a day while fetches are working, and backs off from an hour to eight
+    hours between attempts while they fail. Just after each NZ midnight it works out the new day
+    from the saved pricing, without checking or fetching.
     """
 
     config_entry: EcotricityConfigEntry
@@ -150,6 +157,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         entry: EcotricityConfigEntry,
         onboarding: OnboardingClient,
         local_tz: tzinfo,
+        store: PricingStore,
     ) -> None:
         """Initialise the coordinator."""
         super().__init__(
@@ -157,36 +165,57 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             LOGGER,
             config_entry=entry,
             name=f"{DOMAIN} pricing",
-            update_interval=PRICING_UPDATE_INTERVAL,
+            update_interval=PRICING_CHECK_INTERVAL,
         )
         self._onboarding = onboarding
         self._local_tz = local_tz
-        self._charts: dict[str, tuple[ChartReading, datetime]] = {}
+        self._store = store
+        self._snapshot: PricingSnapshot | None = None
+        self._loaded = False
+        self._fetch_requested = False
+        self._fetch_error: str | None = None
+        self._fetch_failures = 0
         self._attestation_failures = 0
         self._chart_failures = 0
         self._unsub_midnight: CALLBACK_TYPE | None = None
-        self._plan_titles: dict[str, str] = {}
 
     @property
     def icp(self) -> str:
         """Return the configured ICP number."""
         return str(self.config_entry.data[CONF_ICP])
 
+    async def async_fetch_now(self) -> bool:
+        """Fetch pricing from Ecotricity now, whatever the schedule, and say whether it worked."""
+        self._fetch_requested = True
+        await self.async_refresh()
+        return self.last_update_success and self._fetch_error is None
+
     @callback
     def async_start_midnight_refresh(self) -> None:
-        """Refresh just after each NZ midnight, so a new season's prices apply on the day."""
+        """Work out the new day's prices just after each NZ midnight, from the saved pricing."""
         tomorrow = dt_util.now(self._local_tz).date() + timedelta(days=1)
         midnight = datetime.combine(tomorrow, time(0, 0, 5), self._local_tz)
 
         @callback
         def _refresh(_now: datetime) -> None:
             self._unsub_midnight = None
-            self.hass.async_create_task(self.async_request_refresh())
+            self._async_new_day()
             self.async_start_midnight_refresh()
 
         self._unsub_midnight = async_track_point_in_utc_time(
             self.hass, _refresh, dt_util.as_utc(midnight)
         )
+
+    @callback
+    def _async_new_day(self) -> None:
+        """Update the entities for the new day.
+
+        Not a coordinator refresh, which would move the daily check to midnight for everyone.
+        """
+        if self._snapshot is None:  # pragma: no cover - the first refresh always leaves one
+            return
+        self.data = self._price_day(self._snapshot, dt_util.now(self._local_tz).date())
+        self.async_update_listeners()
 
     async def async_shutdown(self) -> None:
         """Cancel the midnight refresh."""
@@ -196,6 +225,81 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         await super().async_shutdown()
 
     async def _async_update_data(self) -> PricingData:
+        if not self._loaded:
+            self._loaded = True
+            saved = await self._store.async_load()
+            if saved is not None and saved.icp.icp == self.icp:
+                self._snapshot = saved
+        now = dt_util.utcnow()
+        day = now.astimezone(self._local_tz).date()
+        reason = self._fetch_reason(now, day)
+        if reason is None:
+            # Nothing is due, so whatever failed before no longer matters.
+            self._reset_backoff()
+        else:
+            LOGGER.debug("Fetching pricing from Ecotricity: %s", reason)
+            fetched = await self._async_fetch(now, day)
+            if fetched is None and self._snapshot is not None:
+                return self._price_day(self._snapshot, day)
+            if fetched is None:  # pragma: no cover - _async_fetch raises without a saved copy
+                raise UpdateFailed(translation_domain=DOMAIN, translation_key="update_failed")
+            data = self._price_day(fetched, day)
+            # Charts are only downloaded when pricing is fetched, so count unreadable ones per
+            # successful fetch rather than per check.
+            if data.tou_error is None:
+                self._chart_failures = 0
+            else:
+                self._chart_failures += 1
+                LOGGER.warning(
+                    "Could not read the time-of-use windows for %s: %s",
+                    data.plan.code,
+                    data.tou_error,
+                )
+                if self._chart_failures >= FAILURE_ISSUE_THRESHOLD:
+                    self._raise_issue(ISSUE_TOU_CHART, {"plan": data.plan.description})
+            return data
+        if self._snapshot is None:  # pragma: no cover - a fetch is always due without one
+            raise UpdateFailed(translation_domain=DOMAIN, translation_key="update_failed")
+        return self._price_day(self._snapshot, day)
+
+    def _fetch_reason(self, now: datetime, day: date) -> str | None:  # noqa: PLR0911 - one return per reason
+        """Return why pricing should be fetched now, or None if the saved copy will do.
+
+        Seasons start on the 1st, but Ecotricity can publish or change a season, or change a
+        rate, at any time. Until a fetch succeeds, the reason stays true, so it's tried again at
+        each check.
+        """
+        snapshot = self._snapshot
+        if snapshot is None:
+            return "no saved pricing"
+        if self._fetch_requested:
+            return "requested"
+        plan = self._select_plan(snapshot.plans)
+        if snapshot.charts_plan_id != plan.id:
+            return "a different plan was chosen"
+        if now - snapshot.fetched_at >= PRICING_FETCH_INTERVAL:
+            return "weekly update"
+        if snapshot.fetched_at.astimezone(self._local_tz).date() >= day:
+            return None
+        # The rest are checked at most once a day.
+        if day.day == 1:
+            return "start of the month"
+        season = season_for(plan, day)
+        if season is not None and season.end == day:
+            return "last day of the season"
+        tomorrow = day + timedelta(days=1)
+        if _needs_season(plan) and (season is None or season_for(plan, tomorrow) is None):
+            return "next season not published yet"
+        if self._price_day(snapshot, day).tou_error is not None:
+            return "time-of-use windows unavailable"
+        return None
+
+    async def _async_fetch(self, now: datetime, day: date) -> PricingSnapshot | None:
+        """Fetch everything, save it and return it, or return None to carry on with the saved copy.
+
+        Without a saved copy to fall back on, a failure fails the update.
+        """
+        self._fetch_requested = False
         try:
             icp = await self._onboarding.async_get_icp(self.icp)
             plans = await self._onboarding.async_get_plans(icp)
@@ -203,48 +307,85 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             self._attestation_failures += 1
             if self._attestation_failures >= FAILURE_ISSUE_THRESHOLD:
                 self._raise_issue(ISSUE_ATTESTATION)
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="attestation_failed",
-                retry_after=RETRY_AFTER_FAILURE.total_seconds(),
-            ) from err
+            self._fetch_failed(err, "attestation_failed", None)
+            return None
         except EcotricityError as err:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="update_failed",
-                translation_placeholders={"error": str(err)},
-                retry_after=RETRY_AFTER_FAILURE.total_seconds(),
-            ) from err
+            self._fetch_failed(err, "update_failed", {"error": str(err)})
+            return None
         self._attestation_failures = 0
         self._clear_issue(ISSUE_ATTESTATION)
-        plans = plans.with_titles(await self._async_plan_titles())
 
+        titles = await self._async_plan_titles()
+        plans = plans.with_titles(titles)
         plan = self._select_plan(plans)
-
-        day = dt_util.now(self._local_tz).date()
-        season = season_for(plan, day)
-        pricing = price_day(plan, day)
-
-        import_slots, export_slots, tou_error = await self._async_slot_maps(plan, season, pricing)
-        return PricingData(
+        snapshot = PricingSnapshot(
             icp=icp,
             plans=plans,
-            plan=plan,
-            day=day,
-            season=season,
-            pricing=pricing,
-            import_slots=import_slots,
-            export_slots=export_slots,
-            tou_error=tou_error,
+            fetched_at=now,
+            plan_titles=titles,
+            charts=await self._async_charts(plan, day),
+            charts_plan_id=plan.id,
         )
+        self._snapshot = snapshot
+        self._reset_backoff()
+        await self._store.async_save(snapshot)
+        return snapshot
+
+    def _fetch_failed(
+        self, err: EcotricityError, translation_key: str, placeholders: dict[str, str] | None
+    ) -> None:
+        """Back off, and fall back to the saved pricing or fail the update if there isn't any."""
+        self._fetch_failures += 1
+        retry = min(
+            PRICING_RETRY_INTERVAL * 2 ** (self._fetch_failures - 1), PRICING_RETRY_MAX_INTERVAL
+        )
+        self.update_interval = retry
+        if self._snapshot is None:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key=translation_key,
+                translation_placeholders=placeholders,
+                retry_after=retry.total_seconds(),
+            ) from err
+        # Warn once, not at every retry while the connection is down.
+        log = LOGGER.debug if self._fetch_error is not None else LOGGER.warning
+        log(
+            "Could not fetch pricing from Ecotricity, so the pricing saved %s is used: %s",
+            self._snapshot.fetched_at.astimezone(self._local_tz).isoformat(timespec="minutes"),
+            err,
+        )
+        self._fetch_error = str(err)
+
+    def _reset_backoff(self) -> None:
+        """Go back to checking once a day."""
+        self._fetch_error = None
+        self._fetch_failures = 0
+        self.update_interval = PRICING_CHECK_INTERVAL
 
     async def _async_plan_titles(self) -> dict[str, str]:
         """Return customer-facing plan names, keeping the last good set if the fetch fails."""
         try:
-            self._plan_titles = await self._onboarding.async_get_plan_titles()
+            return await self._onboarding.async_get_plan_titles()
         except EcotricityError as err:
             LOGGER.debug("Could not fetch plan names, keeping the previous ones: %s", err)
-        return self._plan_titles
+        return dict(self._snapshot.plan_titles) if self._snapshot else {}
+
+    async def _async_charts(self, plan: Plan, day: date) -> dict[str, ChartReading]:
+        """Download and read the charts for this season and, once it's published, the next.
+
+        A chart that can't be downloaded or read keeps its saved reading, if there is one.
+        """
+        saved = self._snapshot.charts if self._snapshot else {}
+        charts: dict[str, ChartReading] = {}
+        for path in _chart_paths(plan, day):
+            try:
+                data = await self._onboarding.async_get_chart(path)
+                charts[path] = await self.hass.async_add_executor_job(read_chart, data)
+            except EcotricityError as err:
+                LOGGER.debug("Could not read the chart %s: %s", path, err)
+                if path in saved:
+                    charts[path] = saved[path]
+        return charts
 
     def _select_plan(self, plans: PlanList) -> Plan:
         """Return the plan chosen in the options.
@@ -259,83 +400,26 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._raise_issue(ISSUE_PLAN_NOT_FOUND, {"default": plans.default.name})
         return plans.default
 
-    async def _async_slot_maps(
-        self, plan: Plan, season: Season | None, pricing: DayPricing
-    ) -> tuple[SlotMap | None, SlotMap | None, str | None]:
-        """Work out which bucket applies in each half-hour, reading the plan's charts if needed."""
-        flat_import = (
-            SlotMap.flat(next(iter(pricing.import_buckets)))
-            if len(pricing.import_buckets) == 1
-            else None
+    def _price_day(self, snapshot: PricingSnapshot, day: date) -> PricingData:
+        """Work out a day's prices and windows from saved pricing. Makes no requests."""
+        plan = self._select_plan(snapshot.plans)
+        season = season_for(plan, day)
+        pricing = price_day(plan, day)
+        import_slots, export_slots, tou_error = _slot_maps(snapshot, plan, season, pricing)
+        if tou_error is None:
+            self._clear_issue(ISSUE_TOU_CHART)
+        return PricingData(
+            icp=snapshot.icp,
+            plans=snapshot.plans,
+            plan=plan,
+            day=day,
+            season=season,
+            pricing=pricing,
+            import_slots=import_slots,
+            export_slots=export_slots,
+            fetched_at=snapshot.fetched_at,
+            tou_error=tou_error,
         )
-        flat_export = (
-            SlotMap.flat(next(iter(pricing.export_buckets)))
-            if len(pricing.export_buckets) == 1
-            else None
-        )
-        need_import = flat_import is None and bool(pricing.import_buckets)
-        need_export = flat_export is None and bool(pricing.export_buckets)
-        if not need_import and not need_export:
-            self._chart_failures = 0
-            return flat_import, flat_export, None
-
-        import_slots, export_slots = flat_import, flat_export
-        errors: list[str] = []
-        try:
-            weekday = await self._async_chart(plan.timeframe_chart_weekday, season)
-            weekend = await self._async_chart(plan.timeframe_chart_weekend, season)
-        except (ChartReadError, EcotricityError) as err:
-            errors.append(str(err))
-        else:
-            # Match import and export separately, so a problem with one keeps the other. Each
-            # side only looks at the other to settle a chart its own bars can't.
-            if need_import:
-                try:
-                    import_slots = SlotMap(
-                        weekday=_match_import(weekday, pricing),
-                        weekend=_match_import(weekend, pricing),
-                    )
-                except ChartReadError as err:
-                    errors.append(f"Import: {err}")
-            if need_export:
-                try:
-                    export_slots = SlotMap(
-                        weekday=_match_export(weekday, pricing),
-                        weekend=_match_export(weekend, pricing),
-                    )
-                except ChartReadError as err:
-                    errors.append(f"Export: {err}")
-        if errors:
-            error = "; ".join(errors)
-            self._chart_failures += 1
-            LOGGER.warning("Could not read the time-of-use windows for %s: %s", plan.code, error)
-            if self._chart_failures >= FAILURE_ISSUE_THRESHOLD:
-                self._raise_issue(ISSUE_TOU_CHART, {"plan": plan.description})
-            return import_slots, export_slots, error
-        self._chart_failures = 0
-        self._clear_issue(ISSUE_TOU_CHART)
-        return import_slots, export_slots, None
-
-    async def _async_chart(self, template: str | None, season: Season | None) -> ChartReading:
-        if not template:
-            raise ChartReadError("The plan has no timeframe chart")
-        if season is None and needs_season(template):
-            # Ecotricity may not have published the next season yet. The daily refresh picks it
-            # up as soon as it appears in the plan list.
-            raise ChartReadError("No published season covers today")
-        path = chart_path(template, season.start, season.end) if season else template
-        now = dt_util.utcnow()
-        cached = self._charts.get(path)
-        if cached is not None and now - cached[1] < CHART_MAX_AGE:
-            return cached[0]
-        data = await self._onboarding.async_get_chart(path)
-        reading = await self.hass.async_add_executor_job(read_chart, data)
-        # Re-insert so the dict stays ordered oldest first, then drop the oldest beyond the limit.
-        self._charts.pop(path, None)
-        self._charts[path] = (reading, now)
-        while len(self._charts) > MAX_CACHED_CHARTS:
-            del self._charts[next(iter(self._charts))]
-        return reading
 
     def _raise_issue(self, issue_id: str, placeholders: dict[str, str] | None = None) -> None:
         ir.async_create_issue(
@@ -352,8 +436,104 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         ir.async_delete_issue(self.hass, DOMAIN, f"{issue_id}_{self.config_entry.entry_id}")
 
 
+def _needs_season(plan: Plan) -> bool:
+    """Return whether the plan's charts depend on the season."""
+    return any(
+        template and needs_season(template)
+        for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend)
+    )
+
+
+def _chart_path(template: str | None, season: Season | None) -> str:
+    if not template:
+        raise ChartReadError("The plan has no timeframe chart")
+    if season is None and needs_season(template):
+        # Ecotricity may not have published the season yet. It's fetched daily until it is.
+        raise ChartReadError("No published season covers today")
+    return chart_path(template, season.start, season.end) if season else template
+
+
+def _chart_paths(plan: Plan, day: date) -> list[str]:
+    """Return the chart paths for the day's season and the one after it, where published."""
+    season = season_for(plan, day)
+    seasons = [season]
+    if season is not None and (following := season_for(plan, season.end + timedelta(days=1))):
+        seasons.append(following)
+    paths: list[str] = []
+    for item in seasons:
+        for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend):
+            try:
+                path = _chart_path(template, item)
+            except ChartReadError:
+                continue
+            if path not in paths:
+                paths.append(path)
+    return paths
+
+
+def _slot_maps(
+    snapshot: PricingSnapshot, plan: Plan, season: Season | None, pricing: DayPricing
+) -> tuple[SlotMap | None, SlotMap | None, str | None]:
+    """Work out which bucket applies in each half-hour, from the saved chart readings."""
+    flat_import = (
+        SlotMap.flat(next(iter(pricing.import_buckets)))
+        if len(pricing.import_buckets) == 1
+        else None
+    )
+    flat_export = (
+        SlotMap.flat(next(iter(pricing.export_buckets)))
+        if len(pricing.export_buckets) == 1
+        else None
+    )
+    need_import = flat_import is None and bool(pricing.import_buckets)
+    need_export = flat_export is None and bool(pricing.export_buckets)
+    if not need_import and not need_export:
+        return flat_import, flat_export, None
+
+    import_slots, export_slots = flat_import, flat_export
+    errors: list[str] = []
+    try:
+        weekday = _saved_chart(snapshot, _chart_path(plan.timeframe_chart_weekday, season))
+        weekend = _saved_chart(snapshot, _chart_path(plan.timeframe_chart_weekend, season))
+    except ChartReadError as err:
+        errors.append(str(err))
+    else:
+        # Match import and export separately, so a problem with one keeps the other. Each side
+        # only looks at the other to settle a chart its own bars can't.
+        if need_import:
+            try:
+                import_slots = SlotMap(
+                    weekday=_match_import(weekday, pricing),
+                    weekend=_match_import(weekend, pricing),
+                )
+            except ChartReadError as err:
+                errors.append(f"Import: {err}")
+        if need_export:
+            try:
+                export_slots = SlotMap(
+                    weekday=_match_export(weekday, pricing),
+                    weekend=_match_export(weekend, pricing),
+                )
+            except ChartReadError as err:
+                errors.append(f"Export: {err}")
+    return import_slots, export_slots, "; ".join(errors) or None
+
+
+def _saved_chart(snapshot: PricingSnapshot, path: str) -> ChartReading:
+    if (chart := snapshot.charts.get(path)) is None:
+        raise ChartReadError(f"The chart {path} couldn't be downloaded or read")
+    return chart
+
+
 class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
-    """Import half-hourly portal data into statistics once a day, backfilling on first run."""
+    """Import half-hourly portal data into statistics once a day, backfilling on first run.
+
+    The portal takes in new meter data once a day, at a time that isn't known. When a daily import
+    finds nothing new, the portal is checked again every few hours with a single request, and
+    the next import runs as soon as new data appears. That moves the daily import to just after
+    the portal's own, without needing to know when that is. If the portal's timing turns out to be
+    consistent, a fixed time could replace this (issue #6).
+    """
 
     config_entry: EcotricityConfigEntry
 
@@ -376,15 +556,28 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         self._local_tz = local_tz
         # How far each series has been read this session, for series with no statistic yet.
         self._scanned_until: dict[Series, datetime] = {}
+        self._import_requested = False
+        # Set while waiting for the portal's next data, with the latest data and when it was read.
+        self._waiting_since: tuple[datetime | None, datetime] | None = None
 
     @property
     def icp(self) -> str:
         """Return the configured ICP number."""
         return str(self.config_entry.data[CONF_ICP])
 
+    async def async_fetch_now(self) -> bool:
+        """Import from the portal now, whatever the schedule, and say whether it worked."""
+        self._import_requested = True
+        await self.async_refresh()
+        return self.last_update_success
+
     async def _async_update_data(self) -> ConsumptionSummary:
+        requested, self._import_requested = self._import_requested, False
         try:
-            return await self._async_import()
+            indicator = await self._portal.async_get_indicator()
+            if not requested and self.data is not None and self._still_waiting(indicator):
+                return replace(self.data, indicator=indicator, hours_imported=0)
+            summary = await self._async_import(indicator)
         except AuthError as err:
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN, translation_key="invalid_auth"
@@ -396,9 +589,28 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
                 translation_placeholders={"error": str(err)},
                 retry_after=RETRY_AFTER_FAILURE.total_seconds(),
             ) from err
+        if summary.hours_imported:
+            self._waiting_since = None
+            self.update_interval = CONSUMPTION_UPDATE_INTERVAL
+        else:
+            self._waiting_since = (indicator.data_end, dt_util.utcnow())
+            self.update_interval = CONSUMPTION_RECHECK_INTERVAL
+        return summary
 
-    async def _async_import(self) -> ConsumptionSummary:
-        indicator = await self._portal.async_get_indicator()
+    def _still_waiting(self, indicator: PortalIndicator) -> bool:
+        """Return True while the portal has nothing new since the last import found nothing.
+
+        A full import still runs once a day, so gaps the portal fills in later are picked up.
+        """
+        if self._waiting_since is None:
+            return False
+        data_end, since = self._waiting_since
+        return (
+            indicator.data_end == data_end
+            and dt_util.utcnow() - since < CONSUMPTION_UPDATE_INTERVAL
+        )
+
+    async def _async_import(self, indicator: PortalIndicator) -> ConsumptionSummary:
         if indicator.data_start is None or indicator.data_end is None:
             return ConsumptionSummary(indicator=indicator)
 

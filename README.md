@@ -10,7 +10,7 @@ This is a community integration and isn't affiliated with Ecotricity NZ. The Eco
 
 - **Current prices**: the import and export price right now, following your plan's peak, off-peak and shoulder windows. Each price is broken down into supplier, network and levy rates via sensor attributes.
 - **Time-of-use periods**: the current period, today's windows, and when the period next changes. Useful for automations and utility meter helpers.
-- **Every price on your plan**: a sensor for each period's price, plus the fixed daily charge. The fixed daily charge is broken down into supplier, network, and metering hire rates via asensor attributes.
+- **Every price on your plan**: a sensor for each period's price, plus the fixed daily charge. The fixed daily charge is broken down into supplier, network, and metering hire rates via sensor attributes.
 - **Pricing seasons**: the current season and when the next one starts, as prices and windows can change between them.
 - **Time-of-use chart**: Ecotricity's own chart for today, as an image.
 - **Usage history**: hourly import, export and carbon savings statistics, backfilled as far back as the Ecotricity portal data goes. This functionality requires your customer portal login.
@@ -95,20 +95,21 @@ These sensors are only enabled if you have supplied your Ecotricity customer acc
 
 These describe your electricity connection and integration settings. They're listed under **Diagnostic** on the device page.
 
-| Entity                         | Description                                                                                  | Attributes                                                  |
-| ------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| ICP                            | Your ICP number.                                                                             |                                                             |
-| Network                        | Your network lines company.                                                                  | `code`, `loss_factor_consumption`, `loss_factor_generation` |
-| Pricing category               | Your network pricing category, such as "Residential Time of Use".                            | `code`                                                      |
-| Meter                          | Your meter serial number.                                                                    | `type`, `smart`, `certification_expiry`                     |
-| Plan                           | Your current Ecotricity plan.                                                                | `internal_name`, `code`                                     |
-| Pricing season                 | The current pricing season and its dates.                                                    | `start`, `end`, `published`                                 |
-| Registered generation capacity | The solar or other generation your network has approved, in kW.                              |                                                             |
-| Last data sync                 | When the last sucessful meter data synchronisation was performed with the Ecotricity portal. |                                                             |
+| Entity                         | Description                                                           | Attributes                                                  |
+| ------------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------- |
+| ICP                            | Your ICP number.                                                      |                                                             |
+| Network                        | Your network lines company.                                           | `code`, `loss_factor_consumption`, `loss_factor_generation` |
+| Pricing category               | Your network pricing category, such as "Residential Time of Use".     | `code`                                                      |
+| Meter                          | Your meter serial number.                                             | `type`, `smart`, `certification_expiry`                     |
+| Plan                           | Your current Ecotricity plan.                                         | `internal_name`, `code`                                     |
+| Pricing season                 | The current pricing season and its dates.                             | `start`, `end`, `published`                                 |
+| Registered generation capacity | The solar or other generation your network has approved, in kW.       |                                                             |
+| Last meter data update         | When Ecotricity's portal last received new readings from your meter.  |                                                             |
+| Last pricing update            | When this integration last fetched pricing from Ecotricity's website. |                                                             |
 
 ## Statistic Entities
 
-Consumption history is imported as hourly long-term statistics rather, going back as far as the Ecotricity portal has data for (max 5 years). The first import runs in the background and can take a few minutes. Statistic IDs use your ICP **in lower case**.
+Consumption history is imported as hourly long-term statistics, going back as far as the Ecotricity portal has data for. The first import runs in the background and can take a few minutes. Statistic IDs use your ICP **in lower case**.
 
 | Statistic ID                          | Name                                  | Unit |
 | ------------------------------------- | ------------------------------------- | ---- |
@@ -122,9 +123,15 @@ Each hour adds up two of the portal's half-hourly readings. The minimum time per
 
 ## Actions
 
-| Action                  | Description                                                                                                                                | Fields                                                                                  |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `ecotricity_nz.refresh` | Fetches the latest pricing and usage now, instead of waiting for the next daily update. Usage only goes as far as the portal has data for. | `config_entry_id` (optional): the ICP to refresh. Can be left out if you only have one. |
+| Action                  | Description                                                                                                                                    | Fields                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `ecotricity_nz.refresh` | Fetches the latest pricing and usage now, instead of waiting for the next scheduled update. Usage only goes as far as the portal has data for. | `config_entry_id` (optional): the ICP to refresh. Can be left out if you only have one. |
+
+## Updates and working offline
+
+Pricing data comes from Ecotricity's public website, which requires internet access. The integration saves this data locally when fetched, and works out each day's prices and periods from the saved copy, so they keep working through restarts and internet outages. Once Ecotricity publishes the next season, the next fetch saves its pricing and time-of-use charts too, so the new season starts on time even if you're offline at midnight. The integration checks once a day whether anything needs fetching. It fetches weekly, on the 1st of each month, on the last day of each season, and daily while next season's pricing isn't published yet. The **Last pricing update** sensor shows when it last fetched.
+
+Usage data is imported from the Ecotricity customer portal once a day. If an import finds nothing new, the integration checks the portal again every 3 hours until the day's data appears.
 
 ## Using it with the Energy dashboard
 
@@ -231,11 +238,11 @@ automation:
 - Only residential plans are supported.
 - Ecotricity publishes peak and off-peak hours only as chart images, not as data. The integration reads the bars on those charts and checks them against the plan's prices. If the bars could match more than one set of prices, the chart is treated as unreadable rather than guessed. When a chart can't be read, the current price and period sensors become unavailable and a repair notice appears. Import and export are checked separately, so if only the export chart is unreadable, the import sensors keep working.
 - Controlled-load support hasn't been tested against a real controlled-load ICP. It's based on Ecotricity's site code and the electricity registry's codes. If your controlled-load prices look wrong, please open an issue.
-- Ecotricity's onboarding website guards its data with a browser check, which this integration reproduces in code. If Ecotricity changes that check, pricing updates stop until the integration is updated, and a repair notice tells you so. The pricing already fetched keeps working, so the current season's prices and windows carry on, but a new season won't be picked up.
+- Ecotricity's onboarding website guards its data with a browser check, which this integration reproduces in code. If Ecotricity changes that check, pricing updates stop until the integration is updated, and a repair notice tells you so. The saved pricing keeps working, so the current season's prices and windows carry on, and so does the next season if Ecotricity had already published it. A season published after that won't be picked up.
 
 ## Troubleshooting
 
-- **No usage data**: make sure you can log in at https://portal.ecotricity.co.nz, then check the **Last data sync** sensor. New accounts may have no data for a few days.
+- **No usage data**: make sure you can log in at https://portal.ecotricity.co.nz, then check the **Last meter data update** sensor. New accounts may have no data for a few days.
 - **Wrong prices**: check the **Plan** sensor shows the plan you're on, and change it in the options if not. If Ecotricity stops listing your plan for your ICP, a repair notice asks you to choose again.
 - For anything else, turn on debug logging for the integration, reproduce the problem, and open an issue with the log and the downloaded diagnostics (they hide your ICP, login and address).
 

@@ -29,6 +29,7 @@ from .coordinator import (
     PricingCoordinator,
 )
 from .services import async_setup_services
+from .store import PricingStore
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -67,7 +68,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
             server_tz=server_tz,
         )
 
-    pricing = PricingCoordinator(hass, entry, onboarding, local_tz)
+    pricing = PricingCoordinator(
+        hass, entry, onboarding, local_tz, PricingStore(hass, entry.entry_id)
+    )
     await pricing.async_config_entry_first_refresh()
     pricing.async_start_midnight_refresh()
 
@@ -85,6 +88,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
             hass, consumption.async_refresh(), f"{DOMAIN} consumption import"
         )
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> None:
+    """Delete the saved pricing when the entry is removed."""
+    await PricingStore(hass, entry.entry_id).async_remove()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> bool:

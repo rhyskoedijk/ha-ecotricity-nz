@@ -141,6 +141,13 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         value_fn=lambda data: next_season_change(data.plan, data.day),
     ),
     PricingSensorDescription(
+        key="last_pricing_update",
+        translation_key="last_pricing_update",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.fetched_at,
+    ),
+    PricingSensorDescription(
         key="registered_generation_capacity",
         translation_key="registered_generation_capacity",
         device_class=SensorDeviceClass.POWER,
@@ -619,8 +626,8 @@ CONSUMPTION_SENSORS: tuple[ConsumptionSensorDescription, ...] = (
         value_fn=lambda data: data.day,
     ),
     ConsumptionSensorDescription(
-        key="last_data_sync",
-        translation_key="last_data_sync",
+        key="last_meter_data_update",
+        translation_key="last_meter_data_update",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.indicator.last_import,

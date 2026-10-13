@@ -40,8 +40,12 @@ from custom_components.ecotricity_nz.api.timeframes import ChartReadError
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST,
     CONF_PLAN_ID,
+    CONSUMPTION_RECHECK_INTERVAL,
+    CONSUMPTION_UPDATE_INTERVAL,
     DOMAIN,
     FAILURE_ISSUE_THRESHOLD,
+    PRICING_FETCH_INTERVAL,
+    PRICING_RETRY_INTERVAL,
     RETRY_AFTER_FAILURE,
 )
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
@@ -133,13 +137,14 @@ async def test_flat_plan_needs_no_chart(
     mock_onboarding: MagicMock,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    # Low User outside winter: one import price all day, so no chart is fetched.
+    # Low User outside winter: one import price all day, so no chart is needed.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    mock_onboarding.async_get_chart.side_effect = EcotricityConnectionError("down")
     await _setup(hass, config_entry, {CONF_PLAN_ID: "3001"})
 
     assert _state(hass, "plan") == "Low ecoANYTIME"
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
-    mock_onboarding.async_get_chart.assert_not_awaited()
+    assert config_entry.runtime_data.pricing.data.tou_error is None
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -278,11 +283,14 @@ async def test_repeated_attestation_failures_raise_issue(
 
     mock_onboarding.async_get_icp.side_effect = AttestationError("blocked")
     for _ in range(FAILURE_ISSUE_THRESHOLD):
-        await coordinator.async_refresh()
+        assert not await coordinator.async_fetch_now()
     assert issue_registry.async_get_issue(DOMAIN, issue_id)
+    # The saved pricing carries on meanwhile.
+    assert coordinator.last_update_success
+    assert _state(hass, "current_import_price") != "unavailable"
 
     mock_onboarding.async_get_icp.side_effect = None
-    await coordinator.async_refresh()
+    assert await coordinator.async_fetch_now()
     assert not issue_registry.async_get_issue(DOMAIN, issue_id)
 
 
@@ -303,10 +311,15 @@ async def test_unreadable_chart_leaves_price_unavailable(
     # The per-rate and daily sensors still work.
     assert float(_state(hass, "daily_charge")) == pytest.approx(1.7825)
 
+    # Counted per fetch, not per check, since charts are only downloaded when pricing is fetched.
     coordinator = config_entry.runtime_data.pricing
-    for _ in range(FAILURE_ISSUE_THRESHOLD - 1):
+    issue_id = f"tou_chart_unreadable_{config_entry.entry_id}"
+    for _ in range(FAILURE_ISSUE_THRESHOLD):
         await coordinator.async_refresh()
-    assert issue_registry.async_get_issue(DOMAIN, f"tou_chart_unreadable_{config_entry.entry_id}")
+    assert not issue_registry.async_get_issue(DOMAIN, issue_id)
+    for _ in range(FAILURE_ISSUE_THRESHOLD - 1):
+        await coordinator.async_fetch_now()
+    assert issue_registry.async_get_issue(DOMAIN, issue_id)
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -326,7 +339,8 @@ async def test_refreshes_after_nz_midnight(
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert mock_onboarding.async_get_icp.await_count > calls
+    # The new season comes from the saved pricing. Fetching waits for the daily check.
+    assert mock_onboarding.async_get_icp.await_count == calls
     assert _state(hass, "pricing_season") == "Seasonal Rates 10/2026 - 12/2026"
 
 
@@ -379,20 +393,27 @@ async def test_pricing_retries_soon_after_a_failure(
     mock_onboarding: MagicMock,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """A failed refresh is retried well before the next daily refresh."""
+    """A failed fetch keeps the saved pricing, and is tried again an hour later."""
     freezer.move_to(WINTER_PEAK)
     await _setup(hass, config_entry)
-    coordinator = config_entry.runtime_data.pricing
+    fetched = _state(hass, "last_pricing_update")
 
+    # The weekly fetch fails.
     mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
-    await coordinator.async_refresh()
-    assert not coordinator.last_update_success
-
-    mock_onboarding.async_get_icp.side_effect = None
-    freezer.tick(RETRY_AFTER_FAILURE + timedelta(seconds=1))
+    freezer.tick(PRICING_FETCH_INTERVAL)
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert coordinator.last_update_success
+    calls = mock_onboarding.async_get_icp.await_count
+    assert calls > 1
+    assert _state(hass, "current_import_price") != "unavailable"
+    assert _state(hass, "last_pricing_update") == fetched
+
+    mock_onboarding.async_get_icp.side_effect = None
+    freezer.tick(PRICING_RETRY_INTERVAL + timedelta(seconds=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert mock_onboarding.async_get_icp.await_count == calls + 1
+    assert _state(hass, "last_pricing_update") != fetched
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -457,7 +478,7 @@ async def test_new_season_adds_sensors(
     mock_onboarding.async_get_plans.return_value = _with_new_season(
         mock_onboarding.async_get_plans.return_value
     )
-    await config_entry.runtime_data.pricing.async_refresh()
+    await config_entry.runtime_data.pricing.async_fetch_now()
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is not None
@@ -467,7 +488,7 @@ async def test_new_season_adds_sensors(
     assert season.attributes["end"] == date(2026, 9, 30)
 
 
-async def test_charts_are_downloaded_again_daily(
+async def test_pricing_is_fetched_weekly(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_onboarding: MagicMock,
@@ -476,17 +497,22 @@ async def test_charts_are_downloaded_again_daily(
     freezer.move_to(WINTER_PEAK)
     await _setup(hass, config_entry)
     coordinator = config_entry.runtime_data.pricing
-    first = mock_onboarding.async_get_chart.await_count
-    assert first > 0
+    icp_calls = mock_onboarding.async_get_icp.await_count
+    chart_calls = mock_onboarding.async_get_chart.await_count
+    assert chart_calls > 0
 
-    # A refresh within the day reuses the charts.
-    await coordinator.async_refresh()
-    assert mock_onboarding.async_get_chart.await_count == first
+    # Checks within the week work from the saved pricing, across midnights too.
+    for _ in range(6):
+        freezer.tick(timedelta(days=1))
+        await coordinator.async_refresh()
+    assert mock_onboarding.async_get_icp.await_count == icp_calls
+    assert mock_onboarding.async_get_chart.await_count == chart_calls
 
-    # A day later they are fetched again, in case Ecotricity has changed them.
+    # A week after the last fetch, everything is fetched again, charts included.
     freezer.tick(timedelta(days=1))
     await coordinator.async_refresh()
-    assert mock_onboarding.async_get_chart.await_count == 2 * first
+    assert mock_onboarding.async_get_icp.await_count == icp_calls + 1
+    assert mock_onboarding.async_get_chart.await_count == 2 * chart_calls
 
 
 async def test_unknown_charge_code_has_no_period(
@@ -689,7 +715,7 @@ async def test_network_and_sync_sensors(
     assert _state(hass, "pricing_category") == "Residential Time of Use"
     assert _extra(hass, "pricing_category") == {"code": "RTOU24"}
     assert _state(hass, "latest_day_of_usage") == "2026-04-05"
-    assert _state(hass, "last_data_sync") == "2026-04-05T15:06:00+00:00"
+    assert _state(hass, "last_meter_data_update") == "2026-04-05T15:06:00+00:00"
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -920,7 +946,8 @@ async def test_entity_categories(
         "registered_generation_capacity",
         "plan",
         "pricing_season",
-        "last_data_sync",
+        "last_meter_data_update",
+        "last_pricing_update",
     }
 
 
@@ -1113,8 +1140,9 @@ async def test_series_listed_without_readings_is_not_reread(
     await _setup(hass, portal_config_entry)
     await async_wait_recording_done(hass)
     assert not await _stats(hass, statistic_id(TEST_ICP, EXPORT))
-    first_start, _ = mock_portal.async_get_half_hourly.await_args_list[0].args
+    first_start, first_end = mock_portal.async_get_half_hourly.await_args_list[0].args
     assert first_start == datetime(2026, 3, 1, 0, 0, tzinfo=NZ)
+    assert first_end == datetime(2026, 4, 1, 0, 0, tzinfo=NZ)
     calls = mock_portal.async_get_half_hourly.await_count
 
     # The next sync only fetches the latest day, not the whole history again.
@@ -1248,3 +1276,91 @@ async def test_settled_gap_is_imported_as_it_stands(
     stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
     assert stats["sum"] == pytest.approx(37.25 - 0.73)
     assert datetime.fromtimestamp(stats["start"], UTC) == datetime(2026, 4, 5, 11, 0, tzinfo=UTC)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_consumption_rechecks_until_new_data_arrives(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """When an import finds nothing new, the portal is checked again in a few hours."""
+    freezer.move_to(WINTER_PEAK)
+    # The portal has only part of the day so far.
+    cutoff = datetime(2026, 4, 5, 12, 0, tzinfo=NZ)
+    fetch = mock_portal.async_get_half_hourly.side_effect
+
+    async def partial(start: datetime, end: datetime) -> Any:
+        data = await fetch(start, end)
+        if cutoff is None:
+            return data
+        return replace(
+            data,
+            imported_kwh=tuple(r for r in data.imported_kwh if r.start < cutoff),
+            exported_kwh=tuple(r for r in data.exported_kwh if r.start < cutoff),
+            carbon_savings_kg=tuple(r for r in data.carbon_savings_kg if r.start < cutoff),
+        )
+
+    mock_portal.async_get_half_hourly.side_effect = partial
+    await _setup(hass, portal_config_entry)
+    consumption = portal_config_entry.runtime_data.consumption
+    assert consumption is not None
+    assert consumption.data.hours_imported > 0
+    assert consumption.update_interval == CONSUMPTION_UPDATE_INTERVAL
+
+    # The next daily import finds nothing new, so it checks again sooner.
+    await consumption.async_refresh()
+    assert consumption.data.hours_imported == 0
+    assert consumption.update_interval == CONSUMPTION_RECHECK_INTERVAL
+
+    # Rechecks only ask the portal how much data it has.
+    reads = mock_portal.async_get_half_hourly.await_count
+    indicators = mock_portal.async_get_indicator.await_count
+    freezer.tick(CONSUMPTION_RECHECK_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert mock_portal.async_get_indicator.await_count == indicators + 1
+    assert mock_portal.async_get_half_hourly.await_count == reads
+    assert _state(hass, "latest_day_imported") != "unavailable"
+
+    # New data appears: it's imported straight away, and the daily schedule resumes from then.
+    cutoff = None
+    indicator = mock_portal.async_get_indicator.return_value
+    mock_portal.async_get_indicator.return_value = replace(
+        indicator, data_end=datetime(2026, 4, 7, 0, 0, tzinfo=NZ)
+    )
+    freezer.tick(CONSUMPTION_RECHECK_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert mock_portal.async_get_half_hourly.await_count > reads
+    assert consumption.data.hours_imported > 0
+    assert consumption.update_interval == CONSUMPTION_UPDATE_INTERVAL
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_consumption_reads_again_daily_while_waiting(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Even with no new data, a full read runs daily, in case the portal has filled a gap."""
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, portal_config_entry)
+    consumption = portal_config_entry.runtime_data.consumption
+    assert consumption is not None
+    await consumption.async_refresh()
+    assert consumption.update_interval == CONSUMPTION_RECHECK_INTERVAL
+    reads = mock_portal.async_get_half_hourly.await_count
+
+    await consumption.async_refresh()
+    assert mock_portal.async_get_half_hourly.await_count == reads
+
+    # The refresh action reads in full whenever it's used.
+    assert await consumption.async_fetch_now()
+    assert mock_portal.async_get_half_hourly.await_count == reads + 1
+
+    freezer.tick(CONSUMPTION_UPDATE_INTERVAL)
+    await consumption.async_refresh()
+    assert mock_portal.async_get_half_hourly.await_count == reads + 2

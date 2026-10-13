@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import probatio
 from homeassistant.const import ATTR_CONFIG_ENTRY_ID
@@ -14,8 +14,6 @@ from homeassistant.helpers.selector import ConfigEntrySelector
 from .const import DOMAIN, SERVICE_REFRESH
 
 if TYPE_CHECKING:
-    from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-
     from .coordinator import EcotricityConfigEntry
 
 REFRESH_SCHEMA = probatio.Schema(
@@ -36,14 +34,11 @@ def async_setup_services(hass: HomeAssistant) -> None:
             hass, DOMAIN, call.data.get(ATTR_CONFIG_ENTRY_ID)
         )
         runtime = entry.runtime_data
-        coordinators: list[DataUpdateCoordinator[Any]] = [runtime.pricing]
+        # Run both, even if the first fails.
+        succeeded = [await runtime.pricing.async_fetch_now()]
         if runtime.consumption is not None:
-            coordinators.append(runtime.consumption)
-        failed = False
-        for coordinator in coordinators:
-            await coordinator.async_refresh()
-            failed |= not coordinator.last_update_success
-        if failed:
+            succeeded.append(await runtime.consumption.async_fetch_now())
+        if not all(succeeded):
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="refresh_failed")
 
     hass.services.async_register(DOMAIN, SERVICE_REFRESH, handle_refresh, REFRESH_SCHEMA)

@@ -23,12 +23,25 @@ LOCAL_TIME_ZONE: Final = "Pacific/Auckland"
 # The portal labels NZ wall-clock times with its server's offset; see api/portal.py.
 PORTAL_SERVER_TIME_ZONE: Final = "Europe/Berlin"
 
-PRICING_UPDATE_INTERVAL: Final = timedelta(hours=24)
+# How often the pricing coordinator checks whether a fetch is due, while fetches are working. A
+# check that isn't due makes no requests. Counted from when the entry loads, which spreads
+# installs across the day instead of them all fetching at midnight.
+PRICING_CHECK_INTERVAL: Final = timedelta(days=1)
+# After a failed pricing fetch, try again after this long, doubling with each failure in a row up
+# to the maximum, so a long outage or a broken attestation check costs only a few requests a day.
+PRICING_RETRY_INTERVAL: Final = timedelta(hours=1)
+PRICING_RETRY_MAX_INTERVAL: Final = timedelta(hours=8)
+# Pricing is fetched again at least this often, and at the other times in coordinator.py.
+PRICING_FETCH_INTERVAL: Final = timedelta(days=7)
 CONSUMPTION_UPDATE_INTERVAL: Final = timedelta(hours=24)
+# When a daily import finds nothing new, the portal is checked again this soon (one cheap request)
+# instead of waiting another day.
+CONSUMPTION_RECHECK_INTERVAL: Final = timedelta(hours=3)
 # After a failed update, try again this soon instead of waiting a whole update interval.
 RETRY_AFTER_FAILURE: Final = timedelta(minutes=30)
-# The portal is asked for at most this much half-hourly data per request.
-CONSUMPTION_CHUNK: Final = timedelta(days=7)
+# The portal is asked for at most this much half-hourly data per request. It has accepted much
+# longer ranges (see docs/api.md), but a row cap hasn't been ruled out, so this stays modest.
+CONSUMPTION_CHUNK: Final = timedelta(days=31)
 # A missing half-hour newer than this (before the portal's latest data) holds back the import in
 # case the portal fills it in; an older one is imported as it stands.
 CONSUMPTION_SETTLE_PERIOD: Final = timedelta(days=7)

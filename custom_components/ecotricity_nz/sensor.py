@@ -33,6 +33,9 @@ from .tariff import (
     DayPricing,
     PriceComponent,
     TouPeriod,
+    bucket_name,
+    bucket_names,
+    bucket_period,
     day_windows,
     next_bucket_change,
     next_season_change,
@@ -55,11 +58,6 @@ PARALLEL_UPDATES = 0
 PRICE_UNIT = f"NZD/{UnitOfEnergy.KILO_WATT_HOUR}"
 # Bucket price sensor keys are this prefix and the bucket, for example "price_charge_high".
 _PRICE_KEY_PREFIX = "price_"
-# The period shown for a charge bucket with no known period.
-OTHER_PERIOD = "other"
-# Every period a period sensor can show, in display order.
-_PERIOD_OPTIONS = (*(period.value for period in TouPeriod), OTHER_PERIOD)
-_CHARGE_CODE_PREFIX = "CHARGE_"
 DAILY_UNIT = "NZD/d"
 
 
@@ -249,6 +247,10 @@ def _plan_buckets(data: PricingData) -> set[str]:
 class _PricingEntity(EcotricityEntity[PricingCoordinator], SensorEntity):
     """Shared helpers for pricing sensors."""
 
+    def _period(self, bucket: str) -> str:
+        """Return a bucket's period: anytime, peak, off_peak, or a key from the plan's name."""
+        return bucket_period(bucket, bucket_names(self.coordinator.data.plan))
+
     def _to_nzd(self, cents: float, *, export: bool = False) -> float:
         """Convert cents excluding GST to NZD.
 
@@ -347,13 +349,28 @@ class BucketPriceSensor(_PricingEntity):
             icp,
             SensorEntityDescription(
                 key=f"{_PRICE_KEY_PREFIX}{_slug(bucket)}",
-                translation_key=f"{period.value if period else 'other'}_{direction}_price",
+                translation_key=f"{period.value if period else 'named'}_{direction}_price",
             ),
         )
         self._bucket = bucket
         self._export = export
         if period is None:
-            self._attr_translation_placeholders = {"name": _bucket_name(bucket)}
+            self._attr_translation_placeholders = self._name_placeholders()
+
+    def _name_placeholders(self) -> dict[str, str]:
+        names = bucket_names(self.coordinator.data.plan)
+        return {"name": bucket_name(self._bucket, names)}
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Follow the plan's name for this bucket, which can change with the plan."""
+        if period_for_bucket(self._bucket) is None:
+            placeholders = self._name_placeholders()
+            if placeholders != self.translation_placeholders:
+                self._attr_translation_placeholders = placeholders
+                # Home Assistant caches the translated name; drop it so it's worked out again.
+                self.__dict__.pop("name", None)
+        super()._handle_coordinator_update()
 
     def _applied_bucket(self) -> str | None:
         """Return the bucket whose price applies in this bucket's hours today.
@@ -385,7 +402,7 @@ class BucketPriceSensor(_PricingEntity):
         bucket = self._applied_bucket()
         attributes: dict[str, Any] = {}
         if bucket is not None and bucket != self._bucket:
-            attributes["charged_as"] = _period(bucket)
+            attributes["charged_as"] = self._period(bucket)
         return attributes | self._component_attributes(bucket, export=self._export)
 
 
@@ -513,7 +530,7 @@ class CurrentPriceSensor(_HalfHourlyEntity):
         bucket = self._current_bucket(export=self._export)
         attributes: dict[str, Any] = {}
         if bucket is not None:
-            attributes["period"] = _period(bucket)
+            attributes["period"] = self._period(bucket)
         attributes |= self._component_attributes(bucket, export=self._export)
         if (error := self.coordinator.data.tou_error) is not None:
             attributes["tou_error"] = error
@@ -545,17 +562,18 @@ class CurrentPeriodSensor(_HalfHourlyEntity):
         """Return only the periods the plan uses, today or in any published season."""
         group = "export" if self._export else "import"
         periods = {
-            _period(bucket)
+            self._period(bucket)
             for bucket in _plan_buckets(self.coordinator.data)
             if _group(bucket) == group
         }
-        return [option for option in _PERIOD_OPTIONS if option in periods]
+        fixed = [period.value for period in TouPeriod if period.value in periods]
+        return fixed + sorted(periods - set(fixed))
 
     @property
     def native_value(self) -> str | None:
         """Return the current period."""
         bucket = self._current_bucket(export=self._export)
-        return _period(bucket) if bucket else None
+        return self._period(bucket) if bucket else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -568,7 +586,7 @@ class CurrentPeriodSensor(_HalfHourlyEntity):
         day = slots.weekday if today.weekday() < WEEKDAY_COUNT else slots.weekend
         return {
             "windows": [
-                f"{start}-{end} {_period(bucket)}" for start, end, bucket in day_windows(day)
+                f"{start}-{end} {self._period(bucket)}" for start, end, bucket in day_windows(day)
             ]
         }
 
@@ -613,7 +631,7 @@ class NextPeriodChangeSensor(_HalfHourlyEntity):
         _, bucket = change
         pricing = self.coordinator.data.pricing
         buckets = pricing.export_buckets if self._export else pricing.import_buckets
-        attributes: dict[str, Any] = {"period": _period(bucket)}
+        attributes: dict[str, Any] = {"period": self._period(bucket)}
         attributes["price"] = self._to_nzd(buckets[bucket], export=self._export)
         return attributes
 
@@ -729,24 +747,6 @@ def _group_buckets(pricing: DayPricing, group: str) -> dict[str, float]:
     if group == "controlled":
         return pricing.controlled_buckets
     return pricing.import_buckets
-
-
-def _period(bucket: str) -> str:
-    """Return the period for a bucket, or "other" for a charge code with no known period."""
-    period = period_for_bucket(bucket)
-    return period.value if period else OTHER_PERIOD
-
-
-def _bucket_name(bucket: str) -> str:
-    """Return a readable name for a bucket with no known period, such as "Charge 6".
-
-    Buckets are named after a charge code, or after the rate's description when it has none.
-    """
-    name = bucket.removeprefix(EXPORT_PREFIX).removeprefix(CONTROLLED_PREFIX)
-    if name.upper().startswith(_CHARGE_CODE_PREFIX):
-        code = name[len(_CHARGE_CODE_PREFIX) :]
-        name = f"Charge {code}" if code.isdigit() else code
-    return " ".join(name.replace("_", " ").split()).capitalize()
 
 
 def _component_key(part: PriceComponent) -> str:

@@ -27,7 +27,7 @@ uv run pre-commit run --all-files              # git hook checks
 
 CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
 
-Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using synthetic fixtures in `tests/fixtures`. The chart images there are real Ecotricity charts; they contain only public pricing.
+Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (`CKHK`, `ORON`), with its `plan_list.json`, its timeframe charts in `charts/`, and an `icp.json` where it has a test ICP. Most tests run against `CKHK`, the test ICP's network (`DEFAULT_NETWORK` in `tests/conftest.py`). The chart images are real Ecotricity charts; they contain only public pricing.
 
 ## Running Home Assistant locally
 
@@ -82,6 +82,14 @@ Build fixtures from the captures without personal data:
 - the address, region, meter serial, account number, contract number, registry audit numbers and portal IDs get obviously fake values
 
 Timeframe chart images contain only prices and times. Keep the real network code in their filenames; replace any customer-specific values with obviously fake ones.
+
+### Adding a network
+
+1. Create `tests/fixtures/networks/{code}/`, where `{code}` is the network's distributor code from `tests/fixtures/network_codes.json`.
+2. Save the plan list response (`RESTPLAN/plan/list_unbundle`) for an ICP on that network as `plan_list.json`. Keep the rates and descriptions exactly as published, give the plans fake IDs, and leave the ICP out.
+3. Save the plans' charts into `charts/`, named exactly as Ecotricity publishes them: the path from the plan's `timeframes_chart_wd` or `timeframes_chart_we`, with the season's start and end dates in place of `SSSSSSSS` and `EEEEEEEE`, and `-NOGST` before `.png`. These are the charts the integration reads.
+
+`tests/test_network_fixtures.py` picks up the new folder by itself. It checks that the folder holds only that network's plans, and matches every chart against the prices worked out from that network's plans for the season and day type in the chart's name. A chart that doesn't match points to a pricing rule this network uses that the integration doesn't handle yet.
 
 Before committing, search the whole repository (not just `tests/fixtures`) for your real ICP, street, suburb, account number, contract number and meter serial. Nothing should turn up. Public network codes and names are not personal data and should remain unchanged.
 

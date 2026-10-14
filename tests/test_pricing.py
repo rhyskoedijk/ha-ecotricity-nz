@@ -37,7 +37,15 @@ from custom_components.ecotricity_nz.store import (
     _snapshot,
     _snapshot_dict,
 )
-from tests.conftest import CHARTS, NZ, TEST_ICP, WINTER_PEAK, load_json_fixture
+from tests.conftest import (
+    DEFAULT_NETWORK,
+    NZ,
+    TEST_ICP,
+    WINTER_PEAK,
+    chart_file,
+    load_json_fixture,
+    load_network_fixture,
+)
 
 PREFIX = f"sensor.icp_{TEST_ICP.lower()}"
 
@@ -194,7 +202,7 @@ async def test_unreadable_windows_are_fetched_again_next_day(
 
     mock_onboarding.async_get_chart.side_effect = None
     mock_onboarding.async_get_chart.return_value = (
-        CHARTS / "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
+        chart_file("CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png")
     ).read_bytes()
     # Set up at 8:15am, so the next day's check runs then.
     await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
@@ -297,13 +305,15 @@ async def test_offline_warning_is_logged_once(
 
 
 def _fixture_snapshot() -> PricingSnapshot:
-    chart = (
-        CHARTS / "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
+    chart = chart_file(
+        "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
     )
     titles = parse_plan_titles(load_json_fixture("plan_mappings.json"))
     return PricingSnapshot(
-        icp=parse_icp(load_json_fixture("icp.json")),
-        plans=parse_plan_list(load_json_fixture("plan_list.json")).with_titles(titles),
+        icp=parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json")),
+        plans=parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json")).with_titles(
+            titles
+        ),
         fetched_at=datetime(2026, 6, 14, 20, 15, tzinfo=UTC),
         plan_titles=titles,
         charts={"/chart.png": read_chart(chart.read_bytes())},
@@ -326,7 +336,7 @@ async def test_saved_file_leaves_out_unused_personal_details(
     freezer: FrozenDateTimeFactory,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
-    icp = parse_icp(load_json_fixture("icp.json"))
+    icp = parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
     assert icp.address
     assert icp.region
     await _setup(hass, config_entry)

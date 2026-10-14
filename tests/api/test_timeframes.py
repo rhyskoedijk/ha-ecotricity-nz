@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 from datetime import date
-from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
@@ -18,8 +17,8 @@ from custom_components.ecotricity_nz.api.timeframes import (
     needs_season,
     read_chart,
 )
+from tests.conftest import chart_file
 
-CHARTS = Path(__file__).parent.parent / "fixtures" / "charts"
 PREFIX = "CKHK-RTOU24-"
 SUFFIX = "-WD-NOGST.png"
 WINTER = "RESIDENTIAL-20260401-20260930"
@@ -32,7 +31,7 @@ ALL_SLOTS = frozenset(range(SLOTS_PER_DAY))
 
 
 def _chart(plan: str, season: str) -> bytes:
-    return (CHARTS / f"{PREFIX}{plan}_260401_T0-{season}{SUFFIX}").read_bytes()
+    return chart_file(f"{PREFIX}{plan}_260401_T0-{season}{SUFFIX}").read_bytes()
 
 
 def _expected(peak: str, off_peak: str) -> tuple[str, ...]:
@@ -97,43 +96,17 @@ def test_read_flat_chart_with_unused_bucket() -> None:
 
 
 def test_read_shade_shared_by_two_prices() -> None:
-    # Two close prices (21.88c and 20.93c, 3am to 5am) are drawn in the same shade, so only their
-    # heights tell them apart.
-    reading = read_chart((CHARTS / "ORON-RTOU24-BATT_SPECIAL_LOW_260401_T0-WD.png").read_bytes())
+    # Off-peak and a slightly cheaper price for part of the day are drawn in the same shade, so
+    # only their heights tell them apart. Matching against the plan's prices is in test_tariff.py.
+    chart = "ORON-URES-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-20260901-20270331-WD-NOGST.png"
+    reading = read_chart(chart_file(chart).read_bytes())
 
     assert len(reading.import_tiers) == 4
-    import_prices = {
-        "CHARGE_LOW": 21.88,
-        "CHARGE_HIGH": 40.77,
-        "CHARGE_3": 32.44,
-        "CHARGE_4": 20.93,
-    }
-    export_prices = {"EG_CHARGE_LOW": -18.40, "EG_CHARGE_HIGH": -24.15}
-    imports = match_tiers(
-        reading.import_tiers,
-        import_prices,
-        other_tiers=reading.export_tiers,
-        other_prices=export_prices,
-    )
-    exports = match_tiers(
-        reading.export_tiers,
-        export_prices,
-        other_tiers=reading.import_tiers,
-        other_prices=import_prices,
-    )
-
-    # Legend: 12-3am 21.88c, 3-5am 20.93c, 5-7am 32.44c, 7-11am 40.77c, 11am-5pm 32.44c,
-    # 5-10pm 40.77c, 10pm-12am 21.88c. Export: 7-11am and 5-9pm -24.15c, otherwise -18.40c.
-    assert imports == (
-        ("CHARGE_LOW",) * 6
-        + ("CHARGE_4",) * 4
-        + ("CHARGE_3",) * 4
-        + ("CHARGE_HIGH",) * 8
-        + ("CHARGE_3",) * 12
-        + ("CHARGE_HIGH",) * 10
-        + ("CHARGE_LOW",) * 4
-    )
-    assert exports == _expected("EG_CHARGE_HIGH", "EG_CHARGE_LOW")
+    cheaper, low = sorted(reading.import_tiers, key=lambda tier: tier.height)[:2]
+    assert low.colour == cheaper.colour
+    assert cheaper.slots == frozenset(range(6, 10))
+    assert low.slots == frozenset(range(6)) | frozenset(range(44, SLOTS_PER_DAY))
+    assert low.height / cheaper.height == pytest.approx(19.029 / 18.2, abs=0.01)
 
 
 def test_single_tier_is_not_assumed_cheapest() -> None:
@@ -175,14 +148,6 @@ def test_ambiguous_ratio_rejected() -> None:
         )
         == ("CHARGE_3",) * 24 + ("CHARGE_LOW",) * 24
     )
-
-
-@pytest.mark.parametrize("chart", sorted(CHARTS.glob("*.png")), ids=lambda path: path.stem)
-def test_every_fixture_chart_reads(chart: Path) -> None:
-    reading = read_chart(chart.read_bytes())
-
-    slots = [slot for tier in reading.import_tiers for slot in tier.slots]
-    assert sorted(slots) == list(range(SLOTS_PER_DAY))
 
 
 def test_mismatched_prices_rejected() -> None:

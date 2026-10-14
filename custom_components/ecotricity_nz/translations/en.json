@@ -117,16 +117,7 @@
       "off_peak_import_price": {
         "name": "Off-peak import price"
       },
-      "shoulder_import_price": {
-        "name": "Shoulder import price"
-      },
-      "charge_4_import_price": {
-        "name": "Charge 4 import price"
-      },
-      "charge_5_import_price": {
-        "name": "Charge 5 import price"
-      },
-      "other_import_price": {
+      "named_import_price": {
         "name": "{name} import price"
       },
       "anytime_export_price": {
@@ -138,16 +129,7 @@
       "off_peak_export_price": {
         "name": "Off-peak export price"
       },
-      "shoulder_export_price": {
-        "name": "Shoulder export price"
-      },
-      "charge_4_export_price": {
-        "name": "Charge 4 export price"
-      },
-      "charge_5_export_price": {
-        "name": "Charge 5 export price"
-      },
-      "other_export_price": {
+      "named_export_price": {
         "name": "{name} export price"
       },
       "anytime_controlled_price": {
@@ -159,16 +141,7 @@
       "off_peak_controlled_price": {
         "name": "Off-peak controlled price"
       },
-      "shoulder_controlled_price": {
-        "name": "Shoulder controlled price"
-      },
-      "charge_4_controlled_price": {
-        "name": "Charge 4 controlled price"
-      },
-      "charge_5_controlled_price": {
-        "name": "Charge 5 controlled price"
-      },
-      "other_controlled_price": {
+      "named_controlled_price": {
         "name": "{name} controlled price"
       },
       "current_import_period": {
@@ -176,11 +149,7 @@
         "state": {
           "anytime": "Anytime",
           "peak": "Peak",
-          "off_peak": "Off-peak",
-          "shoulder": "Shoulder",
-          "charge_4": "Charge 4",
-          "charge_5": "Charge 5",
-          "other": "Other"
+          "off_peak": "Off-peak"
         }
       },
       "current_export_period": {
@@ -188,11 +157,7 @@
         "state": {
           "anytime": "Anytime",
           "peak": "Peak",
-          "off_peak": "Off-peak",
-          "shoulder": "Shoulder",
-          "charge_4": "Charge 4",
-          "charge_5": "Charge 5",
-          "other": "Other"
+          "off_peak": "Off-peak"
         }
       },
       "next_import_period_change": {

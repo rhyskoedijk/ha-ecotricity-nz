@@ -48,16 +48,7 @@
       "off_peak_import_price": {
         "default": "mdi:cash-plus"
       },
-      "shoulder_import_price": {
-        "default": "mdi:cash-plus"
-      },
-      "charge_4_import_price": {
-        "default": "mdi:cash-plus"
-      },
-      "charge_5_import_price": {
-        "default": "mdi:cash-plus"
-      },
-      "other_import_price": {
+      "named_import_price": {
         "default": "mdi:cash-plus"
       },
       "anytime_export_price": {
@@ -69,16 +60,7 @@
       "off_peak_export_price": {
         "default": "mdi:cash-minus"
       },
-      "shoulder_export_price": {
-        "default": "mdi:cash-minus"
-      },
-      "charge_4_export_price": {
-        "default": "mdi:cash-minus"
-      },
-      "charge_5_export_price": {
-        "default": "mdi:cash-minus"
-      },
-      "other_export_price": {
+      "named_export_price": {
         "default": "mdi:cash-minus"
       },
       "anytime_controlled_price": {
@@ -90,16 +72,7 @@
       "off_peak_controlled_price": {
         "default": "mdi:water-boiler"
       },
-      "shoulder_controlled_price": {
-        "default": "mdi:water-boiler"
-      },
-      "charge_4_controlled_price": {
-        "default": "mdi:water-boiler"
-      },
-      "charge_5_controlled_price": {
-        "default": "mdi:water-boiler"
-      },
-      "other_controlled_price": {
+      "named_controlled_price": {
         "default": "mdi:water-boiler"
       },
       "current_import_period": {
@@ -107,11 +80,7 @@
         "state": {
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
-          "shoulder": "mdi:clock-time-four-outline",
-          "anytime": "mdi:clock-outline",
-          "charge_4": "mdi:clock-time-four-outline",
-          "charge_5": "mdi:clock-time-four-outline",
-          "other": "mdi:clock-outline"
+          "anytime": "mdi:clock-outline"
         }
       },
       "current_export_period": {
@@ -119,11 +88,7 @@
         "state": {
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
-          "shoulder": "mdi:clock-time-four-outline",
-          "anytime": "mdi:clock-outline",
-          "charge_4": "mdi:clock-time-four-outline",
-          "charge_5": "mdi:clock-time-four-outline",
-          "other": "mdi:clock-outline"
+          "anytime": "mdi:clock-outline"
         }
       },
       "next_import_period_change": {

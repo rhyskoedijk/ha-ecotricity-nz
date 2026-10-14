@@ -67,18 +67,18 @@ All entities belong to a device named **ICP &lt;icp&gt;**, so entity IDs look li
 | Daily charge                                | Total fixed charge per day, in NZD/d.                                                       | `supplier_rate`, `network_rate`, `metering_rate`         |
 | _Period_ import, export or controlled price | One sensor per period on your plan, for example **Peak import price**. Disabled by default. | `charged_as`, `supplier_rate`, `network_rate`, `ea_levy` |
 
-If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is. Some networks add numbered charge codes of their own, such as `CHARGE_4` and `CHARGE_5`. What these mean varies between networks, so they're named by number: **Charge 4 import price**, and the period `charge_4`. Any other charge code still gets a price sensor, named after the code or the rate's description (such as **Charge 6 import price**), and its period shows as `other`. Price sensors are only created for prices your plan has, and are removed if your plan stops having them (for example after you choose a different plan). Likewise, the period sensors only list the periods your plan uses (today or in any published season) as options, so a peak and off-peak plan won't offer shoulder or **Charge 4**.
+If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is. Anytime, peak and off-peak have the same names on every plan. Every other price takes its name from your plan's own rate descriptions, the same ones the Ecotricity portal lists, without the word "usage": a "Shoulder Usage" rate gives **Shoulder import price** and the period `shoulder`, and "Super Off Peak Usage" gives **Super off peak import price** and `super_off_peak`. These names follow your plan, so if Ecotricity renames a rate, the sensor's name changes with it (its entity ID and history stay the same). A price with no description is named after its charge code, such as **Charge 4 import price** and `charge_4`. The portal leaves out rates that cost 0c, so a price can have a sensor even when the portal doesn't list it. Price sensors are only created for prices your plan has, and are removed if your plan stops having them (for example after you choose a different plan). Likewise, the period sensors only list the periods your plan uses (today or in any published season) as options, so a peak and off-peak plan won't offer shoulder.
 
 ### Time of use
 
-| Entity                     | Description                                                                   | Attributes                                                    |
-| -------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Current import period      | `anytime`, `peak`, `off_peak`, `shoulder`, `charge_4`, `charge_5` or `other`. | `windows`, list of today's windows such as `07:00-11:00 peak` |
-| Current export period      | As above, for export. Import and export can have different windows.           | `windows`                                                     |
-| Next import period change  | When the import period next changes.                                          | `period`, `price`                                             |
-| Next export period change  | When the export period next changes.                                          | `period`, `price`                                             |
-| Next pricing season change | When the pricing season next starts.                                          | ------------------------------------------------------------- |
-| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.                  | ------------------------------------------------------------- |
+| Entity                     | Description                                                                          | Attributes                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| Current import period      | `anytime`, `peak`, `off_peak`, or a period named from your plan, such as `shoulder`. | `windows`, list of today's windows such as `07:00-11:00 peak` |
+| Current export period      | As above, for export. Import and export can have different windows.                  | `windows`                                                     |
+| Next import period change  | When the import period next changes.                                                 | `period`, `price`                                             |
+| Next export period change  | When the export period next changes.                                                 | `period`, `price`                                             |
+| Next pricing season change | When the pricing season next starts.                                                 | ------------------------------------------------------------- |
+| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.                         | ------------------------------------------------------------- |
 
 ### Usage
 

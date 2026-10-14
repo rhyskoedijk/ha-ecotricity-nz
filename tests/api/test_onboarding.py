@@ -20,7 +20,7 @@ from custom_components.ecotricity_nz.api import (
     OnboardingClient,
 )
 from custom_components.ecotricity_nz.api.attestation import RETRY_HEADER, TOKEN_HEADER
-from tests.conftest import TEST_ICP, load_json_fixture
+from tests.conftest import DEFAULT_NETWORK, TEST_ICP, load_json_fixture, load_network_fixture
 
 BASE = "https://onboarding.test"
 ICP_URL = f"{BASE}/cgi-bin/RESTICP/energy/{TEST_ICP}"
@@ -46,8 +46,8 @@ def _client(hass: HomeAssistant) -> OnboardingClient:
 
 async def test_get_icp_and_plans(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     _mock_attestation(aioclient_mock)
-    aioclient_mock.get(ICP_URL, json=load_json_fixture("icp.json"))
-    aioclient_mock.get(PLAN_URL, json=load_json_fixture("plan_list.json"))
+    aioclient_mock.get(ICP_URL, json=load_network_fixture(DEFAULT_NETWORK, "icp.json"))
+    aioclient_mock.get(PLAN_URL, json=load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
     client = _client(hass)
 
     icp = await client.async_get_icp(TEST_ICP.lower())
@@ -71,7 +71,10 @@ async def test_forbidden_is_retried_with_fresh_token(
 
     async def icp_response(method: str, url: URL, data: object) -> AiohttpClientMockResponse:
         return AiohttpClientMockResponse(
-            method, url, status=next(statuses), json=load_json_fixture("icp.json")
+            method,
+            url,
+            status=next(statuses),
+            json=load_network_fixture(DEFAULT_NETWORK, "icp.json"),
         )
 
     _mock_attestation(aioclient_mock)

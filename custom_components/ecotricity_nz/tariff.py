@@ -15,6 +15,7 @@ Everything here is in cents excluding GST. This module has no Home Assistant imp
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, timedelta
 from enum import StrEnum
@@ -38,37 +39,101 @@ WEEKDAY_COUNT = 5
 
 
 class TouPeriod(StrEnum):
-    """Friendly names for the charge codes plans are known to use.
+    """Fixed periods for the charge codes that mean the same on every plan.
 
-    Ecotricity's own site recognises four codes, and these mean the same on every network:
-    CHARGE_24 (anytime), CHARGE_HIGH (peak), CHARGE_LOW (off-peak) and CHARGE_3 (shoulder). Anytime
-    is a period when a network has no time-of-use rates for that direction; shoulder is used by
-    networks with a third tier. Some networks add more numbered codes, such as CHARGE_4 and
-    CHARGE_5, whose meaning is up to each network, so they're named only by number. A bucket with
-    any other code is still priced, but has no period.
+    CHARGE_24 is anytime, CHARGE_HIGH is peak and CHARGE_LOW is off-peak, whatever the network.
+    Anytime is a period when a network has no time-of-use rates for that direction. Every other
+    code (CHARGE_3, CHARGE_4 and so on) is named from the plan's own rate descriptions instead;
+    see `bucket_names`.
     """
 
     ANYTIME = "anytime"
     PEAK = "peak"
     OFF_PEAK = "off_peak"
-    SHOULDER = "shoulder"
-    CHARGE_4 = "charge_4"
-    CHARGE_5 = "charge_5"
 
 
 _PERIODS = {
     "CHARGE_24": TouPeriod.ANYTIME,
     "CHARGE_HIGH": TouPeriod.PEAK,
     "CHARGE_LOW": TouPeriod.OFF_PEAK,
-    "CHARGE_3": TouPeriod.SHOULDER,
-    "CHARGE_4": TouPeriod.CHARGE_4,
-    "CHARGE_5": TouPeriod.CHARGE_5,
 }
+_CHARGE_CODE_PREFIX = "CHARGE_"
+# Words dropped from rate descriptions to make bucket names: "Shoulder Usage" becomes "Shoulder".
+_NAME_NOISE = re.compile(r"\b(?:usage|export)\b", re.IGNORECASE)
 
 
 def period_for_bucket(bucket: str) -> TouPeriod | None:
-    """Return the friendly period for a bucket code, ignoring any export or controlled prefix."""
+    """Return the fixed period for a bucket code, ignoring any export or controlled prefix."""
     return _PERIODS.get(_unprefixed(bucket))
+
+
+def bucket_names(plan: Plan) -> dict[str, str]:
+    """Return a name for each of the plan's buckets that has no fixed period.
+
+    Names come from the descriptions of the plan's own rates in each bucket, preferring
+    Ecotricity's retail wording over the network's, with "usage" and "export" dropped: a
+    "Super Off Peak Usage" rate names its bucket "Super off peak". A name that would clash with a
+    fixed period or another bucket in the same group is left out, so `bucket_name` falls back to
+    the charge code.
+    """
+    names: dict[str, str] = {}
+    for rate in sorted(plan.rates, key=lambda rate: rate.is_network):
+        if rate.unit is not RateUnit.PER_KWH or rate.is_levy:
+            continue
+        bucket = resolve_bucket(rate)
+        if bucket in names or period_for_bucket(bucket) is not None:
+            continue
+        if name := _clean_name(rate.description):
+            names[bucket] = name
+
+    taken = {(prefix, period.value) for prefix in ("", *PREFIXES) for period in TouPeriod}
+    for bucket, name in list(names.items()):
+        key = (_prefix_of(bucket), period_key(name))
+        if key in taken:
+            del names[bucket]
+        else:
+            taken.add(key)
+    return names
+
+
+def bucket_name(bucket: str, names: dict[str, str]) -> str:
+    """Return the name of a bucket with no fixed period, falling back to its charge code.
+
+    For example "Shoulder" from the plan's descriptions, or "Charge 4" when no description names it.
+    """
+    if (name := names.get(bucket)) is not None:
+        return name
+    code = _unprefixed(bucket)
+    if code.upper().startswith(_CHARGE_CODE_PREFIX):
+        code = "Charge " + code[len(_CHARGE_CODE_PREFIX) :]
+    return _sentence_case(code.replace("_", " "))
+
+
+def bucket_period(bucket: str, names: dict[str, str]) -> str:
+    """Return a bucket's period: its fixed one, or a key from its name, like "super_off_peak"."""
+    if (period := period_for_bucket(bucket)) is not None:
+        return period.value
+    return period_key(bucket_name(bucket, names))
+
+
+def period_key(name: str) -> str:
+    """Return a lower-case key for a name, with runs of other characters as underscores."""
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def _clean_name(description: str) -> str:
+    # Separators left at either end once a word is dropped, as in "Uncontrolled - Usage".
+    name = " ".join(_NAME_NOISE.sub(" ", description).split()).strip(" -:,/")
+    return _sentence_case(name)
+
+
+def _sentence_case(text: str) -> str:
+    text = " ".join(text.split())
+    return text[:1].upper() + text[1:].lower()
+
+
+def _prefix_of(bucket: str) -> str:
+    return next((prefix for prefix in PREFIXES if bucket.startswith(prefix)), "")
 
 
 def _unprefixed(bucket: str) -> str:

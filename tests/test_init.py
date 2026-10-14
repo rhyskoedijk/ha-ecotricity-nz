@@ -36,6 +36,7 @@ from custom_components.ecotricity_nz.api import (
     RateUnit,
     Season,
 )
+from custom_components.ecotricity_nz.api.parsers import parse_plan_list
 from custom_components.ecotricity_nz.api.timeframes import ChartReadError
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST,
@@ -49,7 +50,13 @@ from custom_components.ecotricity_nz.const import (
     RETRY_AFTER_FAILURE,
 )
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
-from tests.conftest import LOW_OFF_PEAK_PLAN_ID, NZ, TEST_ICP, WINTER_PEAK
+from tests.conftest import (
+    LOW_OFF_PEAK_PLAN_ID,
+    NZ,
+    TEST_ICP,
+    WINTER_PEAK,
+    load_network_fixture,
+)
 
 PREFIX = f"sensor.icp_{TEST_ICP.lower()}"
 
@@ -476,7 +483,7 @@ async def test_new_season_adds_sensors(
     await _setup(hass, config_entry)
     unique_id = f"{TEST_ICP}_price_charge_3"
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is None
-    assert "shoulder" not in _extra(hass, "current_import_period")["options"]
+    assert "uncontrolled_shoulder" not in _extra(hass, "current_import_period")["options"]
 
     # Ecotricity publishes next year's seasons part way through this one.
     mock_onboarding.async_get_plans.return_value = _with_new_season(
@@ -486,8 +493,8 @@ async def test_new_season_adds_sensors(
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is not None
-    # The period sensor can show shoulder from now on, ready for the new season.
-    assert "shoulder" in _extra(hass, "current_import_period")["options"]
+    # The period sensor can show the new period from now on, named from the season's rate.
+    assert "uncontrolled_shoulder" in _extra(hass, "current_import_period")["options"]
     season = hass.states.get(f"{PREFIX}_pricing_season")
     assert season is not None
     assert "2027-04-01/2027-09-30" in season.attributes["published"]
@@ -516,7 +523,7 @@ async def test_prices_the_plan_no_longer_has_are_removed(
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, shoulder) is None
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, peak) is not None
-    assert "shoulder" not in _extra(hass, "current_import_period")["options"]
+    assert "uncontrolled_shoulder" not in _extra(hass, "current_import_period")["options"]
 
     # If it comes back, so does its sensor.
     mock_onboarding.async_get_plans.return_value = _with_new_season(plans)
@@ -576,7 +583,7 @@ async def test_pricing_is_fetched_weekly(
     assert mock_onboarding.async_get_chart.await_count == 2 * chart_calls
 
 
-async def test_unknown_charge_code_is_another_period(
+async def test_code_without_a_fixed_period_is_named_from_the_plan(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_onboarding: MagicMock,
@@ -584,7 +591,7 @@ async def test_unknown_charge_code_is_another_period(
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     plans: PlanList = mock_onboarding.async_get_plans.return_value
-    unknown = Rate(
+    unnamed = Rate(
         id="9002",
         description="Network usage",
         charge="CHARGE_9",
@@ -594,19 +601,25 @@ async def test_unknown_charge_code_is_another_period(
         price=12.0,
         is_network=False,
     )
-    plan = replace(plans.default, retail_rates=(unknown,), network_rates=())
+    plan = replace(plans.default, retail_rates=(unnamed,), network_rates=())
     mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
     await _setup(hass, config_entry)
 
-    # Not a code with a known period: priced, and shown as "other".
-    assert _state(hass, "current_import_period") == "other"
-    assert _extra(hass, "current_import_period")["windows"] == ["00:00-24:00 other"]
-    assert _extra(hass, "current_import_period")["options"] == ["other"]
-    assert _extra(hass, "current_import_price")["period"] == "other"
+    # The period comes from the rate's description, without "usage".
+    assert _state(hass, "current_import_period") == "network"
+    assert _extra(hass, "current_import_period")["windows"] == ["00:00-24:00 network"]
+    assert _extra(hass, "current_import_period")["options"] == ["network"]
+    assert _extra(hass, "current_import_price")["period"] == "network"
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.138)
 
 
-async def test_every_charge_code_has_a_friendly_name(
+def _oron_plan(plans: PlanList) -> Plan:
+    """Return the real Orion plan from issue #9, under the ID the config entry has chosen."""
+    oron = parse_plan_list(load_network_fixture("ORON", "plan_list.json")).default
+    return replace(oron, id=plans.default.id)
+
+
+async def test_price_sensors_are_named_from_the_plan(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_onboarding: MagicMock,
@@ -615,32 +628,7 @@ async def test_every_charge_code_has_a_friendly_name(
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     plans: PlanList = mock_onboarding.async_get_plans.return_value
-
-    def usage(charge: str | None, description: str, register_type: str | None = None) -> Rate:
-        return Rate(
-            id=f"{charge}-{description}",
-            description=description,
-            charge=charge,
-            register_type=register_type,
-            unit=RateUnit.PER_KWH,
-            raw_unit="cents/kWh",
-            price=20.0,
-            is_network=True,
-        )
-
-    # Numbered codes, a code nothing names yet and a rate bucketed by its description.
-    plan = replace(
-        plans.default,
-        retail_rates=(),
-        network_rates=(
-            usage("CHARGE_4", "Network usage 4"),
-            usage("CHARGE_5", "Network usage 5"),
-            usage("CHARGE_6", "Something new"),
-            usage(None, "Network usage"),
-            usage("CHARGE_4", "Network export 4", register_type="EG"),
-        ),
-    )
-    mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
+    mock_onboarding.async_get_plans.return_value = PlanList(default=_oron_plan(plans))
     await _setup(hass, config_entry)
 
     names = {
@@ -648,16 +636,73 @@ async def test_every_charge_code_has_a_friendly_name(
         for entry in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
         if "_price_" in entry.unique_id
     }
+    # Peak and off-peak have fixed names; the other codes take the plan's own descriptions.
     assert names == {
-        "price_charge_4": "charge_4_import_price",
-        "price_charge_5": "charge_5_import_price",
-        "price_charge_6": "charge_6_import_price",
-        "price_network_usage": "network_usage_import_price",
-        "price_eg_charge_4": "charge_4_export_price",
+        "price_charge_high": "peak_import_price",
+        "price_charge_low": "off_peak_import_price",
+        "price_charge_3": "shoulder_import_price",
+        "price_charge_4": "super_off_peak_import_price",
+        "price_charge_5": "weekend_import_price",
+        "price_eg_charge_high": "peak_export_price",
+        "price_eg_charge_low": "off_peak_export_price",
     }
-    # Charge 6 and the rate with no code are both "other"; peak and off-peak aren't on this plan.
-    assert _extra(hass, "current_import_period")["options"] == ["charge_4", "charge_5", "other"]
-    assert _extra(hass, "current_export_period")["options"] == ["charge_4"]
+    assert _extra(hass, "current_import_period")["options"] == [
+        "peak",
+        "off_peak",
+        "shoulder",
+        "super_off_peak",
+        "weekend",
+    ]
+    assert _extra(hass, "current_export_period")["options"] == ["peak", "off_peak"]
+
+
+async def test_price_sensor_names_follow_the_plan(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    plan = _oron_plan(plans)
+    mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
+    await _setup(hass, config_entry)
+    entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_charge_5")
+    assert entity_id is not None
+    entity_registry.async_update_entity(entity_id, disabled_by=None)
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["friendly_name"].endswith("Weekend import price")
+    # Named prices are broken down like any other: 18c anytime, 4.5c network and the 0.2c levy,
+    # plus GST. The total is 22.7c plus GST.
+    assert float(state.state) == pytest.approx(0.2611, abs=0.0001)
+    assert _extra(hass, "weekend_import_price") == {
+        "supplier_rate": pytest.approx(0.207),
+        "network_rate": pytest.approx(0.0518, abs=0.0001),
+        "ea_levy": pytest.approx(0.0023),
+    }
+
+    # Ecotricity renames the rate, then drops its description altogether.
+    for description, name in (
+        ("Saturday and Sunday Usage", "Saturday and sunday"),
+        ("", "Charge 5"),
+    ):
+        renamed = tuple(
+            replace(rate, description=description) if rate.charge == "CHARGE_5" else rate
+            for rate in plan.network_rates
+        )
+        mock_onboarding.async_get_plans.return_value = PlanList(
+            default=replace(plan, network_rates=renamed)
+        )
+        await config_entry.runtime_data.pricing.async_fetch_now()
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.attributes["friendly_name"].endswith(f"{name} import price")
 
 
 _STANDARD_ATTRIBUTES = {

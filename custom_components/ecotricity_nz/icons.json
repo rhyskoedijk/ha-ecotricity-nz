@@ -51,6 +51,12 @@
       "shoulder_import_price": {
         "default": "mdi:cash-plus"
       },
+      "charge_4_import_price": {
+        "default": "mdi:cash-plus"
+      },
+      "charge_5_import_price": {
+        "default": "mdi:cash-plus"
+      },
       "other_import_price": {
         "default": "mdi:cash-plus"
       },
@@ -64,6 +70,12 @@
         "default": "mdi:cash-minus"
       },
       "shoulder_export_price": {
+        "default": "mdi:cash-minus"
+      },
+      "charge_4_export_price": {
+        "default": "mdi:cash-minus"
+      },
+      "charge_5_export_price": {
         "default": "mdi:cash-minus"
       },
       "other_export_price": {
@@ -81,6 +93,12 @@
       "shoulder_controlled_price": {
         "default": "mdi:water-boiler"
       },
+      "charge_4_controlled_price": {
+        "default": "mdi:water-boiler"
+      },
+      "charge_5_controlled_price": {
+        "default": "mdi:water-boiler"
+      },
       "other_controlled_price": {
         "default": "mdi:water-boiler"
       },
@@ -90,7 +108,10 @@
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
           "shoulder": "mdi:clock-time-four-outline",
-          "anytime": "mdi:clock-outline"
+          "anytime": "mdi:clock-outline",
+          "charge_4": "mdi:clock-time-four-outline",
+          "charge_5": "mdi:clock-time-four-outline",
+          "other": "mdi:clock-outline"
         }
       },
       "current_export_period": {
@@ -99,7 +120,10 @@
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
           "shoulder": "mdi:clock-time-four-outline",
-          "anytime": "mdi:clock-outline"
+          "anytime": "mdi:clock-outline",
+          "charge_4": "mdi:clock-time-four-outline",
+          "charge_5": "mdi:clock-time-four-outline",
+          "other": "mdi:clock-outline"
         }
       },
       "next_import_period_change": {

@@ -96,6 +96,46 @@ def test_read_flat_chart_with_unused_bucket() -> None:
     ) == (("CHARGE_24",) * SLOTS_PER_DAY)
 
 
+def test_read_shade_shared_by_two_prices() -> None:
+    # Two close prices (21.88c and 20.93c, 3am to 5am) are drawn in the same shade, so only their
+    # heights tell them apart.
+    reading = read_chart((CHARTS / "ORON-RTOU24-BATT_SPECIAL_LOW_260401_T0-WD.png").read_bytes())
+
+    assert len(reading.import_tiers) == 4
+    import_prices = {
+        "CHARGE_LOW": 21.88,
+        "CHARGE_HIGH": 40.77,
+        "CHARGE_3": 32.44,
+        "CHARGE_4": 20.93,
+    }
+    export_prices = {"EG_CHARGE_LOW": -18.40, "EG_CHARGE_HIGH": -24.15}
+    imports = match_tiers(
+        reading.import_tiers,
+        import_prices,
+        other_tiers=reading.export_tiers,
+        other_prices=export_prices,
+    )
+    exports = match_tiers(
+        reading.export_tiers,
+        export_prices,
+        other_tiers=reading.import_tiers,
+        other_prices=import_prices,
+    )
+
+    # Legend: 12-3am 21.88c, 3-5am 20.93c, 5-7am 32.44c, 7-11am 40.77c, 11am-5pm 32.44c,
+    # 5-10pm 40.77c, 10pm-12am 21.88c. Export: 7-11am and 5-9pm -24.15c, otherwise -18.40c.
+    assert imports == (
+        ("CHARGE_LOW",) * 6
+        + ("CHARGE_4",) * 4
+        + ("CHARGE_3",) * 4
+        + ("CHARGE_HIGH",) * 8
+        + ("CHARGE_3",) * 12
+        + ("CHARGE_HIGH",) * 10
+        + ("CHARGE_LOW",) * 4
+    )
+    assert exports == _expected("EG_CHARGE_HIGH", "EG_CHARGE_LOW")
+
+
 def test_single_tier_is_not_assumed_cheapest() -> None:
     # 30c, 22c and 15c all fit one tier on their own; the export side pins the scale to 10px/c.
     tier = ChartTier(colour=(0, 0, 255), height=300, slots=frozenset(range(SLOTS_PER_DAY)))
@@ -208,7 +248,7 @@ def _draw_chart(imports: list[tuple[tuple[int, int, int], int]], export: tuple) 
 
 def test_three_tier_chart_with_shoulder() -> None:
     # Off-peak 20c, shoulder 26c and peak 32c, drawn in the two closest import shades plus dark,
-    # at 8px per cent. Shoulder runs 5-7am and 11am-5pm, like Orion's.
+    # at 8px per cent. Shoulder runs 5-7am and 11am-5pm, as on some networks.
     off_peak, shoulder, peak = (
         (IMPORT_SHADES[0], 160),
         (IMPORT_SHADES[1], 208),
@@ -237,6 +277,15 @@ def test_three_tier_chart_with_shoulder() -> None:
         + ["CHARGE_LOW"] * 4
     )
     assert slots == tuple(expected)
+
+
+@pytest.mark.parametrize(("gap", "tiers"), [(0, 1), (2, 1), (3, 2)])
+def test_one_shade_splits_by_height(gap: int, tiers: int) -> None:
+    # Bars of one price measure the same height, so only a gap over 2px means a second price.
+    day = [(IMPORT_SHADES[0], 160)] * 24 + [(IMPORT_SHADES[0], 160 + gap)] * 24
+    reading = read_chart(_draw_chart(day, (EXPORT_SHADES[0], 100)))
+
+    assert len(reading.import_tiers) == tiers
 
 
 def test_closest_export_shades_stay_separate() -> None:

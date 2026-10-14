@@ -120,6 +120,12 @@
       "shoulder_import_price": {
         "name": "Shoulder import price"
       },
+      "charge_4_import_price": {
+        "name": "Charge 4 import price"
+      },
+      "charge_5_import_price": {
+        "name": "Charge 5 import price"
+      },
       "other_import_price": {
         "name": "{name} import price"
       },
@@ -134,6 +140,12 @@
       },
       "shoulder_export_price": {
         "name": "Shoulder export price"
+      },
+      "charge_4_export_price": {
+        "name": "Charge 4 export price"
+      },
+      "charge_5_export_price": {
+        "name": "Charge 5 export price"
       },
       "other_export_price": {
         "name": "{name} export price"
@@ -150,6 +162,12 @@
       "shoulder_controlled_price": {
         "name": "Shoulder controlled price"
       },
+      "charge_4_controlled_price": {
+        "name": "Charge 4 controlled price"
+      },
+      "charge_5_controlled_price": {
+        "name": "Charge 5 controlled price"
+      },
       "other_controlled_price": {
         "name": "{name} controlled price"
       },
@@ -159,7 +177,10 @@
           "anytime": "Anytime",
           "peak": "Peak",
           "off_peak": "Off-peak",
-          "shoulder": "Shoulder"
+          "shoulder": "Shoulder",
+          "charge_4": "Charge 4",
+          "charge_5": "Charge 5",
+          "other": "Other"
         }
       },
       "current_export_period": {
@@ -168,7 +189,10 @@
           "anytime": "Anytime",
           "peak": "Peak",
           "off_peak": "Off-peak",
-          "shoulder": "Shoulder"
+          "shoulder": "Shoulder",
+          "charge_4": "Charge 4",
+          "charge_5": "Charge 5",
+          "other": "Other"
         }
       },
       "next_import_period_change": {

@@ -67,18 +67,18 @@ All entities belong to a device named **ICP &lt;icp&gt;**, so entity IDs look li
 | Daily charge                                | Total fixed charge per day, in NZD/d.                                                       | `supplier_rate`, `network_rate`, `metering_rate`         |
 | _Period_ import, export or controlled price | One sensor per period on your plan, for example **Peak import price**. Disabled by default. | `charged_as`, `supplier_rate`, `network_rate`, `ea_levy` |
 
-If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is. Network-defined charge codes and unfamiliar period descriptions such as holiday, night, and super-off-peak are kept as separate price buckets and matched against the plan's chart.
+If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is. Some networks add numbered charge codes of their own, such as `CHARGE_4` and `CHARGE_5`. What these mean varies between networks, so they're named by number: **Charge 4 import price**, and the period `charge_4`. Any other charge code still gets a price sensor, named after the code or the rate's description (such as **Charge 6 import price**), and its period shows as `other`. Price sensors are only created for prices your plan has, and are removed if your plan stops having them (for example after you choose a different plan). Likewise, the period sensors only list the periods your plan uses (today or in any published season) as options, so a peak and off-peak plan won't offer shoulder or **Charge 4**.
 
 ### Time of use
 
-| Entity                     | Description                                                         | Attributes                                                    |
-| -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Current import period      | `anytime`, `peak`, `off_peak` or `shoulder`.                        | `windows`, list of today's windows such as `07:00-11:00 peak` |
-| Current export period      | As above, for export. Import and export can have different windows. | `windows`                                                     |
-| Next import period change  | When the import period next changes.                                | `period`, `price`                                             |
-| Next export period change  | When the export period next changes.                                | `period`, `price`                                             |
-| Next pricing season change | When the pricing season next starts.                                |                                                               |
-| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.        |                                                               |
+| Entity                     | Description                                                                   | Attributes                                                    |
+| -------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Current import period      | `anytime`, `peak`, `off_peak`, `shoulder`, `charge_4`, `charge_5` or `other`. | `windows`, list of today's windows such as `07:00-11:00 peak` |
+| Current export period      | As above, for export. Import and export can have different windows.           | `windows`                                                     |
+| Next import period change  | When the import period next changes.                                          | `period`, `price`                                             |
+| Next export period change  | When the export period next changes.                                          | `period`, `price`                                             |
+| Next pricing season change | When the pricing season next starts.                                          | ------------------------------------------------------------- |
+| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.                  | ------------------------------------------------------------- |
 
 ### Usage
 

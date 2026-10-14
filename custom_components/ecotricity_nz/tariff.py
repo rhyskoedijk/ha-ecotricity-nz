@@ -3,8 +3,8 @@
 This mirrors how the Ecotricity onboarding site combines rates, so the numbers match what
 customers see there:
 
-- Each rate goes into a bucket by its charge code (CHARGE_24, CHARGE_HIGH, CHARGE_LOW, CHARGE_3),
-  prefixed with EG_ for export. Rates without a code are bucketed by their description.
+- Each rate goes into a bucket by its charge code (such as CHARGE_24, CHARGE_HIGH, CHARGE_LOW or
+  CHARGE_3), prefixed with EG_ for export. Rates without a code are bucketed by their description.
 - Levies (for example the EA levy) are added to every import per-kWh bucket.
 - Retail and network rates in the same bucket are summed.
 - When a plan has an anytime retail energy rate but time-of-use network rates, the anytime rate is
@@ -38,18 +38,22 @@ WEEKDAY_COUNT = 5
 
 
 class TouPeriod(StrEnum):
-    """Friendly names for Ecotricity's four charge codes.
+    """Friendly names for the charge codes plans are known to use.
 
-    These are the only codes Ecotricity's own site recognises: CHARGE_24 (anytime), CHARGE_HIGH
-    (peak), CHARGE_LOW (off-peak) and CHARGE_3 (shoulder). Anytime is a period when a network has
-    no time-of-use rates for that direction; shoulder is used by networks with a third tier. A
-    bucket with any other code is still priced, but has no period.
+    Ecotricity's own site recognises four codes, and these mean the same on every network:
+    CHARGE_24 (anytime), CHARGE_HIGH (peak), CHARGE_LOW (off-peak) and CHARGE_3 (shoulder). Anytime
+    is a period when a network has no time-of-use rates for that direction; shoulder is used by
+    networks with a third tier. Some networks add more numbered codes, such as CHARGE_4 and
+    CHARGE_5, whose meaning is up to each network, so they're named only by number. A bucket with
+    any other code is still priced, but has no period.
     """
 
     ANYTIME = "anytime"
     PEAK = "peak"
     OFF_PEAK = "off_peak"
     SHOULDER = "shoulder"
+    CHARGE_4 = "charge_4"
+    CHARGE_5 = "charge_5"
 
 
 _PERIODS = {
@@ -57,6 +61,8 @@ _PERIODS = {
     "CHARGE_HIGH": TouPeriod.PEAK,
     "CHARGE_LOW": TouPeriod.OFF_PEAK,
     "CHARGE_3": TouPeriod.SHOULDER,
+    "CHARGE_4": TouPeriod.CHARGE_4,
+    "CHARGE_5": TouPeriod.CHARGE_5,
 }
 
 
@@ -183,7 +189,7 @@ def resolve_bucket(rate: Rate) -> str:
     normalised_description = " ".join(description.replace("-", " ").split())
     bucket: str | None = None
     if rate.unit is RateUnit.PER_KWH:
-        if "off peak" in normalised_description and "super off peak" not in normalised_description:
+        if "off peak" in normalised_description:
             bucket = "CHARGE_LOW"
         elif "on peak" in normalised_description or normalised_description in (
             "peak usage",

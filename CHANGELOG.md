@@ -3,7 +3,11 @@
 ## Unreleased
 
 - Fix pricing for plans that combine an anytime retail rate with additional network-defined charge buckets.
-- Keep new price categories such as holiday, night and super off-peak separate when bucketed from rate descriptions.
+- Keep rates with unfamiliar descriptions in their own price buckets.
+- Fix time-of-use charts that draw two close prices in the same shade, which were reported as fitting more than one set of the plan's prices (#9).
+- Numbered charge codes used by some networks now have their own period names and price sensors, for example **Charge 4 import price**. Any other unrecognised charge code shows its period as `other` instead of unknown, and its price sensor is named after the code or rate description.
+- The **Current import period** and **Current export period** sensors only list the periods your plan uses as options.
+- Price sensors for prices your plan no longer has, such as after choosing a different plan, are now removed instead of being left behind as no longer provided.
 
 ## v0.2.0 (2026-10-13)
 

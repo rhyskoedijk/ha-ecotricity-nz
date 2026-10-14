@@ -5,7 +5,9 @@ and day type (weekday or weekend). No API, page data or public dataset carries t
 docs/api.md). Each chart draws 48 half-hour bars: blue import bars above the axis and orange export
 bars below it, with each bar's height proportional to its price and its shade marking its tier.
 
-This module finds the 48 bars, groups them into tiers by colour and measures each tier's height.
+This module finds the 48 bars, groups them into tiers by colour and height, and measures each tier's
+height. A shade usually marks one price, but not always, so bars of one shade with different
+heights are separate tiers.
 Turning tiers into prices and charge buckets happens in `match_tiers`, which checks the bar heights
 against the API's own prices so a misread chart is rejected rather than trusted.
 
@@ -45,6 +47,11 @@ _BAR_PROFILE_SHARE = 0.5
 # has 7 import and 6 export shades, the closest two only 23.5 apart (RGB distance), while the
 # same shade read from different bars varies by about 4. Halfway keeps every shade separate.
 _TIER_COLOUR_TOLERANCE = 12.0
+# Bars of one shade can still be different prices: some network charts draw two close prices in
+# the same shade, a few pixels apart. Bars of one
+# price measure the same height to the pixel, so bars more than this many pixels apart are separate
+# tiers.
+_TIER_HEIGHT_TOLERANCE = 2
 
 
 class ChartReadError(EcotricityResponseError):
@@ -53,7 +60,7 @@ class ChartReadError(EcotricityResponseError):
 
 @dataclass(frozen=True, slots=True)
 class ChartTier:
-    """Bars of one shade on a chart."""
+    """Bars of one shade and height on a chart."""
 
     colour: tuple[int, int, int]
     height: float
@@ -181,13 +188,17 @@ def _distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
 def _group_tiers(
     bars: Sequence[tuple[float, tuple[int, int, int]] | None],
 ) -> tuple[ChartTier, ...]:
+    """Group bars into tiers by shade and height, so one shade used for two prices stays apart."""
     groups: list[tuple[tuple[int, int, int], list[float], set[int]]] = []
     for slot, bar in enumerate(bars):
         if bar is None:
             continue
         height, colour = bar
         for reference, heights, slots in groups:
-            if _distance(reference, colour) <= _TIER_COLOUR_TOLERANCE:
+            if (
+                _distance(reference, colour) <= _TIER_COLOUR_TOLERANCE
+                and abs(heights[0] - height) <= _TIER_HEIGHT_TOLERANCE
+            ):
                 heights.append(height)
                 slots.add(slot)
                 break

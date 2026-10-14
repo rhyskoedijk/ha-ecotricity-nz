@@ -113,12 +113,7 @@ def _rate(**kwargs: object) -> Rate:
         (_rate(charge="CHARGE_24", register_type="EG"), "EG_CHARGE_24"),
         (_rate(description="Uncontrolled - Off Peak"), "CHARGE_LOW"),
         (_rate(description="Off-Peak Usage"), "CHARGE_LOW"),
-        (_rate(description="Super Off Peak"), "super off peak"),
-        (_rate(description="Super Off-Peak"), "super off-peak"),
-        (_rate(description="Super-off-peak"), "super-off-peak"),
-        (_rate(description="Super Off Peak Usage"), "super off peak usage"),
-        (_rate(description="Holiday"), "holiday"),
-        (_rate(description="Night"), "night"),
+        (_rate(description="Network usage"), "network usage"),
         (_rate(description="On Peak Export", register_type="EG"), "EG_CHARGE_HIGH"),
         (_rate(description="Peak Usage"), "CHARGE_HIGH"),
         (_rate(description="Shoulder"), "CHARGE_3"),
@@ -139,6 +134,22 @@ def test_periods() -> None:
     assert period_for_bucket("EG_CHARGE_HIGH") is TouPeriod.PEAK
     assert period_for_bucket("CHARGE_3") is TouPeriod.SHOULDER
     assert period_for_bucket("controlled") is None
+
+
+@pytest.mark.parametrize(
+    ("bucket", "period"),
+    [
+        # Numbered codes mean different things on different networks, so they keep their number.
+        ("CHARGE_4", TouPeriod.CHARGE_4),
+        ("EG_CHARGE_4", TouPeriod.CHARGE_4),
+        ("CN_CHARGE_5", TouPeriod.CHARGE_5),
+        # Codes and descriptions not seen yet have no period.
+        ("CHARGE_6", None),
+        ("network usage", None),
+    ],
+)
+def test_numbered_periods(bucket: str, period: TouPeriod | None) -> None:
+    assert period_for_bucket(bucket) is period
 
 
 def test_slot_map() -> None:
@@ -223,13 +234,13 @@ def test_anytime_rate_merges_into_additional_network_buckets() -> None:
         ),
         network_rates=(
             _rate(
-                description="Super Off Peak Usage",
+                description="Network usage 4",
                 charge="CHARGE_4",
                 price=0.0,
                 is_network=True,
             ),
             _rate(
-                description="Weekend Usage",
+                description="Network usage 5",
                 charge="CHARGE_5",
                 price=3.636,
                 is_network=True,
@@ -263,9 +274,9 @@ def test_anytime_rate_merges_into_additional_network_buckets() -> None:
 
 def test_named_network_buckets_keep_their_identity_and_match_chart_tiers() -> None:
     categories = (
-        ("Holiday", 1.0),
-        ("Night", 2.0),
-        ("Super Off Peak", 3.0),
+        ("Network usage A", 1.0),
+        ("Network usage B", 2.0),
+        ("Network usage C", 3.0),
     )
     plan = replace(
         _plan("CKHK_ANY_LOW_260401_T0"),
@@ -282,9 +293,9 @@ def test_named_network_buckets_keep_their_identity_and_match_chart_tiers() -> No
     pricing = price_day(plan, SPRING)
 
     assert pricing.import_buckets == {
-        "holiday": 19.0,
-        "night": 20.0,
-        "super off peak": 21.0,
+        "network usage a": 19.0,
+        "network usage b": 20.0,
+        "network usage c": 21.0,
     }
 
     slots_by_category = (frozenset(range(16)), frozenset(range(16, 32)), frozenset(range(32, 48)))
@@ -300,7 +311,7 @@ def test_named_network_buckets_keep_their_identity_and_match_chart_tiers() -> No
     )
 
     assert match_tiers(chart_tiers, pricing.import_buckets) == (
-        ("holiday",) * 16 + ("night",) * 16 + ("super off peak",) * 16
+        ("network usage a",) * 16 + ("network usage b",) * 16 + ("network usage c",) * 16
     )
 
 

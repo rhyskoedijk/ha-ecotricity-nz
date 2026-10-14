@@ -81,6 +81,9 @@ async def test_pricing_sensors(
     assert _state(hass, "plan") == "Low ecoSAVER"
     assert _state(hass, "pricing_season") == "Seasonal Rates 04/2026 - 09/2026"
     assert _state(hass, "current_import_period") == "peak"
+    # Only the periods this plan uses are options.
+    assert _extra(hass, "current_import_period")["options"] == ["peak", "off_peak"]
+    assert _extra(hass, "current_export_period")["options"] == ["peak", "off_peak"]
     # Winter peak: 37.3476c + GST. Export: 13.74c anytime + 2c network peak, credited as
     # published because GST isn't added to export credits.
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.4295)
@@ -473,6 +476,7 @@ async def test_new_season_adds_sensors(
     await _setup(hass, config_entry)
     unique_id = f"{TEST_ICP}_price_charge_3"
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is None
+    assert "shoulder" not in _extra(hass, "current_import_period")["options"]
 
     # Ecotricity publishes next year's seasons part way through this one.
     mock_onboarding.async_get_plans.return_value = _with_new_season(
@@ -482,10 +486,67 @@ async def test_new_season_adds_sensors(
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is not None
+    # The period sensor can show shoulder from now on, ready for the new season.
+    assert "shoulder" in _extra(hass, "current_import_period")["options"]
     season = hass.states.get(f"{PREFIX}_pricing_season")
     assert season is not None
     assert "2027-04-01/2027-09-30" in season.attributes["published"]
     assert season.attributes["end"] == date(2026, 9, 30)
+
+
+async def test_prices_the_plan_no_longer_has_are_removed(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    mock_onboarding.async_get_plans.return_value = _with_new_season(plans)
+    await _setup(hass, config_entry)
+    shoulder = f"{TEST_ICP}_price_charge_3"
+    peak = f"{TEST_ICP}_price_charge_high"
+    assert entity_registry.async_get_entity_id("sensor", DOMAIN, shoulder) is not None
+
+    # Ecotricity withdraws the season with the shoulder rate.
+    mock_onboarding.async_get_plans.return_value = plans
+    await config_entry.runtime_data.pricing.async_fetch_now()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entity_registry.async_get_entity_id("sensor", DOMAIN, shoulder) is None
+    assert entity_registry.async_get_entity_id("sensor", DOMAIN, peak) is not None
+    assert "shoulder" not in _extra(hass, "current_import_period")["options"]
+
+    # If it comes back, so does its sensor.
+    mock_onboarding.async_get_plans.return_value = _with_new_season(plans)
+    await config_entry.runtime_data.pricing.async_fetch_now()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entity_registry.async_get_entity_id("sensor", DOMAIN, shoulder) is not None
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_stale_price_sensors_are_removed_at_setup(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Left over from a plan chosen before, with a price this plan doesn't have.
+    freezer.move_to(WINTER_PEAK)
+    config_entry.add_to_hass(hass)
+    stale = entity_registry.async_get_or_create(
+        "sensor", DOMAIN, f"{TEST_ICP}_price_charge_3", config_entry=config_entry
+    )
+    other = entity_registry.async_get_or_create(
+        "sensor", DOMAIN, f"{TEST_ICP}_pricing_season", config_entry=config_entry
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entity_registry.async_get(stale.entity_id) is None
+    assert entity_registry.async_get(other.entity_id) is not None
 
 
 async def test_pricing_is_fetched_weekly(
@@ -515,7 +576,7 @@ async def test_pricing_is_fetched_weekly(
     assert mock_onboarding.async_get_chart.await_count == 2 * chart_calls
 
 
-async def test_unknown_charge_code_has_no_period(
+async def test_unknown_charge_code_is_another_period(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_onboarding: MagicMock,
@@ -523,24 +584,80 @@ async def test_unknown_charge_code_has_no_period(
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     plans: PlanList = mock_onboarding.async_get_plans.return_value
-    night = Rate(
+    unknown = Rate(
         id="9002",
-        description="Night",
-        charge="CHARGE_NIGHT",
+        description="Network usage",
+        charge="CHARGE_9",
         register_type=None,
         unit=RateUnit.PER_KWH,
         raw_unit="cents/kWh",
         price=12.0,
         is_network=False,
     )
-    plan = replace(plans.default, retail_rates=(night,), network_rates=())
+    plan = replace(plans.default, retail_rates=(unknown,), network_rates=())
     mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
     await _setup(hass, config_entry)
 
-    # Not one of Ecotricity's four codes: priced, but with no period.
-    assert _state(hass, "current_import_period") == "unknown"
-    assert "period" not in _extra(hass, "current_import_price")
+    # Not a code with a known period: priced, and shown as "other".
+    assert _state(hass, "current_import_period") == "other"
+    assert _extra(hass, "current_import_period")["windows"] == ["00:00-24:00 other"]
+    assert _extra(hass, "current_import_period")["options"] == ["other"]
+    assert _extra(hass, "current_import_price")["period"] == "other"
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.138)
+
+
+async def test_every_charge_code_has_a_friendly_name(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+
+    def usage(charge: str | None, description: str, register_type: str | None = None) -> Rate:
+        return Rate(
+            id=f"{charge}-{description}",
+            description=description,
+            charge=charge,
+            register_type=register_type,
+            unit=RateUnit.PER_KWH,
+            raw_unit="cents/kWh",
+            price=20.0,
+            is_network=True,
+        )
+
+    # Numbered codes, a code nothing names yet and a rate bucketed by its description.
+    plan = replace(
+        plans.default,
+        retail_rates=(),
+        network_rates=(
+            usage("CHARGE_4", "Network usage 4"),
+            usage("CHARGE_5", "Network usage 5"),
+            usage("CHARGE_6", "Something new"),
+            usage(None, "Network usage"),
+            usage("CHARGE_4", "Network export 4", register_type="EG"),
+        ),
+    )
+    mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
+    await _setup(hass, config_entry)
+
+    names = {
+        entry.unique_id.removeprefix(f"{TEST_ICP}_"): entry.entity_id.removeprefix(f"{PREFIX}_")
+        for entry in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
+        if "_price_" in entry.unique_id
+    }
+    assert names == {
+        "price_charge_4": "charge_4_import_price",
+        "price_charge_5": "charge_5_import_price",
+        "price_charge_6": "charge_6_import_price",
+        "price_network_usage": "network_usage_import_price",
+        "price_eg_charge_4": "charge_4_export_price",
+    }
+    # Charge 6 and the rate with no code are both "other"; peak and off-peak aren't on this plan.
+    assert _extra(hass, "current_import_period")["options"] == ["charge_4", "charge_5", "other"]
+    assert _extra(hass, "current_export_period")["options"] == ["charge_4"]
 
 
 _STANDARD_ATTRIBUTES = {

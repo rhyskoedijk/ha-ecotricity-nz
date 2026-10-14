@@ -6,6 +6,7 @@
 - Keep rates with unfamiliar descriptions in their own price buckets.
 - Fix time-of-use charts that draw two close prices in the same shade. The cheaper half-hours were charged at the other price.
 - Prices other than anytime, peak and off-peak are now named from your plan's own rate descriptions, as listed in the Ecotricity portal, for example **Super off peak import price** and the period `super_off_peak`. The names follow your plan if Ecotricity renames a rate. A price with no description is named after its charge code, such as **Charge 4 import price**, instead of showing its period as unknown.
+- **Possible breaking change:** the third price on a plan (charge code `CHARGE_3`) was always called **Shoulder** with the period `shoulder`. It now takes its name from your plan too, so if your plan describes it as something other than "Shoulder Usage", the sensor's name, its period value and the `period`, `charged_as` and `windows` attributes change to match (for example `uncontrolled_shoulder`). Automations or templates that check for `shoulder` won't match any more and should be updated. Entity IDs and history aren't affected.
 - The **Current import period** and **Current export period** sensors only list the periods your plan uses as options.
 - Price sensors for prices your plan no longer has, such as after choosing a different plan, are now removed instead of being left behind as no longer provided.
 

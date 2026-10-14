@@ -77,8 +77,8 @@ If a season doesn't price a period separately and one price applies all day (e.g
 | Current export period      | As above, for export. Import and export can have different windows.                  | `windows`                                                     |
 | Next import period change  | When the import period next changes.                                                 | `period`, `price`                                             |
 | Next export period change  | When the export period next changes.                                                 | `period`, `price`                                             |
-| Next pricing season change | When the pricing season next starts.                                                 | ------------------------------------------------------------- |
-| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.                         | ------------------------------------------------------------- |
+| Next pricing season change | When the pricing season next starts.                                                 |                                                               |
+| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.                         |                                                               |
 
 ### Usage
 

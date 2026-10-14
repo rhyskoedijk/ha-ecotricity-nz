@@ -140,7 +140,7 @@
         "network_rates": [
           {
             "id": "6038",
-            "network": "doe",
+            "network": "ORON",
             "price_category": "URES",
             "partner_id": "ECOTRICITY",
             "tariff_id": 1367,

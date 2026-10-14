@@ -39,6 +39,12 @@ def test_network_folder(network: str) -> None:
     # The folder is named by a real distributor code, and holds only that network's plans.
     assert network in load_json_fixture("network_codes.json")
     assert {plan.network for plan in _plans(network)} == {network}
+    content = load_network_fixture(network, "plan_list.json")["content"][0]
+    raw_plans = [content["default"], content["alternative"], *content["plan_list"]]
+    rate_networks = {
+        rate["network"] for plan in raw_plans if plan for rate in plan["network_rates"]
+    }
+    assert rate_networks == {network}
     for chart in (NETWORKS / network / "charts").glob("*.png"):
         assert chart.name.startswith(f"{network}-")
 

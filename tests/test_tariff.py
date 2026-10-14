@@ -14,6 +14,7 @@ import pytest
 
 from custom_components.ecotricity_nz.api import Plan, Rate, RateUnit
 from custom_components.ecotricity_nz.api.parsers import parse_plan_list
+from custom_components.ecotricity_nz.api.timeframes import match_tiers, read_chart
 from custom_components.ecotricity_nz.tariff import (
     SLOTS_PER_DAY,
     SlotMap,
@@ -24,7 +25,7 @@ from custom_components.ecotricity_nz.tariff import (
     resolve_bucket,
     season_for,
 )
-from tests.conftest import load_json_fixture
+from tests.conftest import CHARTS, load_json_fixture
 
 NZ = ZoneInfo("Pacific/Auckland")
 WINTER = date(2026, 6, 15)
@@ -196,6 +197,61 @@ def test_shoulder_rates() -> None:
         "CHARGE_HIGH": pytest.approx(30.0),
     }
     assert period_for_bucket("CHARGE_3") is TouPeriod.SHOULDER
+
+
+def test_anytime_rate_merges_into_additional_network_buckets() -> None:
+    plan = replace(
+        _plan("EXLN_ANY_LOW_260401_T0"),
+        network="ORON",
+        price_category="RES",
+        retail_rates=(
+            _rate(description="Anytime usage", charge="CHARGE_24", price=18.3168),
+            _rate(description="EA Levy", charge="CHARGE_24", price=0.16),
+            _rate(
+                description="Anytime Export",
+                charge="CHARGE_24",
+                register_type="EG",
+                price=-13.74,
+            ),
+        ),
+        network_rates=(
+            _rate(
+                description="Super Off Peak Usage",
+                charge="CHARGE_4",
+                price=0.0,
+                is_network=True,
+            ),
+            _rate(
+                description="Weekend Usage",
+                charge="CHARGE_5",
+                price=3.636,
+                is_network=True,
+            ),
+        ),
+    )
+    pricing = price_day(plan, date(2026, 5, 1))
+
+    assert pricing.import_buckets == pytest.approx({"CHARGE_4": 18.4768, "CHARGE_5": 22.1128})
+    assert pricing.export_buckets == {"EG_CHARGE_24": -13.74}
+
+    chart = read_chart((CHARTS / "ORON-RTOU24-TIERED-WE-NOGST.png").read_bytes())
+    imports = match_tiers(
+        chart.import_tiers,
+        pricing.import_buckets,
+        other_tiers=chart.export_tiers,
+        other_prices=pricing.export_buckets,
+    )
+    exports = match_tiers(
+        chart.export_tiers,
+        pricing.export_buckets,
+        other_tiers=chart.import_tiers,
+        other_prices=pricing.import_buckets,
+    )
+
+    assert imports[:6] == ("CHARGE_5",) * 6
+    assert imports[6:10] == ("CHARGE_4",) * 4
+    assert imports[10:] == ("CHARGE_5",) * 38
+    assert exports == ("EG_CHARGE_24",) * 48
 
 
 def _peak_slots(*peak: int) -> SlotMap:

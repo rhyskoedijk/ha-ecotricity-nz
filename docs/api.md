@@ -87,7 +87,7 @@ Seasons last a few months and start on the 1st of a month. The list in a plan re
 
 These rules reproduce the legend prices on every chart captured so far: three plans across three seasons, all on one network. Other networks may combine rates in ways not seen yet. If they do, the chart check below catches it, because the bar heights won't match the computed prices, and the integration reports the problem rather than showing a wrong price.
 
-Ecotricity's site recognises four charge codes: `CHARGE_24` (anytime), `CHARGE_HIGH` (peak), `CHARGE_LOW` (off-peak) and `CHARGE_3` (shoulder). The captured network uses the first three. Anytime only shows as a period when a network has no time-of-use rates for that direction (otherwise it's folded into them), and shoulder is used by networks with a third tier, such as Orion's 5 to 7am and 11am to 5pm weekday shoulder. A code outside these four would still be kept as its own bucket, priced and matched to the charts the same way, but it has no period.
+The common charge codes are `CHARGE_24` (anytime), `CHARGE_HIGH` (peak), `CHARGE_LOW` (off-peak) and `CHARGE_3` (shoulder), but plans can use additional network-defined codes. An Orion plan, for example, used `CHARGE_4` for super off-peak and `CHARGE_5` for weekend usage. When a plan has an anytime retail rate and network rates in other buckets, the retail rate is folded into every network-defined bucket, including codes the integration does not assign a friendly period name. The chart still determines when those buckets apply.
 
 ### Controlled load
 

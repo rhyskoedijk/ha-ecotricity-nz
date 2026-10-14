@@ -272,10 +272,19 @@ def _tou_keys(usage: dict[str, _Bucket], prefix: str) -> list[str]:
 
 
 def _merge_anytime_into_tou(usage: dict[str, _Bucket], prefix: str) -> None:
-    """Fold an anytime supplier rate into time-of-use network buckets."""
+    """Fold an anytime supplier rate into network-defined time-of-use buckets."""
     anytime_key = prefix + ANYTIME
     anytime = usage.get(anytime_key)
     tou = _tou_keys(usage, prefix)
+    tou.extend(
+        key
+        for key, bucket in usage.items()
+        if key not in tou
+        and key.startswith(prefix)
+        and key != anytime_key
+        and (prefix or not key.startswith(PREFIXES))
+        and bucket.of(ComponentKind.NETWORK)
+    )
     if anytime is None or not anytime.of(ComponentKind.SUPPLIER) or not tou:
         return
     if any(usage[key].of(ComponentKind.SUPPLIER) for key in tou):

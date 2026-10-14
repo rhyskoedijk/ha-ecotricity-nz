@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix pricing for plans that combine an anytime retail rate with additional network-defined charge buckets.
+
 ## v0.2.0 (2026-10-13)
 
 - Pricing is saved and keeps working through restarts and internet outages, including into the next pricing season (once Ecotricity has published it). Ecotricity's pricing data is now fetched weekly, on the 1st of each month and at the end of each season, instead of twice a day. If it can't be reached, retries slow down from hourly to every 8 hours until it eventually succeeds again.

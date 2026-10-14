@@ -83,6 +83,15 @@ Build fixtures from the captures without personal data:
 
 Timeframe chart images contain only prices and times. Keep the real network code in their filenames; replace any customer-specific values with obviously fake ones.
 
+### Checking network codes
+
+`tests/fixtures/network_codes.json` maps each distributor's four-letter code to its network name. Codes change rarely, so nothing checks the file automatically. To check it by hand:
+
+1. Open the Electricity Authority's [ICP and metering details](https://www.ea.govt.nz/data-and-insights/datasets/retail/market-structure/icp-and-metering-details/) dataset page and download the newest `YYYYMMDD_MeteringConfigurationsInclDistributionPriceCatCode.csv`.
+2. Take the distinct values of the `NSP` column that end in four capital letters followed by `GN`, for example `CPK0111CKHKGN`. The four letters before `GN` are the distributor code (`CKHK`). Ignore other NSPs, such as embedded networks.
+3. Leave out `TRPG`. It appears on only two ICPs and isn't a lines company in the ENA list.
+4. Add any codes missing from `network_codes.json`, and review any that no longer appear.
+
 ### Adding a network
 
 1. Create `tests/fixtures/networks/{code}/`, where `{code}` is the network's distributor code from `tests/fixtures/network_codes.json`.

@@ -51,7 +51,7 @@ Any one of these works:
 
 ## Live smoke test
 
-`scripts/ecotricity_api_client_smoke_test.py` runs the real API clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
+`scripts/api_client_smoke_test.py` runs the real API clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
 
 Create a `.env` file in the repository root (it's git-ignored):
 
@@ -65,7 +65,7 @@ ECOTRICITY_PASSWORD=your portal password
 Everything except the ICP is optional. Without a plan, the site's default plan is used. Then:
 
 ```bash
-uv run python scripts/ecotricity_api_client_smoke_test.py
+uv run python scripts/api_client_smoke_test.py
 ```
 
 Run it after changing anything in `custom_components/ecotricity_nz/api/`, and whenever the integration starts failing, to see whether Ecotricity has changed something.

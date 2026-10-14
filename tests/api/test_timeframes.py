@@ -96,7 +96,7 @@ def test_read_flat_chart_with_unused_bucket() -> None:
 
 
 def test_read_shade_shared_by_two_prices() -> None:
-    # Off-peak and a slightly cheaper price for part of the day are drawn in the same shade, so
+    # "off-peak" and "super off-peak" price for part of the day are drawn in the same shade, so
     # only their heights tell them apart. Matching against the plan's prices is in test_tariff.py.
     chart = "ORON-URES-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-20260901-20270331-WD-NOGST.png"
     reading = read_chart(chart_file(chart).read_bytes())

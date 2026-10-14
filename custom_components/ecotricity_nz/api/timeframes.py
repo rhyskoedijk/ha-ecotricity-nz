@@ -6,10 +6,10 @@ docs/api.md). Each chart draws 48 half-hour bars: blue import bars above the axi
 bars below it, with each bar's height proportional to its price and its shade marking its tier.
 
 This module finds the 48 bars, groups them into tiers by colour and height, and measures each tier's
-height. A shade usually marks one price, but not always, so bars of one shade with different
-heights are separate tiers.
-Turning tiers into prices and charge buckets happens in `match_tiers`, which checks the bar heights
-against the API's own prices so a misread chart is rejected rather than trusted.
+height. A shade usually marks one price, but not always, so bars of one shade with different heights
+are separate tiers. Turning tiers into prices and charge buckets happens in `match_tiers`, which
+checks the bar heights against the API's own prices so a misread chart is rejected rather than
+trusted.
 
 Pillow is a Home Assistant core dependency, so no extra requirement is needed.
 """
@@ -48,9 +48,8 @@ _BAR_PROFILE_SHARE = 0.5
 # same shade read from different bars varies by about 4. Halfway keeps every shade separate.
 _TIER_COLOUR_TOLERANCE = 12.0
 # Bars of one shade can still be different prices: some network charts draw two close prices in
-# the same shade, a few pixels apart. Bars of one
-# price measure the same height to the pixel, so bars more than this many pixels apart are separate
-# tiers.
+# the same shade, a few pixels apart. Bars of one price measure the same height to the pixel, so
+# bars more than this many pixels apart are separate tiers.
 _TIER_HEIGHT_TOLERANCE = 2
 
 

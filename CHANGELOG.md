@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.3.0 (2026-10-15)
+
 Pricing only worked properly for networks shaped like Wellington Electricity's. This release fixes pricing on Orion and other similar networks that have extra network-defined charge buckets such as "weekend" and "super off-peak" (#9).
 
 - **Breaking change:** charge code `CHARGE_3`, which was always the **Shoulder** (`shoulder`) price, now follows your plan's own description; if your plan describes it as something other than "Shoulder Usage", the sensor's name, its period value and the `period`, `charged_as` and `windows` attributes will now change to match. **Automations or templates that check for `shoulder` may need updating**.

@@ -150,7 +150,9 @@
           "anytime": "Anytime",
           "peak": "Peak",
           "off_peak": "Off-peak",
-          "shoulder": "Shoulder"
+          "shoulder": "Shoulder",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
         }
       },
       "current_export_period": {
@@ -159,7 +161,9 @@
           "anytime": "Anytime",
           "peak": "Peak",
           "off_peak": "Off-peak",
-          "shoulder": "Shoulder"
+          "shoulder": "Shoulder",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
         }
       },
       "next_import_period_change": {

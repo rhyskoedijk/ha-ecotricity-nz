@@ -8,14 +8,16 @@ network's own plans, for the season and day type in the chart's file name.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 from custom_components.ecotricity_nz.api.parsers import parse_plan_list
 from custom_components.ecotricity_nz.api.timeframes import SLOTS_PER_DAY, match_tiers, read_chart
-from custom_components.ecotricity_nz.tariff import price_day
+from custom_components.ecotricity_nz.tariff import bucket_names, bucket_period, price_day
 from tests.conftest import (
     NETWORKS,
     chart_files,
@@ -25,9 +27,10 @@ from tests.conftest import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from custom_components.ecotricity_nz.api import Plan
+
+
+STRINGS = Path(__file__).parents[1] / "custom_components" / "ecotricity_nz" / "strings.json"
 
 
 def _plans(network: str) -> tuple[Plan, ...]:
@@ -73,3 +76,22 @@ def test_chart_matches_its_plan(chart: Path) -> None:
             other_prices=pricing.import_buckets,
         )
         assert len(exports) == SLOTS_PER_DAY
+
+
+@pytest.mark.parametrize("network", network_codes())
+def test_every_period_is_translated(network: str) -> None:
+    # Periods seen on real plans get a friendly name, so the period sensors' states and options
+    # don't mix translated names with raw keys like super_off_peak.
+    sensors = json.loads(STRINGS.read_text(encoding="utf-8"))["entity"]["sensor"]
+    for plan in _plans(network):
+        names = bucket_names(plan)
+        for season in plan.seasons:
+            pricing = price_day(plan, season.start)
+            for key, buckets in (
+                ("current_import_period", pricing.import_buckets),
+                ("current_export_period", pricing.export_buckets),
+            ):
+                translated = sensors[key]["state"]
+                for bucket in buckets:
+                    period = bucket_period(bucket, names)
+                    assert period in translated, f"{plan.code}: {period} has no {key} state"

@@ -81,6 +81,8 @@
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
           "shoulder": "mdi:clock-time-four-outline",
+          "super_off_peak": "mdi:clock-check",
+          "weekend": "mdi:calendar-weekend-outline",
           "anytime": "mdi:clock-outline"
         }
       },
@@ -90,6 +92,8 @@
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
           "shoulder": "mdi:clock-time-four-outline",
+          "super_off_peak": "mdi:clock-check",
+          "weekend": "mdi:calendar-weekend-outline",
           "anytime": "mdi:clock-outline"
         }
       },

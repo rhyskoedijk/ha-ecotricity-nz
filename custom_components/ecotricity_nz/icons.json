@@ -80,6 +80,7 @@
         "state": {
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
+          "shoulder": "mdi:clock-time-four-outline",
           "anytime": "mdi:clock-outline"
         }
       },
@@ -88,6 +89,7 @@
         "state": {
           "peak": "mdi:clock-alert-outline",
           "off_peak": "mdi:clock-check-outline",
+          "shoulder": "mdi:clock-time-four-outline",
           "anytime": "mdi:clock-outline"
         }
       },

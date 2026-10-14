@@ -149,7 +149,8 @@
         "state": {
           "anytime": "Anytime",
           "peak": "Peak",
-          "off_peak": "Off-peak"
+          "off_peak": "Off-peak",
+          "shoulder": "Shoulder"
         }
       },
       "current_export_period": {
@@ -157,7 +158,8 @@
         "state": {
           "anytime": "Anytime",
           "peak": "Peak",
-          "off_peak": "Off-peak"
+          "off_peak": "Off-peak",
+          "shoulder": "Shoulder"
         }
       },
       "next_import_period_change": {

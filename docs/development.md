@@ -27,7 +27,7 @@ uv run pre-commit run --all-files              # git hook checks
 
 CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
 
-Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (`CKHK`, `ORON`), with its `plan_list.json`, its timeframe charts in `charts/`, and an `icp.json` where it has a test ICP. Most tests run against `CKHK`, the test ICP's network (`DEFAULT_NETWORK` in `tests/conftest.py`). The chart images are real Ecotricity charts; they contain only public pricing.
+Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with its `plan_list.json`, its timeframe charts in `charts/`, and an `icp.json` where it has a test ICP. Most tests run against `CKHK`, the test ICP's network (`DEFAULT_NETWORK` in `tests/conftest.py`). The chart images are real Ecotricity charts; they contain only public pricing.
 
 ## Running Home Assistant locally
 
@@ -89,8 +89,7 @@ Timeframe chart images contain only prices and times. Keep the real network code
 
 1. Open the Electricity Authority's [ICP and metering details](https://www.ea.govt.nz/data-and-insights/datasets/retail/market-structure/icp-and-metering-details/) dataset page and download the newest `YYYYMMDD_MeteringConfigurationsInclDistributionPriceCatCode.csv`.
 2. Take the distinct values of the `NSP` column that end in four capital letters followed by `GN`, for example `CPK0111CKHKGN`. The four letters before `GN` are the distributor code (`CKHK`). Ignore other NSPs, such as embedded networks.
-3. Leave out `TRPG`. It appears on only two ICPs and isn't a lines company in the ENA list.
-4. Add any codes missing from `network_codes.json`, and review any that no longer appear.
+3. Add any codes missing from `network_codes.json`, and review any that no longer appear.
 
 ### Adding a network
 

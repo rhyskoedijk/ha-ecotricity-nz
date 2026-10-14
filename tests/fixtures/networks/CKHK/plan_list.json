@@ -2,13 +2,13 @@
   "content": [
     {
       "default": {
-        "timeframes_chart_we": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_OFPK_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
+        "timeframes_chart_we": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_OFPK_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
         "display_alternative_low_std_plan": "N",
         "retail_rates": [
           {
             "season": null,
             "valid_end": null,
-            "price_plan": "EXLN_OFPK_STD_260401_T0",
+            "price_plan": "CKHK_OFPK_STD_260401_T0",
             "tariff_id": 995,
             "register_type": "EG",
             "charge": "CHARGE_24",
@@ -31,7 +31,7 @@
             "price": 0.16,
             "season": null,
             "valid_end": null,
-            "price_plan": "EXLN_OFPK_STD_260401_T0",
+            "price_plan": "CKHK_OFPK_STD_260401_T0",
             "tariff_id": 995,
             "register_type": null
           },
@@ -47,7 +47,7 @@
             "season": null,
             "register_type": null,
             "tariff_id": 263,
-            "price_plan": "EXLN_OFPK_STD_260401_T0",
+            "price_plan": "CKHK_OFPK_STD_260401_T0",
             "valid_end": null
           },
           {
@@ -61,13 +61,13 @@
             "price": 17.4283,
             "season": null,
             "valid_end": null,
-            "price_plan": "EXLN_OFPK_STD_260401_T0",
+            "price_plan": "CKHK_OFPK_STD_260401_T0",
             "tariff_id": 263,
             "register_type": null
           },
           {
             "valid_end": null,
-            "price_plan": "EXLN_OFPK_STD_260401_T0",
+            "price_plan": "CKHK_OFPK_STD_260401_T0",
             "tariff_id": null,
             "register_type": null,
             "season": null,
@@ -85,7 +85,7 @@
             "register_type": null,
             "tariff_id": null,
             "valid_end": null,
-            "price_plan": "EXLN_OFPK_STD_260401_T0",
+            "price_plan": "CKHK_OFPK_STD_260401_T0",
             "partner_id": "ECOTRICITY",
             "id": "2260",
             "charge": null,
@@ -110,7 +110,7 @@
             "price": -2,
             "partner_id": "ECOTRICITY",
             "charge": "CHARGE_HIGH",
-            "network": "EXLN",
+            "network": "CKHK",
             "charge_description": "On Peak Export",
             "id": "5101"
           },
@@ -123,7 +123,7 @@
             "partner_id": "ECOTRICITY",
             "id": "5102",
             "charge_description": "Off Peak Export",
-            "network": "EXLN",
+            "network": "CKHK",
             "charge": "CHARGE_LOW",
             "priceplan_id": null,
             "price": 0,
@@ -138,7 +138,7 @@
             "valid_end": "2026-09-30",
             "id": "5103",
             "charge_description": "Uncontrolled - On Peak",
-            "network": "EXLN",
+            "network": "CKHK",
             "charge": "CHARGE_HIGH",
             "partner_id": "ECOTRICITY",
             "price": 14.51,
@@ -148,7 +148,7 @@
           },
           {
             "charge": "CHARGE_LOW",
-            "network": "EXLN",
+            "network": "CKHK",
             "charge_description": "Uncontrolled - Off Peak",
             "id": "5104",
             "partner_id": "ECOTRICITY",
@@ -174,13 +174,13 @@
             "priceplan_id": null,
             "charge_description": "Daily Network Charges",
             "charge": null,
-            "network": "EXLN",
+            "network": "CKHK",
             "id": "5105",
             "partner_id": "ECOTRICITY"
           }
         ],
         "valid_start": null,
-        "timeframes_chart_wd": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_OFPK_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
+        "timeframes_chart_wd": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_OFPK_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
         "seasons": [
           {
             "end": "2026-09-30",
@@ -200,9 +200,9 @@
         ],
         "partner_id": "ECOTRICITY",
         "customer_type": "RESIDENTIAL",
-        "network": "EXLN",
+        "network": "CKHK",
         "id": "3004",
-        "price_plan": "EXLN_OFPK_STD_260401_T0",
+        "price_plan": "CKHK_OFPK_STD_260401_T0",
         "valid_end": null,
         "alert_flag": "No Change",
         "price_category": "RTOU24",
@@ -214,11 +214,11 @@
       "plan_list": [
         {
           "partner_id": "ECOTRICITY",
-          "network": "EXLN",
+          "network": "CKHK",
           "customer_type": "RESIDENTIAL",
           "id": "3000",
           "display_alternative_low_std_plan": "N",
-          "timeframes_chart_we": "/timeframeimages_ecotricity/EXLN-RTOU24-BATT_SPECIAL_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
+          "timeframes_chart_we": "/timeframeimages_ecotricity/CKHK-RTOU24-BATT_SPECIAL_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
           "valid_start": null,
           "price_plan_description": "EcoBATTERY Anytime",
           "retail_rates": [
@@ -323,7 +323,7 @@
               "id": "5101",
               "charge_description": "On Peak Export",
               "charge": "CHARGE_HIGH",
-              "network": "EXLN",
+              "network": "CKHK",
               "partner_id": "ECOTRICITY",
               "price": -2,
               "unit": "cents/kWh",
@@ -333,7 +333,7 @@
             {
               "partner_id": "ECOTRICITY",
               "charge_description": "Off Peak Export",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": "CHARGE_LOW",
               "id": "5102",
               "priceplan_id": null,
@@ -352,7 +352,7 @@
               "unit": "cents/kWh",
               "price": 14.51,
               "partner_id": "ECOTRICITY",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": "CHARGE_HIGH",
               "charge_description": "Uncontrolled - On Peak",
               "id": "5103",
@@ -364,7 +364,7 @@
             },
             {
               "charge_description": "Uncontrolled - Off Peak",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": "CHARGE_LOW",
               "id": "5104",
               "partner_id": "ECOTRICITY",
@@ -388,7 +388,7 @@
               "unit": "cents/d",
               "price": 159.51,
               "priceplan_id": null,
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": null,
               "charge_description": "Daily Network Charges",
               "id": "5105",
@@ -412,7 +412,7 @@
               "end": "2027-03-31"
             }
           ],
-          "timeframes_chart_wd": "/timeframeimages_ecotricity/EXLN-RTOU24-BATT_SPECIAL_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
+          "timeframes_chart_wd": "/timeframeimages_ecotricity/CKHK-RTOU24-BATT_SPECIAL_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
           "season": null,
           "price_plan": "BATT_SPECIAL_STD_260401_T0",
           "valid_end": null,
@@ -426,14 +426,14 @@
           "alert_flag": "No Change",
           "standard_low": "S",
           "price_category": "RTOU24",
-          "price_plan": "EXLN_ANY_STD_260401_T0",
+          "price_plan": "CKHK_ANY_STD_260401_T0",
           "valid_end": null,
           "display_on_capacity_match": "N",
           "other_price_category": "RTOU24",
           "season": null,
-          "timeframes_chart_we": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_ANY_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
+          "timeframes_chart_we": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_ANY_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
           "display_alternative_low_std_plan": "N",
-          "timeframes_chart_wd": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_ANY_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
+          "timeframes_chart_wd": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_ANY_STD_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
           "seasons": [
             {
               "season": "Seasonal Rates",
@@ -454,7 +454,7 @@
           "network_rates": [
             {
               "charge": "CHARGE_HIGH",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge_description": "On Peak Export",
               "id": "5101",
               "partner_id": "ECOTRICITY",
@@ -475,7 +475,7 @@
               "priceplan_id": null,
               "charge_description": "Off Peak Export",
               "charge": "CHARGE_LOW",
-              "network": "EXLN",
+              "network": "CKHK",
               "id": "5102",
               "partner_id": "ECOTRICITY",
               "valid_end": "2027-03-31",
@@ -489,7 +489,7 @@
               "id": "5103",
               "charge_description": "Uncontrolled - On Peak",
               "charge": "CHARGE_HIGH",
-              "network": "EXLN",
+              "network": "CKHK",
               "priceplan_id": null,
               "price": 14.51,
               "unit": "cents/kWh",
@@ -511,7 +511,7 @@
               "price": 2.51,
               "priceplan_id": null,
               "charge_description": "Uncontrolled - Off Peak",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": "CHARGE_LOW",
               "id": "5104",
               "partner_id": "ECOTRICITY"
@@ -523,7 +523,7 @@
               "price_category": "RTOU24",
               "tariff_id": null,
               "charge": null,
-              "network": "EXLN",
+              "network": "CKHK",
               "charge_description": "Daily Network Charges",
               "id": "5105",
               "partner_id": "ECOTRICITY",
@@ -539,7 +539,7 @@
               "register_type": "EG",
               "tariff_id": 995,
               "valid_end": null,
-              "price_plan": "EXLN_ANY_STD_260401_T0",
+              "price_plan": "CKHK_ANY_STD_260401_T0",
               "id": "2238",
               "charge": "CHARGE_24",
               "customer_type": "RESIDENTIAL",
@@ -559,7 +559,7 @@
               "id": "2239",
               "partner_id": "ECOTRICITY",
               "valid_end": null,
-              "price_plan": "EXLN_ANY_STD_260401_T0",
+              "price_plan": "CKHK_ANY_STD_260401_T0",
               "tariff_id": 995,
               "register_type": null,
               "season": null
@@ -577,7 +577,7 @@
               "register_type": null,
               "tariff_id": 995,
               "valid_end": null,
-              "price_plan": "EXLN_ANY_STD_260401_T0"
+              "price_plan": "CKHK_ANY_STD_260401_T0"
             },
             {
               "customer_type": "RESIDENTIAL",
@@ -590,14 +590,14 @@
               "price": 52,
               "season": null,
               "valid_end": null,
-              "price_plan": "EXLN_ANY_STD_260401_T0",
+              "price_plan": "CKHK_ANY_STD_260401_T0",
               "tariff_id": null,
               "register_type": null
             },
             {
               "season": null,
               "valid_end": null,
-              "price_plan": "EXLN_ANY_STD_260401_T0",
+              "price_plan": "CKHK_ANY_STD_260401_T0",
               "tariff_id": null,
               "register_type": null,
               "partner_id": "ECOTRICITY",
@@ -615,15 +615,15 @@
           "partner_id": "ECOTRICITY",
           "id": "3002",
           "customer_type": "RESIDENTIAL",
-          "network": "EXLN"
+          "network": "CKHK"
         },
         {
           "partner_id": "ECOTRICITY",
-          "network": "EXLN",
+          "network": "CKHK",
           "customer_type": "RESIDENTIAL",
           "id": "3001",
           "display_alternative_low_std_plan": "N",
-          "timeframes_chart_we": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_ANY_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
+          "timeframes_chart_we": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_ANY_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
           "valid_start": null,
           "network_rates": [
             {
@@ -633,7 +633,7 @@
               "price": -2,
               "partner_id": "ECOTRICITY",
               "charge": "CHARGE_HIGH",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge_description": "On Peak Export",
               "id": "5093",
               "valid_end": "2026-09-30",
@@ -649,7 +649,7 @@
               "priceplan_id": null,
               "id": "5094",
               "charge": "CHARGE_LOW",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge_description": "Off Peak Export",
               "partner_id": "ECOTRICITY",
               "price_category": "RLTOU24",
@@ -666,7 +666,7 @@
               "valid_end": "2026-09-30",
               "id": "5095",
               "charge": "CHARGE_HIGH",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge_description": "Uncontrolled - On Peak",
               "partner_id": "ECOTRICITY",
               "price": 17.67,
@@ -687,7 +687,7 @@
               "partner_id": "ECOTRICITY",
               "id": "5096",
               "charge_description": "Uncontrolled - Off Peak",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": "CHARGE_LOW"
             },
             {
@@ -698,7 +698,7 @@
               "id": "5097",
               "charge_description": "Daily Network Charges",
               "charge": null,
-              "network": "EXLN",
+              "network": "CKHK",
               "partner_id": "ECOTRICITY",
               "tariff_id": null,
               "price_category": "RLTOU24",
@@ -720,13 +720,13 @@
               "tariff_id": 995,
               "register_type": "EG",
               "valid_end": null,
-              "price_plan": "EXLN_ANY_LOW_260401_T0",
+              "price_plan": "CKHK_ANY_LOW_260401_T0",
               "season": null
             },
             {
               "season": null,
               "valid_end": null,
-              "price_plan": "EXLN_ANY_LOW_260401_T0",
+              "price_plan": "CKHK_ANY_LOW_260401_T0",
               "tariff_id": 995,
               "register_type": null,
               "charge_description": "Anytime usage",
@@ -740,7 +740,7 @@
             },
             {
               "valid_end": null,
-              "price_plan": "EXLN_ANY_LOW_260401_T0",
+              "price_plan": "CKHK_ANY_LOW_260401_T0",
               "register_type": null,
               "tariff_id": 995,
               "season": null,
@@ -763,7 +763,7 @@
               "valid_start": null,
               "price": 30,
               "season": null,
-              "price_plan": "EXLN_ANY_LOW_260401_T0",
+              "price_plan": "CKHK_ANY_LOW_260401_T0",
               "valid_end": null,
               "register_type": null,
               "tariff_id": null
@@ -777,7 +777,7 @@
               "customer_type": "RESIDENTIAL",
               "charge": null,
               "id": "2237",
-              "price_plan": "EXLN_ANY_LOW_260401_T0",
+              "price_plan": "CKHK_ANY_LOW_260401_T0",
               "valid_end": null,
               "register_type": null,
               "tariff_id": null,
@@ -785,7 +785,7 @@
             }
           ],
           "price_plan_description": "Low User",
-          "timeframes_chart_wd": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_ANY_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
+          "timeframes_chart_wd": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_ANY_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
           "seasons": [
             {
               "season": "Seasonal Rates",
@@ -804,7 +804,7 @@
             }
           ],
           "season": null,
-          "price_plan": "EXLN_ANY_LOW_260401_T0",
+          "price_plan": "CKHK_ANY_LOW_260401_T0",
           "valid_end": null,
           "alert_flag": "Network Capacity Change Required",
           "price_category": "RTOU24",
@@ -821,7 +821,7 @@
           "alert_flag": "Network Capacity Change Required",
           "price_category": "RTOU24",
           "standard_low": "S",
-          "network": "EXLN",
+          "network": "CKHK",
           "customer_type": "RESIDENTIAL",
           "id": "2999",
           "partner_id": "ECOTRICITY",
@@ -836,7 +836,7 @@
               "id": "5093",
               "charge_description": "On Peak Export",
               "charge": "CHARGE_HIGH",
-              "network": "EXLN",
+              "network": "CKHK",
               "partner_id": "ECOTRICITY",
               "price": -2,
               "unit": "cents/kWh",
@@ -855,7 +855,7 @@
               "unit": "cents/kWh",
               "partner_id": "ECOTRICITY",
               "id": "5094",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": "CHARGE_LOW",
               "charge_description": "Off Peak Export"
             },
@@ -867,7 +867,7 @@
               "valid_end": "2026-09-30",
               "id": "5095",
               "charge_description": "Uncontrolled - On Peak",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": "CHARGE_HIGH",
               "partner_id": "ECOTRICITY",
               "price": 17.67,
@@ -883,7 +883,7 @@
               "tariff_id": 1400,
               "charge_description": "Uncontrolled - Off Peak",
               "charge": "CHARGE_LOW",
-              "network": "EXLN",
+              "network": "CKHK",
               "id": "5096",
               "partner_id": "ECOTRICITY",
               "unit": "cents/kWh",
@@ -902,7 +902,7 @@
               "unit": "cents/d",
               "price": 90,
               "partner_id": "ECOTRICITY",
-              "network": "EXLN",
+              "network": "CKHK",
               "charge": null,
               "charge_description": "Daily Network Charges",
               "id": "5097"
@@ -1001,7 +1001,7 @@
             }
           ],
           "price_plan_description": "LowBATTERY User",
-          "timeframes_chart_wd": "/timeframeimages_ecotricity/EXLN-RTOU24-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
+          "timeframes_chart_wd": "/timeframeimages_ecotricity/CKHK-RTOU24-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
           "seasons": [
             {
               "season": "Seasonal Rates",
@@ -1020,11 +1020,11 @@
             }
           ],
           "display_alternative_low_std_plan": "N",
-          "timeframes_chart_we": "/timeframeimages_ecotricity/EXLN-RTOU24-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png"
+          "timeframes_chart_we": "/timeframeimages_ecotricity/CKHK-RTOU24-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png"
         }
       ],
       "alternative": {
-        "timeframes_chart_we": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
+        "timeframes_chart_we": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WE.png",
         "display_alternative_low_std_plan": "Y",
         "retail_rates": [
           {
@@ -1040,7 +1040,7 @@
             "register_type": "EG",
             "tariff_id": 995,
             "valid_end": null,
-            "price_plan": "EXLN_OFPK_LOW_260401_T0"
+            "price_plan": "CKHK_OFPK_LOW_260401_T0"
           },
           {
             "partner_id": "ECOTRICITY",
@@ -1054,7 +1054,7 @@
             "season": null,
             "tariff_id": 995,
             "register_type": null,
-            "price_plan": "EXLN_OFPK_LOW_260401_T0",
+            "price_plan": "CKHK_OFPK_LOW_260401_T0",
             "valid_end": null
           },
           {
@@ -1066,7 +1066,7 @@
             "charge_description": "Peak Usage",
             "id": "2251",
             "partner_id": "ECOTRICITY",
-            "price_plan": "EXLN_OFPK_LOW_260401_T0",
+            "price_plan": "CKHK_OFPK_LOW_260401_T0",
             "valid_end": null,
             "tariff_id": 263,
             "register_type": null,
@@ -1076,7 +1076,7 @@
             "season": null,
             "register_type": null,
             "tariff_id": 263,
-            "price_plan": "EXLN_OFPK_LOW_260401_T0",
+            "price_plan": "CKHK_OFPK_LOW_260401_T0",
             "valid_end": null,
             "id": "2252",
             "customer_type": "RESIDENTIAL",
@@ -1089,7 +1089,7 @@
           },
           {
             "season": null,
-            "price_plan": "EXLN_OFPK_LOW_260401_T0",
+            "price_plan": "CKHK_OFPK_LOW_260401_T0",
             "valid_end": null,
             "tariff_id": null,
             "register_type": null,
@@ -1107,7 +1107,7 @@
             "register_type": null,
             "tariff_id": null,
             "valid_end": null,
-            "price_plan": "EXLN_OFPK_LOW_260401_T0",
+            "price_plan": "CKHK_OFPK_LOW_260401_T0",
             "id": "2254",
             "charge_description": "Metering Fee",
             "customer_type": "RESIDENTIAL",
@@ -1130,7 +1130,7 @@
             "unit": "cents/kWh",
             "price": -2,
             "priceplan_id": null,
-            "network": "EXLN",
+            "network": "CKHK",
             "charge": "CHARGE_HIGH",
             "charge_description": "On Peak Export",
             "id": "5093",
@@ -1144,7 +1144,7 @@
             "valid_end": "2027-03-31",
             "partner_id": "ECOTRICITY",
             "id": "5094",
-            "network": "EXLN",
+            "network": "CKHK",
             "charge": "CHARGE_LOW",
             "charge_description": "Off Peak Export",
             "priceplan_id": null,
@@ -1165,7 +1165,7 @@
             "partner_id": "ECOTRICITY",
             "id": "5095",
             "charge": "CHARGE_HIGH",
-            "network": "EXLN",
+            "network": "CKHK",
             "charge_description": "Uncontrolled - On Peak"
           },
           {
@@ -1180,7 +1180,7 @@
             "priceplan_id": null,
             "id": "5096",
             "charge_description": "Uncontrolled - Off Peak",
-            "network": "EXLN",
+            "network": "CKHK",
             "charge": "CHARGE_LOW",
             "partner_id": "ECOTRICITY"
           },
@@ -1196,13 +1196,13 @@
             "priceplan_id": null,
             "id": "5097",
             "charge": null,
-            "network": "EXLN",
+            "network": "CKHK",
             "charge_description": "Daily Network Charges",
             "partner_id": "ECOTRICITY"
           }
         ],
         "valid_start": null,
-        "timeframes_chart_wd": "/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
+        "timeframes_chart_wd": "/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png",
         "seasons": [
           {
             "season": "Seasonal Rates",
@@ -1222,10 +1222,10 @@
         ],
         "partner_id": "ECOTRICITY",
         "customer_type": "RESIDENTIAL",
-        "network": "EXLN",
+        "network": "CKHK",
         "id": "3003",
         "valid_end": null,
-        "price_plan": "EXLN_OFPK_LOW_260401_T0",
+        "price_plan": "CKHK_OFPK_LOW_260401_T0",
         "alert_flag": "Network Capacity Change Required",
         "price_category": "RTOU24",
         "standard_low": "S",

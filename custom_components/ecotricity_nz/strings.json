@@ -117,10 +117,7 @@
       "off_peak_import_price": {
         "name": "Off-peak import price"
       },
-      "shoulder_import_price": {
-        "name": "Shoulder import price"
-      },
-      "other_import_price": {
+      "named_import_price": {
         "name": "{name} import price"
       },
       "anytime_export_price": {
@@ -132,10 +129,7 @@
       "off_peak_export_price": {
         "name": "Off-peak export price"
       },
-      "shoulder_export_price": {
-        "name": "Shoulder export price"
-      },
-      "other_export_price": {
+      "named_export_price": {
         "name": "{name} export price"
       },
       "anytime_controlled_price": {
@@ -147,10 +141,7 @@
       "off_peak_controlled_price": {
         "name": "Off-peak controlled price"
       },
-      "shoulder_controlled_price": {
-        "name": "Shoulder controlled price"
-      },
-      "other_controlled_price": {
+      "named_controlled_price": {
         "name": "{name} controlled price"
       },
       "current_import_period": {
@@ -159,7 +150,9 @@
           "anytime": "Anytime",
           "peak": "Peak",
           "off_peak": "Off-peak",
-          "shoulder": "Shoulder"
+          "shoulder": "Shoulder",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
         }
       },
       "current_export_period": {
@@ -168,7 +161,9 @@
           "anytime": "Anytime",
           "peak": "Peak",
           "off_peak": "Off-peak",
-          "shoulder": "Shoulder"
+          "shoulder": "Shoulder",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
         }
       },
       "next_import_period_change": {

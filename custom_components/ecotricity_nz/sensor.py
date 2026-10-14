@@ -7,12 +7,16 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import (
+    DOMAIN as SENSOR_DOMAIN,
+)
+from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
 )
 from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfMass, UnitOfPower
 from homeassistant.core import CALLBACK_TYPE, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
@@ -29,6 +33,9 @@ from .tariff import (
     DayPricing,
     PriceComponent,
     TouPeriod,
+    bucket_name,
+    bucket_names,
+    bucket_period,
     day_windows,
     next_bucket_change,
     next_season_change,
@@ -49,6 +56,8 @@ if TYPE_CHECKING:
 PARALLEL_UPDATES = 0
 
 PRICE_UNIT = f"NZD/{UnitOfEnergy.KILO_WATT_HOUR}"
+# Bucket price sensor keys are this prefix and the bucket, for example "price_charge_high".
+_PRICE_KEY_PREFIX = "price_"
 DAILY_UNIT = "NZD/d"
 
 
@@ -159,7 +168,7 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,  # noqa: ARG001 - signature set by Home Assistant
+    hass: HomeAssistant,
     entry: EcotricityConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
@@ -194,21 +203,34 @@ async def async_setup_entry(
     async_add_entities(entities)
 
     # Rate sensors depend on the plan and its seasons, which Ecotricity can change at any time.
-    # Add a sensor for any bucket that appears after setup.
+    # Add a sensor for any bucket that appears after setup, and remove the sensors for buckets
+    # the plan no longer has (after choosing another plan, say), so only the plan's prices show.
     known_buckets: set[str] = set()
+    entity_registry = er.async_get(hass)
+    price_prefix = f"{icp}_{_PRICE_KEY_PREFIX}"
 
     @callback
-    def _add_rate_sensors() -> None:
+    def _sync_rate_sensors() -> None:
         buckets = _plan_buckets(pricing.data)
         new: list[SensorEntity] = [
             BucketPriceSensor(pricing, icp, bucket) for bucket in buckets - known_buckets
         ]
+        known_buckets.clear()
         known_buckets.update(buckets)
         if new:
             async_add_entities(new)
 
-    _add_rate_sensors()
-    entry.async_on_unload(pricing.async_add_listener(_add_rate_sensors))
+        wanted = {f"{price_prefix}{_slug(bucket)}" for bucket in buckets}
+        for registry_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+            if (
+                registry_entry.domain == SENSOR_DOMAIN
+                and registry_entry.unique_id.startswith(price_prefix)
+                and registry_entry.unique_id not in wanted
+            ):
+                entity_registry.async_remove(registry_entry.entity_id)
+
+    _sync_rate_sensors()
+    entry.async_on_unload(pricing.async_add_listener(_sync_rate_sensors))
 
 
 def _plan_buckets(data: PricingData) -> set[str]:
@@ -224,6 +246,10 @@ def _plan_buckets(data: PricingData) -> set[str]:
 
 class _PricingEntity(EcotricityEntity[PricingCoordinator], SensorEntity):
     """Shared helpers for pricing sensors."""
+
+    def _period(self, bucket: str) -> str:
+        """Return a bucket's period: anytime, peak, off_peak, or a key from the plan's name."""
+        return bucket_period(bucket, bucket_names(self.coordinator.data.plan))
 
     def _to_nzd(self, cents: float, *, export: bool = False) -> float:
         """Convert cents excluding GST to NZD.
@@ -322,14 +348,29 @@ class BucketPriceSensor(_PricingEntity):
             coordinator,
             icp,
             SensorEntityDescription(
-                key=f"price_{_slug(bucket)}",
-                translation_key=f"{period.value if period else 'other'}_{direction}_price",
+                key=f"{_PRICE_KEY_PREFIX}{_slug(bucket)}",
+                translation_key=f"{period.value if period else 'named'}_{direction}_price",
             ),
         )
         self._bucket = bucket
         self._export = export
         if period is None:
-            self._attr_translation_placeholders = {"name": bucket}
+            self._attr_translation_placeholders = self._name_placeholders()
+
+    def _name_placeholders(self) -> dict[str, str]:
+        names = bucket_names(self.coordinator.data.plan)
+        return {"name": bucket_name(self._bucket, names)}
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Follow the plan's name for this bucket, which can change with the plan."""
+        if period_for_bucket(self._bucket) is None:
+            placeholders = self._name_placeholders()
+            if placeholders != self.translation_placeholders:
+                self._attr_translation_placeholders = placeholders
+                # Home Assistant caches the translated name; drop it so it's worked out again.
+                self.__dict__.pop("name", None)
+        super()._handle_coordinator_update()
 
     def _applied_bucket(self) -> str | None:
         """Return the bucket whose price applies in this bucket's hours today.
@@ -360,8 +401,8 @@ class BucketPriceSensor(_PricingEntity):
         """Break the price down, and say when another period's price is standing in."""
         bucket = self._applied_bucket()
         attributes: dict[str, Any] = {}
-        if bucket is not None and bucket != self._bucket and (period := _period(bucket)):
-            attributes["charged_as"] = period
+        if bucket is not None and bucket != self._bucket:
+            attributes["charged_as"] = self._period(bucket)
         return attributes | self._component_attributes(bucket, export=self._export)
 
 
@@ -488,8 +529,8 @@ class CurrentPriceSensor(_HalfHourlyEntity):
         """Describe the active period."""
         bucket = self._current_bucket(export=self._export)
         attributes: dict[str, Any] = {}
-        if bucket is not None and (period := _period(bucket)):
-            attributes["period"] = period
+        if bucket is not None:
+            attributes["period"] = self._period(bucket)
         attributes |= self._component_attributes(bucket, export=self._export)
         if (error := self.coordinator.data.tou_error) is not None:
             attributes["tou_error"] = error
@@ -500,7 +541,6 @@ class CurrentPeriodSensor(_HalfHourlyEntity):
     """The import or export time-of-use period for the current half-hour."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = [period.value for period in TouPeriod]  # noqa: RUF012 - HA attribute
 
     def __init__(
         self, coordinator: PricingCoordinator, icp: str, local_tz: tzinfo, *, export: bool
@@ -518,10 +558,22 @@ class CurrentPeriodSensor(_HalfHourlyEntity):
         return super().available and self._current_bucket(export=self._export) is not None
 
     @property
+    def options(self) -> list[str]:
+        """Return only the periods the plan uses, today or in any published season."""
+        group = "export" if self._export else "import"
+        periods = {
+            self._period(bucket)
+            for bucket in _plan_buckets(self.coordinator.data)
+            if _group(bucket) == group
+        }
+        fixed = [period.value for period in TouPeriod if period.value in periods]
+        return fixed + sorted(periods - set(fixed))
+
+    @property
     def native_value(self) -> str | None:
         """Return the current period."""
         bucket = self._current_bucket(export=self._export)
-        return _period(bucket) if bucket else None
+        return self._period(bucket) if bucket else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -534,8 +586,7 @@ class CurrentPeriodSensor(_HalfHourlyEntity):
         day = slots.weekday if today.weekday() < WEEKDAY_COUNT else slots.weekend
         return {
             "windows": [
-                f"{start}-{end} {_period(bucket) or bucket}"
-                for start, end, bucket in day_windows(day)
+                f"{start}-{end} {self._period(bucket)}" for start, end, bucket in day_windows(day)
             ]
         }
 
@@ -580,9 +631,7 @@ class NextPeriodChangeSensor(_HalfHourlyEntity):
         _, bucket = change
         pricing = self.coordinator.data.pricing
         buckets = pricing.export_buckets if self._export else pricing.import_buckets
-        attributes: dict[str, Any] = {}
-        if (period := _period(bucket)) is not None:
-            attributes["period"] = period
+        attributes: dict[str, Any] = {"period": self._period(bucket)}
         attributes["price"] = self._to_nzd(buckets[bucket], export=self._export)
         return attributes
 
@@ -698,12 +747,6 @@ def _group_buckets(pricing: DayPricing, group: str) -> dict[str, float]:
     if group == "controlled":
         return pricing.controlled_buckets
     return pricing.import_buckets
-
-
-def _period(bucket: str) -> str | None:
-    """Return the period for a bucket, or None for a charge code Ecotricity doesn't define."""
-    period = period_for_bucket(bucket)
-    return period.value if period else None
 
 
 def _component_key(part: PriceComponent) -> str:

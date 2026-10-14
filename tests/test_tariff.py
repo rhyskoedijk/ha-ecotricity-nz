@@ -14,17 +14,26 @@ import pytest
 
 from custom_components.ecotricity_nz.api import Plan, Rate, RateUnit
 from custom_components.ecotricity_nz.api.parsers import parse_plan_list
+from custom_components.ecotricity_nz.api.timeframes import (
+    ChartReadError,
+    ChartTier,
+    match_tiers,
+    read_chart,
+)
 from custom_components.ecotricity_nz.tariff import (
     SLOTS_PER_DAY,
     SlotMap,
     TouPeriod,
+    bucket_name,
+    bucket_names,
+    bucket_period,
     next_bucket_change,
     period_for_bucket,
     price_day,
     resolve_bucket,
     season_for,
 )
-from tests.conftest import load_json_fixture
+from tests.conftest import DEFAULT_NETWORK, chart_file, load_network_fixture
 
 NZ = ZoneInfo("Pacific/Auckland")
 WINTER = date(2026, 6, 15)
@@ -32,7 +41,7 @@ SPRING = date(2026, 10, 15)
 
 
 def _plan(code: str) -> Plan:
-    plans = parse_plan_list(load_json_fixture("plan_list.json"))
+    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
     return next(plan for plan in plans.all_plans if plan.code == code)
 
 
@@ -41,7 +50,7 @@ def _plan(code: str) -> Plan:
     [
         # Low Off Peak, spring: off-peak network charged in peak hours outside winter.
         (
-            "EXLN_OFPK_LOW_260401_T0",
+            "CKHK_OFPK_LOW_260401_T0",
             SPRING,
             {"CHARGE_LOW": 24.04, "CHARGE_HIGH": 25.35},
             {"EG_CHARGE_LOW": -13.74},
@@ -54,10 +63,10 @@ def _plan(code: str) -> Plan:
             {"EG_CHARGE_LOW": -16.0, "EG_CHARGE_HIGH": -23.0},
         ),
         # Low User, spring: anytime energy folded into the single network period.
-        ("EXLN_ANY_LOW_260401_T0", SPRING, {"CHARGE_LOW": 24.57}, {"EG_CHARGE_LOW": -13.74}),
+        ("CKHK_ANY_LOW_260401_T0", SPRING, {"CHARGE_LOW": 24.57}, {"EG_CHARGE_LOW": -13.74}),
         # Low User, winter: anytime export plus the winter network export credit.
         (
-            "EXLN_ANY_LOW_260401_T0",
+            "CKHK_ANY_LOW_260401_T0",
             WINTER,
             {"CHARGE_LOW": 24.57, "CHARGE_HIGH": 36.57},
             {"EG_CHARGE_LOW": -13.74, "EG_CHARGE_HIGH": -15.74},
@@ -74,7 +83,7 @@ def test_prices_match_website(
 
 
 def test_daily_charges() -> None:
-    pricing = price_day(_plan("EXLN_OFPK_LOW_260401_T0"), SPRING)
+    pricing = price_day(_plan("CKHK_OFPK_LOW_260401_T0"), SPRING)
 
     assert pricing.daily_total == pytest.approx(155.0)
     assert any(charge.is_network for charge in pricing.daily_charges)
@@ -83,7 +92,7 @@ def test_daily_charges() -> None:
 
 
 def test_season_for() -> None:
-    plan = _plan("EXLN_OFPK_LOW_260401_T0")
+    plan = _plan("CKHK_OFPK_LOW_260401_T0")
 
     season = season_for(plan, SPRING)
     assert season is not None
@@ -111,6 +120,8 @@ def _rate(**kwargs: object) -> Rate:
         (_rate(charge="charge_high"), "CHARGE_HIGH"),
         (_rate(charge="CHARGE_24", register_type="EG"), "EG_CHARGE_24"),
         (_rate(description="Uncontrolled - Off Peak"), "CHARGE_LOW"),
+        (_rate(description="Off-Peak Usage"), "CHARGE_LOW"),
+        (_rate(description="Network usage"), "network usage"),
         (_rate(description="On Peak Export", register_type="EG"), "EG_CHARGE_HIGH"),
         (_rate(description="Peak Usage"), "CHARGE_HIGH"),
         (_rate(description="Shoulder"), "CHARGE_3"),
@@ -128,9 +139,82 @@ def test_resolve_bucket(rate: Rate, bucket: str) -> None:
 
 
 def test_periods() -> None:
+    # Only these three codes have a period that's the same on every plan.
+    assert period_for_bucket("CHARGE_24") is TouPeriod.ANYTIME
     assert period_for_bucket("EG_CHARGE_HIGH") is TouPeriod.PEAK
-    assert period_for_bucket("CHARGE_3") is TouPeriod.SHOULDER
+    assert period_for_bucket("CN_CHARGE_LOW") is TouPeriod.OFF_PEAK
+    assert period_for_bucket("CHARGE_3") is None
     assert period_for_bucket("controlled") is None
+
+
+def test_bucket_names_come_from_the_plan() -> None:
+    plan = parse_plan_list(load_network_fixture("ORON", "plan_list.json")).default
+    names = bucket_names(plan)
+
+    # "Usage" is dropped, and fixed periods aren't named from the plan at all.
+    assert names == {"CHARGE_3": "Shoulder", "CHARGE_4": "Super off peak", "CHARGE_5": "Weekend"}
+    assert [bucket_period(bucket, names) for bucket in ("CHARGE_LOW", "CHARGE_4", "CHARGE_5")] == [
+        "off_peak",
+        "super_off_peak",
+        "weekend",
+    ]
+    assert bucket_period("EG_CHARGE_HIGH", names) == "peak"
+
+
+@pytest.mark.parametrize(
+    ("rates", "bucket", "name", "period"),
+    [
+        # Retail wording is preferred over the network's.
+        (
+            [
+                _rate(description="Uncontrolled - Shoulder", charge="CHARGE_3", is_network=True),
+                _rate(description="Shoulder Usage", charge="CHARGE_3"),
+            ],
+            "CHARGE_3",
+            "Shoulder",
+            "shoulder",
+        ),
+        # Other characters become underscores in the period.
+        (
+            [_rate(description="Off-Peak Plus (Night)", charge="CHARGE_4")],
+            "CHARGE_4",
+            "Off-peak plus (night)",
+            "off_peak_plus_night",
+        ),
+        # "Export" is dropped from export rates too.
+        (
+            [_rate(description="Super Off Peak Export", charge="CHARGE_4", register_type="EG")],
+            "EG_CHARGE_4",
+            "Super off peak",
+            "super_off_peak",
+        ),
+        # No description, or one that's only "Usage": named after the code.
+        ([_rate(description="", charge="CHARGE_6")], "CHARGE_6", "Charge 6", "charge_6"),
+        ([_rate(description="Usage", charge="CHARGE_7")], "CHARGE_7", "Charge 7", "charge_7"),
+        # A name that would clash with a fixed period is named after the code instead.
+        ([_rate(description="Peak Usage", charge="CHARGE_3")], "CHARGE_3", "Charge 3", "charge_3"),
+        # Two codes with the same name: only the first keeps it.
+        (
+            [
+                _rate(description="Night", charge="CHARGE_4"),
+                _rate(description="Night", charge="CHARGE_5"),
+            ],
+            "CHARGE_5",
+            "Charge 5",
+            "charge_5",
+        ),
+    ],
+)
+def test_bucket_name_fallbacks(rates: list[Rate], bucket: str, name: str, period: str) -> None:
+    plan = replace(
+        _plan("CKHK_ANY_LOW_260401_T0"),
+        retail_rates=tuple(rate for rate in rates if not rate.is_network),
+        network_rates=tuple(rate for rate in rates if rate.is_network),
+    )
+    names = bucket_names(plan)
+
+    assert bucket_name(bucket, names) == name
+    assert bucket_period(bucket, names) == period
 
 
 def test_slot_map() -> None:
@@ -163,7 +247,7 @@ def _with_controlled(plan: Plan) -> Plan:
 
 
 def test_controlled_rates_are_priced_separately() -> None:
-    plan = _plan("EXLN_ANY_LOW_260401_T0")
+    plan = _plan("CKHK_ANY_LOW_260401_T0")
     without = price_day(plan, SPRING)
     pricing = price_day(_with_controlled(plan), SPRING)
 
@@ -180,7 +264,7 @@ def test_controlled_rates_are_priced_separately() -> None:
 def test_shoulder_rates() -> None:
     # A network with a shoulder tier, and an anytime supplier rate folded into all three.
     plan = replace(
-        _plan("EXLN_ANY_LOW_260401_T0"),
+        _plan("CKHK_ANY_LOW_260401_T0"),
         retail_rates=(_rate(description="Anytime usage", charge="CHARGE_24", price=18.0),),
         network_rates=(
             _rate(description="Off Peak", charge="CHARGE_LOW", price=2.0, is_network=True),
@@ -195,7 +279,127 @@ def test_shoulder_rates() -> None:
         "CHARGE_3": pytest.approx(24.0),
         "CHARGE_HIGH": pytest.approx(30.0),
     }
-    assert period_for_bucket("CHARGE_3") is TouPeriod.SHOULDER
+    assert bucket_period("CHARGE_3", bucket_names(plan)) == "shoulder"
+
+
+NUMBERED_CODES_CHART = (
+    "ORON-URES-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-20260901-20270331-{}-NOGST.png"
+)
+
+
+def _match(chart: str, imports: dict[str, float], exports: dict[str, float]) -> tuple:
+    reading = read_chart(chart_file(NUMBERED_CODES_CHART.format(chart)).read_bytes())
+    return (
+        match_tiers(
+            reading.import_tiers,
+            imports,
+            other_tiers=reading.export_tiers,
+            other_prices=exports,
+        ),
+        match_tiers(
+            reading.export_tiers,
+            exports,
+            other_tiers=reading.import_tiers,
+            other_prices=imports,
+        ),
+    )
+
+
+def test_anytime_rate_merges_into_additional_network_buckets() -> None:
+    # A real plan from issue #9: one anytime retail rate, and network rates in five buckets, two
+    # of them numbered codes (CHARGE_4 and CHARGE_5) that only some networks use.
+    plan = parse_plan_list(load_network_fixture("ORON", "plan_list.json")).default
+    pricing = price_day(plan, SPRING)
+
+    # The prices printed in the charts' legends.
+    assert pricing.import_buckets == pytest.approx(
+        {
+            "CHARGE_LOW": 19.029,
+            "CHARGE_4": 18.2,
+            "CHARGE_3": 28.211,
+            "CHARGE_HIGH": 35.451,
+            "CHARGE_5": 22.7,
+        }
+    )
+    assert pricing.export_buckets == {"EG_CHARGE_HIGH": -21.0, "EG_CHARGE_LOW": -16.0}
+
+    imports, exports = _match("WD", pricing.import_buckets, pricing.export_buckets)
+    # The windows printed in the weekday chart's legend.
+    assert imports == (
+        ("CHARGE_LOW",) * 6
+        + ("CHARGE_4",) * 4
+        + ("CHARGE_3",) * 4
+        + ("CHARGE_HIGH",) * 8
+        + ("CHARGE_3",) * 12
+        + ("CHARGE_HIGH",) * 10
+        + ("CHARGE_LOW",) * 4
+    )
+    assert exports == (
+        ("EG_CHARGE_LOW",) * 14
+        + ("EG_CHARGE_HIGH",) * 8
+        + ("EG_CHARGE_LOW",) * 12
+        + ("EG_CHARGE_HIGH",) * 8
+        + ("EG_CHARGE_LOW",) * 6
+    )
+
+    imports, exports = _match("WE", pricing.import_buckets, pricing.export_buckets)
+    assert imports == ("CHARGE_5",) * 6 + ("CHARGE_4",) * 4 + ("CHARGE_5",) * 38
+    assert exports == ("EG_CHARGE_LOW",) * SLOTS_PER_DAY
+
+
+def test_unmerged_anytime_rate_leaves_the_chart_ambiguous() -> None:
+    # Without the anytime retail rate folded in, charge 4 and charge 5 are only their network
+    # rates plus the levy, and the weekend chart's two tiers fit more than one set of prices.
+    # This is the error reported in issue #9.
+    plan = parse_plan_list(load_network_fixture("ORON", "plan_list.json")).default
+    pricing = price_day(plan, SPRING)
+    unmerged = pricing.import_buckets | {"CHARGE_4": 0.2, "CHARGE_5": 4.7}
+
+    with pytest.raises(ChartReadError, match="more than one"):
+        _match("WE", unmerged, pricing.export_buckets)
+
+
+def test_named_network_buckets_keep_their_identity_and_match_chart_tiers() -> None:
+    categories = (
+        ("Network usage A", 1.0),
+        ("Network usage B", 2.0),
+        ("Network usage C", 3.0),
+    )
+    plan = replace(
+        _plan("CKHK_ANY_LOW_260401_T0"),
+        retail_rates=(_rate(description="Anytime usage", charge="CHARGE_24", price=18.0),),
+        network_rates=tuple(
+            _rate(
+                description=name,
+                price=network_rate,
+                is_network=True,
+            )
+            for name, network_rate in categories
+        ),
+    )
+    pricing = price_day(plan, SPRING)
+
+    assert pricing.import_buckets == {
+        "network usage a": 19.0,
+        "network usage b": 20.0,
+        "network usage c": 21.0,
+    }
+
+    slots_by_category = (frozenset(range(16)), frozenset(range(16, 32)), frozenset(range(32, 48)))
+    chart_tiers = tuple(
+        ChartTier(
+            colour=(0, 0, 255 - index * 40),
+            height=price * 5,
+            slots=slots,
+        )
+        for index, (slots, price) in enumerate(
+            zip(slots_by_category, pricing.import_buckets.values(), strict=True)
+        )
+    )
+
+    assert match_tiers(chart_tiers, pricing.import_buckets) == (
+        ("network usage a",) * 16 + ("network usage b",) * 16 + ("network usage c",) * 16
+    )
 
 
 def _peak_slots(*peak: int) -> SlotMap:

@@ -1,16 +1,15 @@
-"""
-Test the API clients against the real Ecotricity services.
+"""Test the API clients against the real Ecotricity services.
 
-This calls the live onboarding site and, if credentials are set, the customer portal.
-It is not part of the test suite and never runs in CI. Settings come from environment variables
-or a git-ignored .env file in the repository root:
+This calls the live onboarding site and, if credentials are set, the customer portal. It is not
+part of the test suite and never runs in CI. Settings come from environment variables or a
+git-ignored .env file in the repository root:
 
     ECOTRICITY_ICP=...           required
     ECOTRICITY_PLAN=...          optional, plan name as on the website (default: the site's default)
     ECOTRICITY_ACCOUNT=...       optional, portal customer account number
     ECOTRICITY_PASSWORD=...      optional, portal password
 
-Usage: uv run python scripts/api_smoke_test.py
+Usage: uv run python scripts/api_client_smoke_test.py
 """
 
 from __future__ import annotations

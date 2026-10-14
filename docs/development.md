@@ -27,7 +27,7 @@ uv run pre-commit run --all-files              # git hook checks
 
 CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
 
-Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using synthetic fixtures in `tests/fixtures`. The chart images there are real Ecotricity charts; they contain only public pricing.
+Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with its `plan_list.json`, its timeframe charts in `charts/`, and an `icp.json` where it has a test ICP. Most tests run against `CKHK`, the test ICP's network (`DEFAULT_NETWORK` in `tests/conftest.py`). The chart images are real Ecotricity charts; they contain only public pricing.
 
 ## Running Home Assistant locally
 
@@ -51,7 +51,7 @@ Any one of these works:
 
 ## Live smoke test
 
-`scripts/api_smoke_test.py` runs the real clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
+`scripts/api_client_smoke_test.py` runs the real API clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
 
 Create a `.env` file in the repository root (it's git-ignored):
 
@@ -65,7 +65,7 @@ ECOTRICITY_PASSWORD=your portal password
 Everything except the ICP is optional. Without a plan, the site's default plan is used. Then:
 
 ```bash
-uv run python scripts/api_smoke_test.py
+uv run python scripts/api_client_smoke_test.py
 ```
 
 Run it after changing anything in `custom_components/ecotricity_nz/api/`, and whenever the integration starts failing, to see whether Ecotricity has changed something.
@@ -74,15 +74,32 @@ Run it after changing anything in `custom_components/ecotricity_nz/api/`, and wh
 
 When Ecotricity's responses change, capture new ones with your browser's developer tools (Network tab, then Save all as HAR) into a `.captures/` folder in the repository root, which is git-ignored. Delete the captures once the fixtures are rebuilt.
 
-Build fixtures from the captures with fake data throughout:
+Build fixtures from the captures without personal data:
 
 - the ICP becomes `0000123456AB1C2`
-- the network becomes the fictional "Example Lines Network" (`EXLN`), with price categories `RTOU24` and `RLTOU24`, including inside plan codes and chart paths
+- keep public network codes and names real so tests identify the network being covered; do not mask them in plan codes or chart paths
+- replace personal identifiers and other customer-specific details with obviously fake values
 - the address, region, meter serial, account number, contract number, registry audit numbers and portal IDs get obviously fake values
 
-Timeframe chart images contain only prices and times, but their filenames contain the network and price category codes, so rename them to the fake codes.
+Timeframe chart images contain only prices and times. Keep the real network code in their filenames; replace any customer-specific values with obviously fake ones.
 
-Before committing, search the whole repository (not just `tests/fixtures`) for your real ICP, street, suburb, network code and name, price category, account number, contract number and meter serial. Nothing should turn up.
+### Checking network codes
+
+`tests/fixtures/network_codes.json` maps each distributor's four-letter code to its network name. Codes change rarely, so nothing checks the file automatically. To check it by hand:
+
+1. Open the Electricity Authority's [ICP and metering details](https://www.ea.govt.nz/data-and-insights/datasets/retail/market-structure/icp-and-metering-details/) dataset page and download the newest `YYYYMMDD_MeteringConfigurationsInclDistributionPriceCatCode.csv`.
+2. Take the distinct values of the `NSP` column that end in four capital letters followed by `GN`, for example `CPK0111CKHKGN`. The four letters before `GN` are the distributor code (`CKHK`). Ignore other NSPs, such as embedded networks.
+3. Add any codes missing from `network_codes.json`, and review any that no longer appear.
+
+### Adding a network
+
+1. Create `tests/fixtures/networks/{code}/`, where `{code}` is the network's distributor code from `tests/fixtures/network_codes.json`.
+2. Save the plan list response (`RESTPLAN/plan/list_unbundle`) for an ICP on that network as `plan_list.json`. Keep the rates and descriptions exactly as published, give the plans fake IDs, and leave the ICP out.
+3. Save the plans' charts into `charts/`, named exactly as Ecotricity publishes them: the path from the plan's `timeframes_chart_wd` or `timeframes_chart_we`, with the season's start and end dates in place of `SSSSSSSS` and `EEEEEEEE`, and `-NOGST` before `.png`. These are the charts the integration reads.
+
+`tests/test_network_fixtures.py` picks up the new folder by itself. It checks that the folder holds only that network's plans, and matches every chart against the prices worked out from that network's plans for the season and day type in the chart's name. A chart that doesn't match points to a pricing rule this network uses that the integration doesn't handle yet. It also checks that every import and export period on the network's plans has a friendly name under the `current_import_period` and `current_export_period` states in `strings.json`. If one doesn't, add it there, in `translations/en.json` and in `icons.json`.
+
+Before committing, search the whole repository (not just `tests/fixtures`) for your real ICP, street, suburb, account number, contract number and meter serial. Nothing should turn up. Public network codes and names are not personal data and should remain unchanged.
 
 ## Brand images
 

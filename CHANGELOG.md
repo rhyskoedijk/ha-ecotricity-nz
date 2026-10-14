@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+Pricing only worked properly for networks shaped like Wellington Electricity's. This release fixes pricing on Orion and other similar networks that have extra network-defined charge buckets such as "weekend" and "super off-peak" (#9).
+
+- **Breaking change:** charge code `CHARGE_3`, which was always the **Shoulder** (`shoulder`) price, now follows your plan's own description; if your plan describes it as something other than "Shoulder Usage", the sensor's name, its period value and the `period`, `charged_as` and `windows` attributes will now change to match. **Automations or templates that check for `shoulder` may need updating**.
+- Fix pricing for plans that combine an anytime retail rate with additional network-defined charge buckets, such as Orion plans. The anytime retail rate is now included in every one of those buckets, not only peak, off-peak and shoulder.
+- Fix time-of-use charts that draw two close prices in the same colour, such as "off-peak" and "super off-peak". They were read as one price, so the cheaper half-hours were charged at the other price.
+- A rate with no charge code that is described as "super off-peak" now keeps its own price instead of being merged into off-peak, and hyphenated descriptions such as "Off-Peak" are recognised.
+- Anytime, peak and off-peak keep their fixed names. Every other price is now named from your plan's own rate descriptions, as listed in the Ecotricity portal, for example **Super off peak import price** and the period `super_off_peak`. The names follow your plan if Ecotricity renames a rate.
+- The **Current import period** and **Current export period** sensors only list the periods your plan uses as options, so "shoulder" is no longer an option on plans without a shoulder price.
+- Price sensors for prices your plan no longer has, such as after switching to a different plan, are now removed instead of being left behind as no longer provided.
+
 ## v0.2.0 (2026-10-13)
 
 - Pricing is saved and keeps working through restarts and internet outages, including into the next pricing season (once Ecotricity has published it). Ecotricity's pricing data is now fetched weekly, on the 1st of each month and at the end of each season, instead of twice a day. If it can't be reached, retries slow down from hourly to every 8 hours until it eventually succeeds again.

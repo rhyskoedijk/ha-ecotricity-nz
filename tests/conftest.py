@@ -30,22 +30,46 @@ from custom_components.ecotricity_nz.const import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-CHARTS = FIXTURES / "charts"
+# One folder per network, named by its distributor code: plan_list.json, charts/, and icp.json
+# where a network has a test ICP.
+NETWORKS = FIXTURES / "networks"
+# The network most tests run against: the test ICP's network.
+DEFAULT_NETWORK = "CKHK"
 TEST_ICP = "0000123456AB1C2"
 NZ = ZoneInfo("Pacific/Auckland")
-# Plan ids in plan_list.json.
+# Plan ids in the default network's plan_list.json.
 LOW_USER_PLAN_ID = "3001"
 LOW_OFF_PEAK_PLAN_ID = "3003"
 
 
 def load_fixture(name: str) -> str:
-    """Return a fixture file's text."""
+    """Return a fixture file's text, by its path under tests/fixtures."""
     return (FIXTURES / name).read_text(encoding="utf-8")
 
 
 def load_json_fixture(name: str) -> Any:
-    """Return a parsed JSON fixture."""
+    """Return a parsed JSON fixture, by its path under tests/fixtures."""
     return json.loads(load_fixture(name))
+
+
+def load_network_fixture(network: str, name: str) -> Any:
+    """Return a parsed JSON fixture from a network's folder, such as its plan_list.json."""
+    return json.loads((NETWORKS / network / name).read_text(encoding="utf-8"))
+
+
+def network_codes() -> list[str]:
+    """Return every network with fixtures."""
+    return sorted(path.name for path in NETWORKS.iterdir() if path.is_dir())
+
+
+def chart_file(name: str) -> Path:
+    """Return a fixture chart by its file name. Its network is the first part of the name."""
+    return NETWORKS / name.split("-", 1)[0] / "charts" / name
+
+
+def chart_files() -> list[Path]:
+    """Return every fixture chart, for every network."""
+    return sorted(NETWORKS.glob("*/charts/*.png"))
 
 
 @pytest.fixture(autouse=True)
@@ -64,8 +88,10 @@ def no_backfill_pause() -> Generator[None]:
 
 
 def _chart_bytes(path: str) -> bytes:
-    """Serve fixture charts. Weekend charts aren't captured, so the weekday chart stands in."""
-    chart = CHARTS / path.rsplit("/", 1)[-1].replace("-WE-", "-WD-")
+    """Serve fixture charts. Where a weekend chart isn't captured, the weekday chart stands in."""
+    chart = chart_file(path.rsplit("/", 1)[-1])
+    if not chart.exists():
+        chart = chart.with_name(chart.name.replace("-WE-", "-WD-"))
     if not chart.exists():
         raise EcotricityConnectionError(f"Chart {path} returned HTTP 404")
     return chart.read_bytes()
@@ -75,9 +101,11 @@ def _chart_bytes(path: str) -> bytes:
 def mock_onboarding() -> Generator[MagicMock]:
     """Patch the onboarding client everywhere it's created."""
     client = MagicMock()
-    client.async_get_icp = AsyncMock(return_value=parse_icp(load_json_fixture("icp.json")))
+    client.async_get_icp = AsyncMock(
+        return_value=parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
+    )
     client.async_get_plans = AsyncMock(
-        return_value=parse_plan_list(load_json_fixture("plan_list.json"))
+        return_value=parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
     )
     client.async_get_chart = AsyncMock(side_effect=_chart_bytes)
     client.async_get_plan_titles = AsyncMock(

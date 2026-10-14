@@ -194,7 +194,7 @@ async def test_unreadable_windows_are_fetched_again_next_day(
 
     mock_onboarding.async_get_chart.side_effect = None
     mock_onboarding.async_get_chart.return_value = (
-        CHARTS / "EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
+        CHARTS / "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
     ).read_bytes()
     # Set up at 8:15am, so the next day's check runs then.
     await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
@@ -298,7 +298,7 @@ async def test_offline_warning_is_logged_once(
 
 def _fixture_snapshot() -> PricingSnapshot:
     chart = (
-        CHARTS / "EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
+        CHARTS / "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
     )
     titles = parse_plan_titles(load_json_fixture("plan_mappings.json"))
     return PricingSnapshot(

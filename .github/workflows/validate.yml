@@ -12,6 +12,15 @@ permissions:
   contents: read
 
 jobs:
+  network-codes:
+    name: Check EA distributor codes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python scripts/check_ea_distributor_codes.py
+
   hassfest:
     name: Hassfest
     runs-on: ubuntu-latest

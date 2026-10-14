@@ -31,8 +31,8 @@ def test_parse_icp() -> None:
     icp = parse_icp(load_json_fixture("icp.json"))
 
     assert icp.icp == TEST_ICP
-    assert icp.network_code == "EXLN"
-    assert icp.network_name == "Example Lines Network"
+    assert icp.network_code == "CKHK"
+    assert icp.network_name == "Wellington Electricity Lines"
     assert icp.price_category == "RTOU24"
     assert icp.retailer_code == "ECOT"
     assert icp.register_codes == ("UN", "EG", "7304", "7304")

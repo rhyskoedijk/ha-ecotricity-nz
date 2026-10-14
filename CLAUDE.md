@@ -17,7 +17,7 @@ These apply to everything you write: chat replies, docs, code comments, docstrin
 ## Hard rules
 
 - Never commit, push, tag or publish a release without the maintainer's explicit permission for that specific action. Approval for one commit doesn't carry over to the next.
-- Never call the live Ecotricity services from your own session without asking first. Work from fixtures; `scripts/api_smoke_test.py` is for the maintainer to run.
+- Never call the live Ecotricity services from your own session without asking first. Work from fixtures; `scripts/ecotricity_api_client_smoke_test.py` is for the maintainer to run.
 - Never call `RESTUSER/user/change` or any other onboarding endpoint that writes data. It creates a sign-up lead at Ecotricity.
 - Never commit personal or identifying data: credentials, real ICP numbers, addresses, account or contract numbers, meter serials, or a user's association with a network or price category. Public network codes may be kept in tests and fixtures. ICPs and other personal identifiers must be fake. Browser captures go in `.captures/` (git-ignored) and are deleted once fixtures are built.
 - Never log or expose secrets. Passwords, tokens and session cookies must not appear in logs, exceptions, diagnostics or test output.
@@ -59,7 +59,7 @@ uv run ruff format . && uv run ruff check .
 uv run mypy custom_components        # strict mode
 uv run pre-commit run --all-files
 scripts/develop                      # local Home Assistant at http://localhost:8123 (needs g++)
-uv run python scripts/api_smoke_test.py  # live check against the real services (needs .env)
+uv run python scripts/ecotricity_api_client_smoke_test.py  # live check against the real services (needs .env)
 ```
 
 Manage dependencies with `uv add` and `uv lock`; never edit `uv.lock` by hand. The Home Assistant version used for development is set by the `pytest-homeassistant-custom-component` pin in `pyproject.toml`. When bumping it, also update the minimum in `hacs.json`, and read the release notes for API changes.

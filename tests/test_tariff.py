@@ -42,7 +42,7 @@ def _plan(code: str) -> Plan:
     [
         # Low Off Peak, spring: off-peak network charged in peak hours outside winter.
         (
-            "EXLN_OFPK_LOW_260401_T0",
+            "CKHK_OFPK_LOW_260401_T0",
             SPRING,
             {"CHARGE_LOW": 24.04, "CHARGE_HIGH": 25.35},
             {"EG_CHARGE_LOW": -13.74},
@@ -55,10 +55,10 @@ def _plan(code: str) -> Plan:
             {"EG_CHARGE_LOW": -16.0, "EG_CHARGE_HIGH": -23.0},
         ),
         # Low User, spring: anytime energy folded into the single network period.
-        ("EXLN_ANY_LOW_260401_T0", SPRING, {"CHARGE_LOW": 24.57}, {"EG_CHARGE_LOW": -13.74}),
+        ("CKHK_ANY_LOW_260401_T0", SPRING, {"CHARGE_LOW": 24.57}, {"EG_CHARGE_LOW": -13.74}),
         # Low User, winter: anytime export plus the winter network export credit.
         (
-            "EXLN_ANY_LOW_260401_T0",
+            "CKHK_ANY_LOW_260401_T0",
             WINTER,
             {"CHARGE_LOW": 24.57, "CHARGE_HIGH": 36.57},
             {"EG_CHARGE_LOW": -13.74, "EG_CHARGE_HIGH": -15.74},
@@ -75,7 +75,7 @@ def test_prices_match_website(
 
 
 def test_daily_charges() -> None:
-    pricing = price_day(_plan("EXLN_OFPK_LOW_260401_T0"), SPRING)
+    pricing = price_day(_plan("CKHK_OFPK_LOW_260401_T0"), SPRING)
 
     assert pricing.daily_total == pytest.approx(155.0)
     assert any(charge.is_network for charge in pricing.daily_charges)
@@ -84,7 +84,7 @@ def test_daily_charges() -> None:
 
 
 def test_season_for() -> None:
-    plan = _plan("EXLN_OFPK_LOW_260401_T0")
+    plan = _plan("CKHK_OFPK_LOW_260401_T0")
 
     season = season_for(plan, SPRING)
     assert season is not None
@@ -164,7 +164,7 @@ def _with_controlled(plan: Plan) -> Plan:
 
 
 def test_controlled_rates_are_priced_separately() -> None:
-    plan = _plan("EXLN_ANY_LOW_260401_T0")
+    plan = _plan("CKHK_ANY_LOW_260401_T0")
     without = price_day(plan, SPRING)
     pricing = price_day(_with_controlled(plan), SPRING)
 
@@ -181,7 +181,7 @@ def test_controlled_rates_are_priced_separately() -> None:
 def test_shoulder_rates() -> None:
     # A network with a shoulder tier, and an anytime supplier rate folded into all three.
     plan = replace(
-        _plan("EXLN_ANY_LOW_260401_T0"),
+        _plan("CKHK_ANY_LOW_260401_T0"),
         retail_rates=(_rate(description="Anytime usage", charge="CHARGE_24", price=18.0),),
         network_rates=(
             _rate(description="Off Peak", charge="CHARGE_LOW", price=2.0, is_network=True),
@@ -201,7 +201,7 @@ def test_shoulder_rates() -> None:
 
 def test_anytime_rate_merges_into_additional_network_buckets() -> None:
     plan = replace(
-        _plan("EXLN_ANY_LOW_260401_T0"),
+        _plan("CKHK_ANY_LOW_260401_T0"),
         network="ORON",
         price_category="RES",
         retail_rates=(

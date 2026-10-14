@@ -51,7 +51,7 @@ Any one of these works:
 
 ## Live smoke test
 
-`scripts/api_smoke_test.py` runs the real clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
+`scripts/ecotricity_api_client_smoke_test.py` runs the real API clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
 
 Create a `.env` file in the repository root (it's git-ignored):
 
@@ -65,7 +65,7 @@ ECOTRICITY_PASSWORD=your portal password
 Everything except the ICP is optional. Without a plan, the site's default plan is used. Then:
 
 ```bash
-uv run python scripts/api_smoke_test.py
+uv run python scripts/ecotricity_api_client_smoke_test.py
 ```
 
 Run it after changing anything in `custom_components/ecotricity_nz/api/`, and whenever the integration starts failing, to see whether Ecotricity has changed something.
@@ -74,15 +74,16 @@ Run it after changing anything in `custom_components/ecotricity_nz/api/`, and wh
 
 When Ecotricity's responses change, capture new ones with your browser's developer tools (Network tab, then Save all as HAR) into a `.captures/` folder in the repository root, which is git-ignored. Delete the captures once the fixtures are rebuilt.
 
-Build fixtures from the captures with fake data throughout:
+Build fixtures from the captures without personal data:
 
 - the ICP becomes `0000123456AB1C2`
-- the network becomes the fictional "Example Lines Network" (`EXLN`), with price categories `RTOU24` and `RLTOU24`, including inside plan codes and chart paths
+- keep public network codes and names real so tests identify the network being covered; do not mask them in plan codes or chart paths
+- replace personal identifiers and other customer-specific details with obviously fake values
 - the address, region, meter serial, account number, contract number, registry audit numbers and portal IDs get obviously fake values
 
-Timeframe chart images contain only prices and times, but their filenames contain the network and price category codes, so rename them to the fake codes.
+Timeframe chart images contain only prices and times. Keep the real network code in their filenames; replace any customer-specific values with obviously fake ones.
 
-Before committing, search the whole repository (not just `tests/fixtures`) for your real ICP, street, suburb, network code and name, price category, account number, contract number and meter serial. Nothing should turn up.
+Before committing, search the whole repository (not just `tests/fixtures`) for your real ICP, street, suburb, account number, contract number and meter serial. Nothing should turn up. Public network codes and names are not personal data and should remain unchanged.
 
 ## Brand images
 

@@ -44,13 +44,13 @@ One quirk: lists with a single item are collapsed into a bare object, for exampl
 
 | Parameter      | Source                                                                                      |
 | -------------- | ------------------------------------------------------------------------------------------- |
-| `networkCode`  | `network.networkIdentifier`, the distributor's four-letter code, for example `EXLN`         |
+| `networkCode`  | `network.networkIdentifier`, the distributor's four-letter code, for example `CKHK`         |
 | `capacityCode` | the active `PriceCategoryCode.code`, the distributor's price category, for example `RTOU24` |
 | `meterType`    | every channel's `vRegisterContentCode`, comma-joined in order, for example `UN,EG`          |
 | `customerType` | `Residential`                                                                               |
 | `icpNumber`    | the ICP                                                                                     |
 
-The example codes are made up. Real network codes, price categories, register codes and plan codes vary from network to network across the country, so the integration never hard-codes them; it passes on whatever the ICP details contain.
+`CKHK` is the real code for Wellington Electricity. Other example price categories, register codes and plan codes are illustrative; these values vary from network to network, so the integration never hard-codes them and passes on whatever the ICP details contain.
 
 The response's `content[0]` holds `default` (the plan the site suggests), `alternative` and `plan_list`. Each plan has:
 
@@ -109,7 +109,7 @@ So the integration adds GST to import prices and daily charges (when the option 
 
 The hours each bucket applies are not in any API response or page data. The web app only shows them as server-rendered PNGs, and NZ has no public dataset of network time-of-use windows (the Electricity Authority's EIEP12 price files have rates but no times). The windows differ between networks and seasons, and change most years on 1 April, which is why they're read from each plan's own charts rather than kept in a table.
 
-Chart URLs come from the plan's `timeframes_chart_wd` or `timeframes_chart_we`, for example `/timeframeimages_ecotricity/EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png` (the codes in it are made up). Replace `SSSSSSSS` and `EEEEEEEE` with the season's start and end dates (`YYYYMMDD`), and add `-NOGST` before `.png` for GST-exclusive prices. Charts are static files and need no token.
+Chart URLs come from the plan's `timeframes_chart_wd` or `timeframes_chart_we`, for example `/timeframeimages_ecotricity/CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-SSSSSSSS-EEEEEEEE-WD.png`. `CKHK` is the real network code; the other codes are illustrative. Replace `SSSSSSSS` and `EEEEEEEE` with the season's start and end dates (`YYYYMMDD`), and add `-NOGST` before `.png` for GST-exclusive prices. Charts are static files and need no token.
 
 Each chart draws 48 half-hour bars, blue import above the axis and orange export below, with each bar's height proportional to its price and its shade marking its tier. `custom_components/ecotricity_nz/api/timeframes.py` finds the bars, groups them by colour, and measures each group's height. The legend shows the full palette: 7 shades of blue for import and 6 of orange for export, light to dark. The closest two are only 23.5 apart in RGB distance, so bars are grouped into a tier only when their colours are within 12, which keeps every shade separate. That matters for plans with three tiers (peak, shoulder and off-peak), which can use neighbouring shades. The heights are then matched against the plan's bucket prices for that season: one pixels-per-cent scale has to fit every group to within 0.6c, or the chart is rejected. The scale differs from chart to chart, but import and export bars share one axis (on every captured chart, both sides give the same pixels per cent to within 0.1). A chart with few tiers can fit more than one scale; a single tier fits any price. When the possible scales would put the bars on different buckets, only the scales that also fit the other side's bars and prices are kept, and if that still leaves more than one answer the chart is rejected rather than guessed. A rejected chart leaves the current price sensors unavailable and, after three failures in a row, raises a repair issue.
 

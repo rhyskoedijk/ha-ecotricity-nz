@@ -20,7 +20,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
 )
 
 CHARTS = Path(__file__).parent.parent / "fixtures" / "charts"
-PREFIX = "EXLN-RTOU24-"
+PREFIX = "CKHK-RTOU24-"
 SUFFIX = "-WD-NOGST.png"
 WINTER = "RESIDENTIAL-20260401-20260930"
 SPRING = "RESIDENTIAL-20261001-20261231"
@@ -70,7 +70,7 @@ def test_read_two_tier_import_and_export() -> None:
 
 def test_read_close_prices() -> None:
     # Legend: 24.04c off peak, 25.35c peak. Only 5% apart, so heights must be precise.
-    reading = read_chart(_chart("EXLN_OFPK_LOW", SPRING))
+    reading = read_chart(_chart("CKHK_OFPK_LOW", SPRING))
 
     imports = match_tiers(reading.import_tiers, {"CHARGE_LOW": 24.04, "CHARGE_HIGH": 25.35})
     assert imports == _expected("CHARGE_HIGH", "CHARGE_LOW")
@@ -80,7 +80,7 @@ def test_read_close_prices() -> None:
 
 def test_read_flat_chart_with_unused_bucket() -> None:
     # Anytime plan outside winter: one tier, even though the plan also has a peak price.
-    reading = read_chart(_chart("EXLN_ANY_LOW", SPRING))
+    reading = read_chart(_chart("CKHK_ANY_LOW", SPRING))
 
     [tier] = reading.import_tiers
     assert tier.slots == ALL_SLOTS

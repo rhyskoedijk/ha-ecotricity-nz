@@ -7,9 +7,9 @@
       "allSharedICPsList": "\n\t\t\t\t\t",
       "displayEventType": "Network",
       "bus": "EXL0011",
-      "networkIdentifier": "EXLN",
+      "networkIdentifier": "CKHK",
       "vInstallationType": "B",
-      "userId": "EXLN0001",
+      "userId": "CKHK0001",
       "icpNumber": "0000123456AB1C2",
       "eventDate": "2025-07-14",
       "generationCapacityKW": "0",
@@ -17,8 +17,8 @@
       "vDirectBilledStatus": "",
       "endDate": "1900-01-01",
       "myNetwork": {
-        "description": "Example Lines Network",
-        "code": "EXLN"
+        "description": "Wellington Electricity Lines",
+        "code": "CKHK"
       },
       "directBilledDetails": "",
       "proposedRetailer": "",
@@ -37,7 +37,7 @@
       "description": "Ecotricity Limited"
     },
     "pricing": {
-      "userId": "EXLN",
+      "userId": "CKHK",
       "dateChanged": "2022-04-03T20:00:00.000-00:00",
       "userRef": "100002",
       "chargeableCapacity": "0.00",
@@ -46,11 +46,11 @@
       "eventDate": "2022-04-01",
       "displayEventType": "Pricing",
       "myLossFactorCode": {
-        "code": "EXLN01",
+        "code": "CKHK01",
         "startPeriod": "1",
         "myNetwork": {
-          "description": "Example Lines Network",
-          "code": "EXLN"
+          "description": "Wellington Electricity Lines",
+          "code": "CKHK"
         },
         "myCodeDefinition": {
           "type": "String",
@@ -77,8 +77,8 @@
             "type": "String"
           },
           "myNetwork": {
-            "description": "Example Lines Network",
-            "code": "EXLN"
+            "description": "Wellington Electricity Lines",
+            "code": "CKHK"
           },
           "code": "RTOU24",
           "description": "Residential Time of Use"
@@ -181,7 +181,7 @@
     "address": {
       "displayEventType": "Address",
       "suburb": "TESTVILLE",
-      "userId": "EXLN",
+      "userId": "CKHK",
       "street": "EXAMPLE ROAD",
       "postCode": "9999",
       "town": "SAMPLETOWN",

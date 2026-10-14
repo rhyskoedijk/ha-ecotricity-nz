@@ -58,7 +58,7 @@ async def test_get_icp_and_plans(hass: HomeAssistant, aioclient_mock: AiohttpCli
     _, url, _, headers = aioclient_mock.mock_calls[-1]
     assert url.query["meterType"] == "UN,EG,7304,7304"
     assert url.query["capacityCode"] == "RTOU24"
-    assert url.query["networkCode"] == "EXLN"
+    assert url.query["networkCode"] == "CKHK"
     assert headers[TOKEN_HEADER] == "tok"
     # One token covers both calls.
     assert aioclient_mock.call_count == 4

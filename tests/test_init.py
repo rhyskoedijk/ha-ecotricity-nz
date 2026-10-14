@@ -706,9 +706,9 @@ async def test_network_and_sync_sensors(
     freezer.move_to(WINTER_PEAK)
     await _setup(hass, portal_config_entry)
 
-    assert _state(hass, "network") == "Example Lines Network"
+    assert _state(hass, "network") == "Wellington Electricity Lines"
     assert _extra(hass, "network") == {
-        "code": "EXLN",
+        "code": "CKHK",
         "loss_factor_consumption": pytest.approx(1.045),
         "loss_factor_generation": pytest.approx(1.0),
     }
@@ -794,7 +794,7 @@ async def test_time_of_use_chart_image(
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
     base = "https://onboarding.ecotricity.co.nz/timeframeimages_ecotricity/"
-    chart = "EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930"
+    chart = "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930"
     # Monday, GST on: the GST-inclusive weekday chart.
     assert image.image_url == f"{base}{chart}-WD.png"
     first_update = image.image_last_updated
@@ -857,7 +857,7 @@ async def test_time_of_use_chart_image_stays_on_the_onboarding_host(
     assert image is not None
     assert image.image_url == (
         "https://onboarding.ecotricity.co.nz/timeframeimages_ecotricity/"
-        "EXLN-RTOU24-EXLN_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD.png"
+        "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD.png"
     )
 
 

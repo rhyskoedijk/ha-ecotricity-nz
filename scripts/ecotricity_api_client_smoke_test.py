@@ -10,7 +10,7 @@ or a git-ignored .env file in the repository root:
     ECOTRICITY_ACCOUNT=...       optional, portal customer account number
     ECOTRICITY_PASSWORD=...      optional, portal password
 
-Usage: uv run python scripts/api_smoke_test.py
+Usage: uv run python scripts/ecotricity_api_client_smoke_test.py
 """
 
 from __future__ import annotations

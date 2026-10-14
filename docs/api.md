@@ -78,7 +78,7 @@ Seasons last a few months and start on the 1st of a month. The list in a plan re
 
 `tariff.py` copies the web app's `mapPricePlanToOldFormat` and `mergeAnytimeRetailIntoTouNetwork`, plus one rule only visible in the charts:
 
-- Each rate goes into a bucket by its `charge` code (`CHARGE_24` anytime, `CHARGE_HIGH` peak, `CHARGE_LOW` off peak, `CHARGE_3` shoulder), prefixed `EG_` for export. Rates without a code are bucketed by description ("off peak", "on peak", "shoulder", "anytime").
+- Each rate goes into a bucket by its `charge` code (`CHARGE_24` anytime, `CHARGE_HIGH` peak, `CHARGE_LOW` off peak, `CHARGE_3` shoulder), prefixed `EG_` for export. Rates without a code are bucketed by description ("off peak", "on peak", "shoulder", "anytime"); unfamiliar descriptions such as "holiday", "night" and "super off peak" keep their own buckets.
 - Only rates whose `valid_start`/`valid_end` cover the day apply.
 - Any per-kWh rate with "levy" in its description (the EA levy, 0.16c or 0.2c depending on plan) is added to every import bucket.
 - Retail and network rates in the same bucket are summed.

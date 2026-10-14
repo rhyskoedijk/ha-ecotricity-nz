@@ -180,11 +180,15 @@ def resolve_bucket(rate: Rate) -> str:
     if code:
         return prefix + code
     description = rate.description.strip().lower()
+    normalised_description = " ".join(description.replace("-", " ").split())
     bucket: str | None = None
     if rate.unit is RateUnit.PER_KWH:
-        if "off peak" in description:
+        if "off peak" in normalised_description and "super off peak" not in normalised_description:
             bucket = "CHARGE_LOW"
-        elif "on peak" in description or description in ("peak usage", "peak"):
+        elif "on peak" in normalised_description or normalised_description in (
+            "peak usage",
+            "peak",
+        ):
             bucket = "CHARGE_HIGH"
         elif "shoulder" in description:
             bucket = "CHARGE_3"

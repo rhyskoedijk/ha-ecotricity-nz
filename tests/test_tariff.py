@@ -14,7 +14,7 @@ import pytest
 
 from custom_components.ecotricity_nz.api import Plan, Rate, RateUnit
 from custom_components.ecotricity_nz.api.parsers import parse_plan_list
-from custom_components.ecotricity_nz.api.timeframes import match_tiers, read_chart
+from custom_components.ecotricity_nz.api.timeframes import ChartTier, match_tiers, read_chart
 from custom_components.ecotricity_nz.tariff import (
     SLOTS_PER_DAY,
     SlotMap,
@@ -112,6 +112,13 @@ def _rate(**kwargs: object) -> Rate:
         (_rate(charge="charge_high"), "CHARGE_HIGH"),
         (_rate(charge="CHARGE_24", register_type="EG"), "EG_CHARGE_24"),
         (_rate(description="Uncontrolled - Off Peak"), "CHARGE_LOW"),
+        (_rate(description="Off-Peak Usage"), "CHARGE_LOW"),
+        (_rate(description="Super Off Peak"), "super off peak"),
+        (_rate(description="Super Off-Peak"), "super off-peak"),
+        (_rate(description="Super-off-peak"), "super-off-peak"),
+        (_rate(description="Super Off Peak Usage"), "super off peak usage"),
+        (_rate(description="Holiday"), "holiday"),
+        (_rate(description="Night"), "night"),
         (_rate(description="On Peak Export", register_type="EG"), "EG_CHARGE_HIGH"),
         (_rate(description="Peak Usage"), "CHARGE_HIGH"),
         (_rate(description="Shoulder"), "CHARGE_3"),
@@ -252,6 +259,49 @@ def test_anytime_rate_merges_into_additional_network_buckets() -> None:
     assert imports[6:10] == ("CHARGE_4",) * 4
     assert imports[10:] == ("CHARGE_5",) * 38
     assert exports == ("EG_CHARGE_24",) * 48
+
+
+def test_named_network_buckets_keep_their_identity_and_match_chart_tiers() -> None:
+    categories = (
+        ("Holiday", 1.0),
+        ("Night", 2.0),
+        ("Super Off Peak", 3.0),
+    )
+    plan = replace(
+        _plan("CKHK_ANY_LOW_260401_T0"),
+        retail_rates=(_rate(description="Anytime usage", charge="CHARGE_24", price=18.0),),
+        network_rates=tuple(
+            _rate(
+                description=name,
+                price=network_rate,
+                is_network=True,
+            )
+            for name, network_rate in categories
+        ),
+    )
+    pricing = price_day(plan, SPRING)
+
+    assert pricing.import_buckets == {
+        "holiday": 19.0,
+        "night": 20.0,
+        "super off peak": 21.0,
+    }
+
+    slots_by_category = (frozenset(range(16)), frozenset(range(16, 32)), frozenset(range(32, 48)))
+    chart_tiers = tuple(
+        ChartTier(
+            colour=(0, 0, 255 - index * 40),
+            height=price * 5,
+            slots=slots,
+        )
+        for index, (slots, price) in enumerate(
+            zip(slots_by_category, pricing.import_buckets.values(), strict=True)
+        )
+    )
+
+    assert match_tiers(chart_tiers, pricing.import_buckets) == (
+        ("holiday",) * 16 + ("night",) * 16 + ("super off peak",) * 16
+    )
 
 
 def _peak_slots(*peak: int) -> SlotMap:

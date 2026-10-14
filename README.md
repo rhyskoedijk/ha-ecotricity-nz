@@ -67,7 +67,7 @@ All entities belong to a device named **ICP &lt;icp&gt;**, so entity IDs look li
 | Daily charge                                | Total fixed charge per day, in NZD/d.                                                       | `supplier_rate`, `network_rate`, `metering_rate`         |
 | _Period_ import, export or controlled price | One sensor per period on your plan, for example **Peak import price**. Disabled by default. | `charged_as`, `supplier_rate`, `network_rate`, `ea_levy` |
 
-If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is. Network-defined charge codes beyond anytime, peak, off-peak and shoulder are kept as separate price buckets and matched against the plan's chart.
+If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is. Network-defined charge codes and unfamiliar period descriptions such as holiday, night, and super-off-peak are kept as separate price buckets and matched against the plan's chart.
 
 ### Time of use
 

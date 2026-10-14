@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Fix pricing for plans that combine an anytime retail rate with additional network-defined charge buckets.
+- Keep new price categories such as holiday, night and super off-peak separate when bucketed from rate descriptions.
 
 ## v0.2.0 (2026-10-13)
 

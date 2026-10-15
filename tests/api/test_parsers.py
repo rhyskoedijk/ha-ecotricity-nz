@@ -23,6 +23,7 @@ from custom_components.ecotricity_nz.api.parsers import (
     portal_wall_time,
 )
 from tests.conftest import (
+    ANYTIME_PLAN,
     DEFAULT_NETWORK,
     DEFAULT_PRICE_CATEGORY,
     TEST_ICP,
@@ -75,19 +76,26 @@ def test_parse_icp_single_item_lists() -> None:
 
 
 def test_parse_plan_list() -> None:
-    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    content = raw["content"][0]
+    plans = parse_plan_list(raw)
 
-    assert plans.default.description == "Eco Off Peak"
+    assert plans.default.description == content["default"]["price_plan_description"]
     assert plans.alternative is not None
-    assert plans.alternative.description == "Low Off Peak"
+    assert plans.alternative.description == content["alternative"]["price_plan_description"]
     names = [plan.description for plan in plans.all_plans]
-    assert names[0] == "Eco Off Peak"
-    assert "Low User" in names
+    assert names[0] == plans.default.description
+    assert ANYTIME_PLAN in names
     assert len(names) == len(set(names))
 
     levy = next(rate for rate in plans.default.retail_rates if rate.is_levy)
     assert levy.unit is RateUnit.PER_KWH
-    assert levy.price == pytest.approx(0.16)
+    raw_levy = next(
+        rate
+        for rate in content["default"]["retail_rates"]
+        if rate["charge_description"] == levy.description
+    )
+    assert levy.price == pytest.approx(raw_levy["price"])
 
     export = next(rate for rate in plans.default.retail_rates if rate.is_export)
     assert export.price < 0
@@ -306,15 +314,15 @@ def test_plan_titles() -> None:
     assert battery is not None
     assert battery.name == "Low ecoSOLAR"
     assert battery.description == "LowBATTERY User"
-    assert plans.default.name == "ecoSAVER"
+    assert plans.default.name == titles[plans.default.description.casefold()]
     assert plans.alternative is not None
-    assert plans.alternative.name == "Low ecoSAVER"
+    assert plans.alternative.name == titles[plans.alternative.description.casefold()]
 
 
 def test_plan_without_title_uses_description() -> None:
     plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles({})
 
-    assert plans.default.name == "Eco Off Peak"
+    assert [plan.name for plan in plans.all_plans] == [plan.description for plan in plans.all_plans]
 
 
 def test_plan_titles_skip_bad_entries() -> None:

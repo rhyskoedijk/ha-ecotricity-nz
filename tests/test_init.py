@@ -236,10 +236,10 @@ async def _last_stat(hass: HomeAssistant, stat_id: str) -> dict[str, float]:
     return dict(result[stat_id][0])  # type: ignore[arg-type]
 
 
-@pytest.mark.usefixtures("mock_onboarding")
 async def test_unlisted_plan_falls_back_and_raises_issue(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
     issue_registry: ir.IssueRegistry,
     freezer: FrozenDateTimeFactory,
 ) -> None:
@@ -247,7 +247,9 @@ async def test_unlisted_plan_falls_back_and_raises_issue(
     # A plan Ecotricity no longer lists for this ICP.
     await _setup(hass, config_entry, {CONF_PLAN_ID: "9999"})
 
-    assert _state(hass, "plan") == "ecoSAVER"
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    titles = mock_onboarding.async_get_plan_titles.return_value
+    assert _state(hass, "plan") == plans.with_titles(titles).default.name
     issue_id = f"plan_not_found_{config_entry.entry_id}"
     assert issue_registry.async_get_issue(DOMAIN, issue_id)
 
@@ -486,7 +488,11 @@ def _with_new_season(plans: PlanList) -> PlanList:
     updated = replace(
         plan, network_rates=(*plan.network_rates, shoulder), seasons=(*plan.seasons, season)
     )
-    return replace(plans, alternative=updated)
+    return PlanList(
+        default=updated if plans.default is plan else plans.default,
+        alternative=updated if plans.alternative is plan else plans.alternative,
+        others=tuple(updated if other is plan else other for other in plans.others),
+    )
 
 
 async def test_new_season_adds_sensors(

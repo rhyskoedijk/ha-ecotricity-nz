@@ -55,12 +55,13 @@ class Paced:
         self._first = True
         self.count = 0
 
-    async def wait(self) -> None:
-        """Wait before the next request (not before the first)."""
+    async def wait(self, what: str) -> None:
+        """Wait before the next request (not before the first), and log what it's for."""
         if not self._first:
             await asyncio.sleep(self._delay)
         self._first = False
         self.count += 1
+        print(f"  [{self.count}] {what}")
 
 
 def _plans(raw: Any) -> list[dict[str, Any]]:  # noqa: ANN401 - raw JSON
@@ -101,7 +102,7 @@ def _prices(raw: Any) -> dict[tuple[str, ...], float]:  # noqa: ANN401 - raw JSO
 
 
 async def _plan_list(client: OnboardingClient, pace: Paced, network: str, category: str) -> Any:  # noqa: ANN401 - raw JSON
-    await pace.wait()
+    await pace.wait(f"plan list {network}/{category}")
     params = {
         "networkCode": network,
         "capacityCode": category,
@@ -158,7 +159,7 @@ async def _charts(
                     .replace("EEEEEEEE", season["end"].replace("-", ""))
                     .replace(".png", "-NOGST.png")
                 )
-                await pace.wait()
+                await pace.wait(path.rsplit("/", 1)[1])
                 image = await client.async_get_chart(path)
                 digest = hashlib.sha256(image).hexdigest()
                 if digest not in seen:
@@ -185,6 +186,9 @@ def _arguments() -> argparse.Namespace:
 
 async def main() -> int:
     """Build the fixture folder for one network and price category."""
+    # Print each line as it happens, even when the output goes to a file or pipe, so a long
+    # paced run shows its progress and its end.
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     args = _arguments()
     network = args.network.upper()
     networks = json.loads(CATEGORIES.read_text(encoding="utf-8"))["networks"]

@@ -80,8 +80,8 @@
             "description": "Wellington Electricity Lines",
             "code": "CKHK"
           },
-          "code": "RTOU24",
-          "description": "Residential Time of Use"
+          "code": "RLUTOU",
+          "description": "Residential Low User Time of Use"
         }
       },
       "currentAuditNumber": "PRI-10000002"

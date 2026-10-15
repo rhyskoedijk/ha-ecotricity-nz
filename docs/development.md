@@ -27,7 +27,7 @@ uv run pre-commit run --all-files              # git hook checks
 
 CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
 
-Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name. Most tests run against `CKHK` and `RTOU24`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
+Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name. Most tests run against `CKHK` and `RLUTOU`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
 
 The chart images are real Ecotricity charts; they contain only public pricing.
 
@@ -97,7 +97,7 @@ Build fixtures from the captures without personal data:
 - replace personal identifiers and other customer-specific details with obviously fake values
 - the address, region, meter serial, account number, contract number, registry audit numbers and portal IDs get obviously fake values
 
-Plan lists fetched without an ICP hold nothing personal, so keep them as published, including plan IDs. A plan ID is Ecotricity's ID for a published plan and is the same for everyone; it only becomes personal when stored next to an ICP, as a user's chosen plan, which fixtures never do. `CKHK/RTOU24` and `ORON/URES` still have made-up plan IDs from before this rule; they get the real ones the next time they're fetched. Tests find plans by description, so a refresh doesn't change them.
+Plan lists fetched without an ICP hold nothing personal, so keep them as published, including plan IDs. A plan ID is Ecotricity's ID for a published plan and is the same for everyone; it only becomes personal when stored next to an ICP, as a user's chosen plan, which fixtures never do. Tests find plans by description, so a refresh doesn't change them.
 
 Timeframe chart images contain only prices and times. Keep the real network code in their filenames; replace any customer-specific values with obviously fake ones.
 
@@ -128,7 +128,7 @@ A network's price categories mostly share the same Ecotricity data. Comparing th
 So each network gets one price category folder, which covers everything the integration parses:
 
 - For a new network, use its most common residential category in `network_price_categories.json`.
-- A network that already has a folder keeps it: `CKHK/RTOU24` (the test ICP's, which most tests use), `ORON/URES` and `VECT/ARHLC`.
+- A network that already has a folder keeps it: `CKHK/RLUTOU` (the test ICP's, which most tests use), `ORON/URES` and `VECT/ARHLC`.
 - Add a second category only when it differs in shape from the first: different plans, seasons, charge codes, rate descriptions, units or validity dates. A difference in prices alone, such as Orion's daily charge, isn't worth a fixture, because it doesn't exercise anything new.
 - Save the charts of every plan in the category, not just one plan. Charts differ between plans, and different plans exercise different pricing rules. Keep one chart per distinct image: later seasons often reuse an earlier season's chart, byte for byte.
 

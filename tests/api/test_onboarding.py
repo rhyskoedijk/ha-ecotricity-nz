@@ -61,7 +61,9 @@ async def test_get_icp_and_plans(hass: HomeAssistant, aioclient_mock: AiohttpCli
     plans = await client.async_get_plans(icp)
 
     assert icp.icp == TEST_ICP
-    assert plans.default.description == "Eco Off Peak"
+    assert plans.default.id == str(
+        load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)["content"][0]["default"]["id"]
+    )
     _, url, _, headers = aioclient_mock.mock_calls[-1]
     assert url.query["meterType"] == "UN,EG,7304,7304"
     assert url.query["capacityCode"] == DEFAULT_PRICE_CATEGORY

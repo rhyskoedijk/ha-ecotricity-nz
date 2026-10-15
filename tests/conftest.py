@@ -41,7 +41,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 NETWORKS = FIXTURES / "networks"
 # The network and price category most tests run against: the test ICP's.
 DEFAULT_NETWORK = "CKHK"
-DEFAULT_PRICE_CATEGORY = "RTOU24"
+DEFAULT_PRICE_CATEGORY = "RLUTOU"
 # Charge codes with a fixed period on every network; any other code is defined by the network.
 ANYTIME = "CHARGE_24"
 FIXED_PERIOD_CODES = frozenset({ANYTIME, "CHARGE_HIGH", "CHARGE_LOW"})

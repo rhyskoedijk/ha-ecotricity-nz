@@ -1,0 +1,555 @@
+{
+  "source": "https://www.emi.ea.govt.nz/Retail/Datasets/MarketStructure/DistributionPriceCategoryCodes",
+  "file": "20261014_DistributionPriceCategoryCodesByNSP.csv",
+  "networks": {
+    "ALPE": {
+      "name": "Alpine Energy",
+      "price_categories": {
+        "LOWLCA": 10723,
+        "015LCA": 10008,
+        "015HCA": 4067,
+        "LOWHCA": 2075,
+        "LOWULCA": 72,
+        "ASSHCA": 67,
+        "045HCA": 56,
+        "015ULCA": 44,
+        "045LCA": 44,
+        "015UHCA": 31,
+        "LOWUHCA": 30,
+        "ASSLCA": 9,
+        "030LCA": 7,
+        "030HCA": 6,
+        "030ULCA": 2,
+        "045UHCA": 2,
+        "045ULCA": 2
+      }
+    },
+    "BUEL": {
+      "name": "Buller Electricity",
+      "price_categories": {
+        "RLU": 2738,
+        "RSU": 1513,
+        "G15": 25,
+        "DFM": 2,
+        "G15SD": 2,
+        "G69": 2
+      }
+    },
+    "CHBP": {
+      "name": "Centralines",
+      "price_categories": {
+        "CH2T": 3437,
+        "CH1T": 2798,
+        "GENTOU": 223,
+        "CH2R": 169,
+        "CH1": 130,
+        "CH2": 35,
+        "CH3": 6,
+        "T1P": 1
+      }
+    },
+    "CKHK": {
+      "name": "Wellington Electricity",
+      "price_categories": {
+        "RLUTOU": 91603,
+        "RSUTOU": 60391,
+        "RLU": 3897,
+        "RSU": 2902,
+        "GLV69": 317,
+        "GLV15": 304,
+        "60G": 174,
+        "G002": 21,
+        "GLV138": 8,
+        "G001": 3,
+        "GLV300": 2
+      }
+    },
+    "COUP": {
+      "name": "Counties Energy",
+      "price_categories": {
+        "RSUC": 23378,
+        "RLUC": 19711,
+        "GSUC": 647
+      }
+    },
+    "DUNE": {
+      "name": "Aurora Energy",
+      "price_categories": {
+        "SHSD15": 49615,
+        "CCSD15": 18865,
+        "FRSD15": 9903,
+        "FKSD15": 1173,
+        "FR2": 948,
+        "CC2": 563,
+        "SHSD8": 535,
+        "SH2": 439,
+        "CC1": 173,
+        "CCSD15T": 147,
+        "SH1": 145,
+        "CCSD8": 114,
+        "FRSD8": 113,
+        "CC0A": 72,
+        "FR1": 64,
+        "SH0A": 61,
+        "FK2": 41,
+        "FR0A": 33,
+        "SH1A": 32,
+        "CC1A": 29,
+        "FK1": 14,
+        "FR1A": 12,
+        "FK0A": 4,
+        "CC0": 2,
+        "FK1A": 2,
+        "FKSD8": 2,
+        "SH0": 1
+      }
+    },
+    "EASH": {
+      "name": "EA Networks",
+      "price_categories": {
+        "GS20-UA": 8327,
+        "GS20": 2734,
+        "GS20-RL": 2323,
+        "GS50-RL": 211,
+        "GS50": 153,
+        "GS50-UA": 113,
+        "GS05-UA": 108,
+        "ISCH": 90,
+        "GS05": 49,
+        "GS69": 28,
+        "G100": 21,
+        "GS05-RL": 20,
+        "G150": 8,
+        "G300": 3,
+        "POA": 2
+      }
+    },
+    "EAST": {
+      "name": "Firstlight Network",
+      "price_categories": {
+        "DOMLFC": 11564,
+        "DOMSTD": 9364,
+        "COM0050": 596,
+        "COM0100": 8,
+        "OTH0003": 3
+      }
+    },
+    "ELEC": {
+      "name": "Electra",
+      "price_categories": {
+        "LF": 28226,
+        "SF": 12088,
+        "LGF": 1552,
+        "SGF": 603,
+        "CISF": 18,
+        "CIMF": 2
+      }
+    },
+    "ELIN": {
+      "name": "Electricity Invercargill",
+      "price_categories": {
+        "ND20Q": 7686,
+        "NDL20Q": 5155,
+        "ND20P": 1412,
+        "NDL20P": 1025,
+        "ND08Q": 98,
+        "NDL08Q": 88,
+        "ND08P": 50,
+        "NDL08P": 27,
+        "NT030P": 18,
+        "NS020P": 13,
+        "NT050P": 12,
+        "NS008P": 11,
+        "NS020Q": 9,
+        "NT030Q": 6,
+        "NT050Q": 5,
+        "NT015P": 3
+      }
+    },
+    "HAWK": {
+      "name": "Unison Networks",
+      "price_categories": {
+        "H-TLU": 27822,
+        "H-THU": 25979,
+        "R-THU": 21609,
+        "R-TLU": 20284,
+        "H-M12": 1337,
+        "H-M11": 1296,
+        "R-M12": 1178,
+        "R-M11": 828,
+        "H-TCU": 526,
+        "R-TCU": 266,
+        "H-MC1": 203,
+        "R-MC1": 196,
+        "H-NDA": 74,
+        "R-NDA": 56,
+        "H-MC2": 4,
+        "H-U01": 2,
+        "R-MC2": 1,
+        "R-MC2T": 1
+      }
+    },
+    "HEDL": {
+      "name": "Horizon Networks",
+      "price_categories": {
+        "LUDU-TOU": 7607,
+        "NDU-TOU": 4615,
+        "NDR-TOU": 3188,
+        "LUDR-TOU": 2984,
+        "N2R": 180,
+        "N2U": 57,
+        "N3R": 18,
+        "N3U": 5,
+        "N4U": 1
+      }
+    },
+    "LINE": {
+      "name": "The Lines Company",
+      "price_categories": {
+        "RTLFCHC": 4636,
+        "RTSTDHC": 3804,
+        "TT15HC": 2049,
+        "RTLFCHU": 1361,
+        "RTSTDHU": 1250,
+        "RTSTDLC": 1204,
+        "TT15HU": 1122,
+        "RTLFCLC": 921,
+        "RTSTDLU": 396,
+        "RTLFCLU": 361,
+        "GT15HU": 294,
+        "TT15LU": 203,
+        "GT15LU": 191,
+        "GT15HC": 179,
+        "TT15LC": 128,
+        "GT15LC": 90,
+        "RNLFCHC": 58,
+        "RNSTDHC": 34,
+        "GT30HC": 32,
+        "GT30HU": 28,
+        "GT70H": 17,
+        "RNLFCLC": 14,
+        "GT70L": 13,
+        "RNLFCHU": 9,
+        "RNSTDLC": 8,
+        "GT30LU": 7,
+        "TN15HC": 7,
+        "GN15HC": 6,
+        "GN15HU": 4,
+        "RNLFCLU": 4,
+        "RNSTDHU": 4,
+        "RNSTDLU": 3,
+        "GT30LC": 2,
+        "CDB": 1,
+        "GN15LU": 1,
+        "GT150H": 1,
+        "GT150L": 1,
+        "TN15HU": 1,
+        "TN15LC": 1
+      }
+    },
+    "LLNW": {
+      "name": "Lakelands",
+      "price_categories": {
+        "LD15": 4758,
+        "LS015": 36,
+        "LD08": 12,
+        "LS023": 8,
+        "LT041": 7,
+        "LM15": 3,
+        "LT028": 3,
+        "LT069": 3,
+        "LT015": 1,
+        "LT024": 1
+      }
+    },
+    "MARL": {
+      "name": "Marlborough Lines",
+      "price_categories": {
+        "DLTOU": 8727,
+        "DS15TOU": 7192,
+        "DS30TOU": 1950,
+        "DSR15": 1796,
+        "DS15": 612,
+        "DL": 601,
+        "DTTOU": 442,
+        "DS30": 310,
+        "DSR30": 151,
+        "NSTOU": 146,
+        "DT": 80,
+        "NTTOU": 75,
+        "DXR": 70,
+        "DTR": 59,
+        "NHTOU": 52,
+        "NSR": 41,
+        "NT": 16,
+        "NS": 15,
+        "RTTOU": 11,
+        "PM": 9,
+        "NH": 7,
+        "NTR": 5,
+        "NHR": 4,
+        "NXR": 4,
+        "PK": 2,
+        "PKU": 1,
+        "PMU": 1,
+        "PSLT1": 1,
+        "RVTOU": 1
+      }
+    },
+    "MPOW": {
+      "name": "MainPower NZ",
+      "price_categories": {
+        "MPRSTD": 17535,
+        "MPRLU": 13569,
+        "MPAISTD": 3484,
+        "MPAILU": 2624,
+        "MPNONRES": 271,
+        "MPIRR": 63,
+        "MPTEMP": 22,
+        "MPNONRESDG": 8,
+        "MPCOUNPUMP": 1
+      }
+    },
+    "NPOW": {
+      "name": "Northpower",
+      "price_categories": {
+        "DM1-TOU": 26131,
+        "DM7-TOU": 18307,
+        "DM3-TOU": 4733,
+        "DM1": 1594,
+        "DM7": 1164,
+        "ND1-TOU": 992,
+        "DM3": 412,
+        "ND1": 133,
+        "ND12": 72,
+        "ND5": 6,
+        "ND2-TOU": 2,
+        "ND6": 1
+      }
+    },
+    "ORON": {
+      "name": "Orion New Zealand",
+      "price_categories": {
+        "RES": 124214,
+        "RSC": 41053,
+        "URES": 25670,
+        "RSU": 11897,
+        "UGENGC2": 625,
+        "UGENGC1": 623,
+        "GENGC1": 430,
+        "GENGC2": 166,
+        "LIG": 111,
+        "IRR": 110,
+        "UGENGC3": 27,
+        "GENGC3": 8
+      }
+    },
+    "OTPO": {
+      "name": "OtagoNet",
+      "price_categories": {
+        "1B": 4432,
+        "7": 3454,
+        "1A": 2278,
+        "8": 1418,
+        "2": 287,
+        "3": 17
+      }
+    },
+    "POCO": {
+      "name": "Powerco",
+      "price_categories": {
+        "W05A": 65894,
+        "T06S": 45190,
+        "W06A": 41954,
+        "T05S": 37377,
+        "V05S": 26959,
+        "W05B": 25370,
+        "V06S": 20882,
+        "W06B": 18793,
+        "V05C": 9438,
+        "V06C": 6428,
+        "V22": 16,
+        "T22": 12,
+        "W01A": 11,
+        "W22A": 8,
+        "V01": 6,
+        "W22B": 3,
+        "T01": 1,
+        "W01B": 1
+      }
+    },
+    "SCAN": {
+      "name": "Scanpower",
+      "price_categories": {
+        "D1": 4834,
+        "C1": 243
+      }
+    },
+    "TASM": {
+      "name": "Network Tasman",
+      "price_categories": {
+        "T-1RL": 18899,
+        "T-1RS": 17331,
+        "N-1RL": 4247,
+        "N-1RS": 3549,
+        "T-2": 596,
+        "T-1GL": 575,
+        "T-2LLFC": 57,
+        "N-1GL": 9,
+        "N-2": 4,
+        "T-2HLFC": 4,
+        "N-0-BT": 3
+      }
+    },
+    "TOPE": {
+      "name": "Top Energy",
+      "price_categories": {
+        "LC": 9410,
+        "SC": 5807,
+        "LU": 3752,
+        "LR": 3408,
+        "SU": 3365,
+        "SR": 2506,
+        "GU": 656,
+        "GC": 141,
+        "GG": 139
+      }
+    },
+    "TPCO": {
+      "name": "The Power Company",
+      "price_categories": {
+        "UD20Q": 7495,
+        "UDL20Q": 4940,
+        "RD20Q": 4739,
+        "UD20P": 2483,
+        "RD20P": 2310,
+        "UDL20P": 1698,
+        "RDL20Q": 1691,
+        "RDL20P": 828,
+        "RS020P": 257,
+        "RT030P": 234,
+        "UD08Q": 201,
+        "RS008P": 159,
+        "UDL08Q": 124,
+        "RD08P": 118,
+        "UD08P": 115,
+        "RS020Q": 102,
+        "RT030Q": 89,
+        "UDL08P": 69,
+        "RD08Q": 60,
+        "RT050Q": 59,
+        "RT050P": 47,
+        "RT015P": 43,
+        "US008P": 40,
+        "US020P": 38,
+        "RDL08P": 37,
+        "RDL08Q": 28,
+        "UT030P": 28,
+        "UT015P": 12,
+        "RT015Q": 8,
+        "RT075Q": 6,
+        "UT030Q": 5,
+        "RS008Q": 4,
+        "US008Q": 4,
+        "UT050P": 4,
+        "RT075P": 3,
+        "US020Q": 3,
+        "UT015Q": 3,
+        "RT100P": 2,
+        "RS001P": 1,
+        "RT100Q": 1,
+        "UT050Q": 1
+      }
+    },
+    "UNET": {
+      "name": "Vector",
+      "price_categories": {
+        "WRHLC": 79678,
+        "WRHSC": 65751,
+        "WRHLU": 43749,
+        "WRHSU": 39830,
+        "WRNLC": 2309,
+        "WRNSC": 2173,
+        "WBSH": 1362,
+        "WRNSU": 1344,
+        "WRNLU": 981,
+        "WBSN": 264,
+        "WRHLD": 217,
+        "WRHSD": 166,
+        "WBSU": 12,
+        "WLVN": 5,
+        "WBSHD": 1,
+        "WHVH": 1
+      }
+    },
+    "VECT": {
+      "name": "Vector",
+      "price_categories": {
+        "ARHLC": 132607,
+        "ARHSC": 70831,
+        "ARHLU": 66692,
+        "ARHSU": 53440,
+        "ARNLC": 2555,
+        "ARNSC": 2372,
+        "ARNSU": 1910,
+        "ARHLD": 1882,
+        "ARNLU": 1868,
+        "ABSH": 1521,
+        "ARHSD": 453,
+        "ZERO": 364,
+        "ABSN": 256,
+        "ALVN": 17,
+        "ABSU": 13,
+        "ALVT": 1
+      }
+    },
+    "WAIK": {
+      "name": "WEL Networks",
+      "price_categories": {
+        "1153": 48712,
+        "1154": 36719,
+        "1200": 1058,
+        "1154C": 863,
+        "1153C": 697,
+        "1200C": 65,
+        "1293": 2,
+        "1360": 1
+      }
+    },
+    "WAIP": {
+      "name": "Waipa Networks",
+      "price_categories": {
+        "RA": 23321,
+        "GA": 539,
+        "D": 515,
+        "N": 40
+      }
+    },
+    "WATA": {
+      "name": "Network Waitaki",
+      "price_categories": {
+        "RLC": 4228,
+        "15C": 3735,
+        "15U": 1242,
+        "RLU": 978,
+        "30C": 79,
+        "30U": 68,
+        "50U": 57,
+        "100": 20,
+        "50C": 17,
+        "200": 3,
+        "300": 2
+      }
+    },
+    "WPOW": {
+      "name": "Westpower",
+      "price_categories": {
+        "WP1L": 6767,
+        "WP1D": 4650,
+        "WP1N": 182,
+        "WP2N": 63,
+        "C2F": 1
+      }
+    }
+  }
+}

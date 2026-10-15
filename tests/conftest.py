@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
-from datetime import UTC, datetime
+from collections.abc import Callable, Generator, Iterable
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,7 +13,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ecotricity_nz.api import EcotricityConnectionError, PortalIndicator
+from custom_components.ecotricity_nz.api import (
+    EcotricityConnectionError,
+    Plan,
+    PortalIndicator,
+    Rate,
+    RateUnit,
+)
 from custom_components.ecotricity_nz.api.parsers import (
     parse_icp,
     parse_plan_list,
@@ -30,16 +36,25 @@ from custom_components.ecotricity_nz.const import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# One folder per network, named by its distributor code: plan_list.json, charts/, and icp.json
-# where a network has a test ICP.
+# One folder per network, named by its distributor code, holding icp.json where the network has a
+# test ICP, and one folder per price category with that category's plan_list.json and charts/.
 NETWORKS = FIXTURES / "networks"
-# The network most tests run against: the test ICP's network.
+# The network and price category most tests run against: the test ICP's.
 DEFAULT_NETWORK = "CKHK"
+DEFAULT_PRICE_CATEGORY = "RTOU24"
+# Charge codes with a fixed period on every network; any other code is defined by the network.
+ANYTIME = "CHARGE_24"
+FIXED_PERIOD_CODES = frozenset({ANYTIME, "CHARGE_HIGH", "CHARGE_LOW"})
 TEST_ICP = "0000123456AB1C2"
 NZ = ZoneInfo("Pacific/Auckland")
-# Plan ids in the default network's plan_list.json.
-LOW_USER_PLAN_ID = "3001"
-LOW_OFF_PEAK_PLAN_ID = "3003"
+# Plans in the default fixture, by the kind of pricing a test needs. They're found by their internal
+# description, which stays the same when Ecotricity republishes a plan with a new ID or code.
+# Peak and off-peak retail import prices:
+TIME_OF_USE_PLAN = "Low Off Peak"
+# One retail import price, so one import price all day outside winter:
+ANYTIME_PLAN = "Low User"
+# One retail import price, with peak and off-peak export credits:
+SOLAR_PLAN = "LowBATTERY User"
 
 
 def load_fixture(name: str) -> str:
@@ -53,8 +68,140 @@ def load_json_fixture(name: str) -> Any:
 
 
 def load_network_fixture(network: str, name: str) -> Any:
-    """Return a parsed JSON fixture from a network's folder, such as its plan_list.json."""
+    """Return a parsed JSON fixture from a network's folder, such as its icp.json."""
     return json.loads((NETWORKS / network / name).read_text(encoding="utf-8"))
+
+
+def load_plan_list(network: str, category: str) -> Any:
+    """Return the parsed plan list fixture for a network's price category."""
+    return load_network_fixture(network, f"{category}/plan_list.json")
+
+
+def find_plan(
+    description: str, network: str = DEFAULT_NETWORK, category: str = DEFAULT_PRICE_CATEGORY
+) -> Plan:
+    """Return a fixture plan by its internal description, such as TIME_OF_USE_PLAN."""
+    plans = parse_plan_list(load_plan_list(network, category)).all_plans
+    return next(plan for plan in plans if plan.description == description)
+
+
+def plan_id(description: str) -> str:
+    """Return the ID of a plan in the default fixture, for a config entry's options."""
+    return find_plan(description).id
+
+
+def fixture_plans() -> list[Plan]:
+    """Return every plan in every network's fixtures, in a stable order."""
+    return [
+        plan
+        for network, category in price_categories()
+        for plan in sorted(
+            parse_plan_list(load_plan_list(network, category)).all_plans,
+            key=lambda plan: plan.code,
+        )
+    ]
+
+
+def find_plan_where(scenario: Callable[[Plan], bool]) -> Plan:
+    """Return the first fixture plan, from any network, that has a pricing scenario.
+
+    Tests describe the situation they need rather than naming a network or plan, so the same test
+    covers whichever network has it, and keeps working as fixtures are added or refreshed.
+    """
+    plan = next((plan for plan in fixture_plans() if scenario(plan)), None)
+    assert plan is not None, f"No fixture plan has the {scenario.__name__} scenario"
+    return plan
+
+
+def import_rates(rates: Iterable[Rate], day: date) -> list[Rate]:
+    """Return the per-kWh import rates (not export, controlled load or levies) valid on a day."""
+    return [
+        rate
+        for rate in rates
+        if rate.unit is RateUnit.PER_KWH
+        and rate.applies_on(day)
+        and not (rate.is_export or rate.is_controlled or rate.is_levy)
+    ]
+
+
+def extra_network_codes(plan: Plan, day: date) -> list[str]:
+    """Return the network's import charge codes beyond anytime, peak and off-peak, on a day."""
+    return sorted(
+        {
+            rate.charge
+            for rate in import_rates(plan.network_rates, day)
+            if rate.charge and rate.charge not in FIXED_PERIOD_CODES
+        }
+    )
+
+
+def has_extra_network_buckets(plan: Plan) -> bool:
+    """One anytime retail import rate, and network rates in more periods than peak and off-peak.
+
+    Some networks charge for periods such as shoulder, weekend or super off-peak under their own
+    numbered charge codes, while the plan's own energy rate is the same all day.
+    """
+    return any(
+        extra_network_codes(plan, season.start)
+        and {rate.charge for rate in import_rates(plan.retail_rates, season.start)} == {ANYTIME}
+        for season in plan.seasons
+    )
+
+
+def has_anytime_network_rate(plan: Plan) -> bool:
+    """A network rate that applies at all hours, next to the network's time-of-use rates.
+
+    Some networks publish a charge such as a transmission charge this way, with no anytime retail
+    rate beside it.
+    """
+    for season in plan.seasons:
+        network = {rate.charge for rate in import_rates(plan.network_rates, season.start)}
+        retail = {rate.charge for rate in import_rates(plan.retail_rates, season.start)}
+        if ANYTIME in network and ANYTIME not in retail and network - {ANYTIME}:
+            return True
+    return False
+
+
+def chart_name(plan: Plan, day: date, *, weekend: bool = False, include_gst: bool = False) -> str:
+    """Return the file name of a plan's chart for the season containing a day.
+
+    Built from the plan's own chart template, the way Ecotricity names its charts, so tests don't
+    hard-code plan codes and season dates.
+    """
+    season = next(season for season in plan.seasons if season.contains(day))
+    template = plan.timeframe_chart_weekend if weekend else plan.timeframe_chart_weekday
+    assert template is not None
+    name = (
+        template.rsplit("/", 1)[-1]
+        .replace("SSSSSSSS", season.start.strftime("%Y%m%d"))
+        .replace("EEEEEEEE", season.end.strftime("%Y%m%d"))
+    )
+    return name if include_gst else name.replace(".png", "-NOGST.png")
+
+
+def stored_charts(plan: Plan) -> list[tuple[date, Path]]:
+    """Return the first day of each season with a stored chart for the plan, and the chart.
+
+    Charts are stored once per distinct image, so a season that reuses an earlier season's chart
+    has no file of its own.
+    """
+    charts = []
+    for season in sorted(plan.seasons, key=lambda season: season.start):
+        for weekend in (False, True):
+            chart = chart_file(chart_name(plan, season.start, weekend=weekend))
+            if chart.exists():
+                charts.append((season.start, chart))
+    return charts
+
+
+def chart_plan(chart: Path) -> tuple[Plan, date]:
+    """Return the plan a fixture chart belongs to, and the first day of its season."""
+    # Charts are named {network}-{category}-{plan}-{customer}-{start}-{end}-{WD|WE}-NOGST.png.
+    network, category, code, _customer, start, *_ = chart.stem.split("-")
+    plans = parse_plan_list(load_plan_list(network, category)).all_plans
+    plan = next((plan for plan in plans if plan.code == code), None)
+    assert plan is not None, f"{code} isn't in {network}/{category}/plan_list.json"
+    return plan, datetime.strptime(start, "%Y%m%d").replace(tzinfo=UTC).date()
 
 
 def network_codes() -> list[str]:
@@ -62,14 +209,22 @@ def network_codes() -> list[str]:
     return sorted(path.name for path in NETWORKS.iterdir() if path.is_dir())
 
 
+def price_categories() -> list[tuple[str, str]]:
+    """Return every (network, price category) pair with a plan list fixture."""
+    return sorted(
+        (path.parent.parent.name, path.parent.name) for path in NETWORKS.glob("*/*/plan_list.json")
+    )
+
+
 def chart_file(name: str) -> Path:
-    """Return a fixture chart by its file name. Its network is the first part of the name."""
-    return NETWORKS / name.split("-", 1)[0] / "charts" / name
+    """Return a fixture chart by its file name, which starts with its network and price category."""
+    network, category, _ = name.split("-", 2)
+    return NETWORKS / network / category / "charts" / name
 
 
 def chart_files() -> list[Path]:
-    """Return every fixture chart, for every network."""
-    return sorted(NETWORKS.glob("*/charts/*.png"))
+    """Return every fixture chart, for every network and price category."""
+    return sorted(NETWORKS.glob("*/*/charts/*.png"))
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +260,7 @@ def mock_onboarding() -> Generator[MagicMock]:
         return_value=parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
     )
     client.async_get_plans = AsyncMock(
-        return_value=parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
+        return_value=parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
     )
     client.async_get_chart = AsyncMock(side_effect=_chart_bytes)
     client.async_get_plan_titles = AsyncMock(
@@ -157,7 +312,7 @@ def config_entry() -> MockConfigEntry:
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP},
-        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID},
+        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
     )
 
 
@@ -169,9 +324,9 @@ def portal_config_entry() -> MockConfigEntry:
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP, CONF_ACCOUNT_NUMBER: "123456", CONF_PASSWORD: "secret"},
-        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: LOW_USER_PLAN_ID},
+        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)},
     )
 
 
-# Monday 15 June 2026, 8:15am NZST: winter peak on the fixture network.
+# Monday 15 June 2026, 8:15am NZST: winter peak on the default fixture's time-of-use plans.
 WINTER_PEAK = datetime(2026, 6, 14, 20, 15, tzinfo=UTC)

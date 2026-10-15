@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -38,13 +38,20 @@ from custom_components.ecotricity_nz.store import (
     _snapshot_dict,
 )
 from tests.conftest import (
+    ANYTIME_PLAN,
     DEFAULT_NETWORK,
+    DEFAULT_PRICE_CATEGORY,
     NZ,
     TEST_ICP,
+    TIME_OF_USE_PLAN,
     WINTER_PEAK,
     chart_file,
+    chart_name,
+    find_plan,
     load_json_fixture,
     load_network_fixture,
+    load_plan_list,
+    plan_id,
 )
 
 PREFIX = f"sensor.icp_{TEST_ICP.lower()}"
@@ -202,7 +209,7 @@ async def test_unreadable_windows_are_fetched_again_next_day(
 
     mock_onboarding.async_get_chart.side_effect = None
     mock_onboarding.async_get_chart.return_value = (
-        chart_file("CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png")
+        chart_file(chart_name(find_plan(TIME_OF_USE_PLAN), date(2026, 6, 15)))
     ).read_bytes()
     # Set up at 8:15am, so the next day's check runs then.
     await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
@@ -222,11 +229,11 @@ async def test_choosing_another_plan_fetches(
 
     # Its charts weren't downloaded with the last fetch, so they're fetched now.
     hass.config_entries.async_update_entry(
-        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: "3001"}
+        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
     )
     await _reload(hass, config_entry)
     assert mock_onboarding.async_get_icp.await_count == calls + 1
-    assert config_entry.runtime_data.pricing.data.plan.id == "3001"
+    assert config_entry.runtime_data.pricing.data.plan.id == plan_id(ANYTIME_PLAN)
     assert _state(hass, "current_import_price") != "unavailable"
 
 
@@ -305,19 +312,17 @@ async def test_offline_warning_is_logged_once(
 
 
 def _fixture_snapshot() -> PricingSnapshot:
-    chart = chart_file(
-        "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
-    )
+    chart = chart_file(chart_name(find_plan(TIME_OF_USE_PLAN), date(2026, 6, 15)))
     titles = parse_plan_titles(load_json_fixture("plan_mappings.json"))
     return PricingSnapshot(
         icp=parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json")),
-        plans=parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json")).with_titles(
+        plans=parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles(
             titles
         ),
         fetched_at=datetime(2026, 6, 14, 20, 15, tzinfo=UTC),
         plan_titles=titles,
         charts={"/chart.png": read_chart(chart.read_bytes())},
-        charts_plan_id="3003",
+        charts_plan_id=plan_id(TIME_OF_USE_PLAN),
     )
 
 

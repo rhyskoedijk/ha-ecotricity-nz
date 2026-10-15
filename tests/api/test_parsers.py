@@ -22,18 +22,26 @@ from custom_components.ecotricity_nz.api.parsers import (
     parse_values,
     portal_wall_time,
 )
-from tests.conftest import DEFAULT_NETWORK, TEST_ICP, load_json_fixture, load_network_fixture
+from tests.conftest import (
+    DEFAULT_NETWORK,
+    DEFAULT_PRICE_CATEGORY,
+    TEST_ICP,
+    load_json_fixture,
+    load_network_fixture,
+    load_plan_list,
+)
 
 NZ = ZoneInfo("Pacific/Auckland")
 
 
 def test_parse_icp() -> None:
-    icp = parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
+    raw = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    icp = parse_icp(raw)
 
     assert icp.icp == TEST_ICP
-    assert icp.network_code == "CKHK"
-    assert icp.network_name == "Wellington Electricity Lines"
-    assert icp.price_category == "RTOU24"
+    assert icp.network_code == DEFAULT_NETWORK
+    assert icp.network_name == raw["content"]["network"]["myNetwork"]["description"]
+    assert icp.price_category == DEFAULT_PRICE_CATEGORY
     assert icp.retailer_code == "ECOT"
     assert icp.register_codes == ("UN", "EG", "7304", "7304")
     assert icp.meter_serial_numbers == ("900000001",)
@@ -67,7 +75,7 @@ def test_parse_icp_single_item_lists() -> None:
 
 
 def test_parse_plan_list() -> None:
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
 
     assert plans.default.description == "Eco Off Peak"
     assert plans.alternative is not None
@@ -96,7 +104,7 @@ def test_parse_plan_list() -> None:
 
 
 def test_find_plans() -> None:
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
 
     assert plans.find_by_name("  low   USER ") is not None
     assert plans.find_by_name("Nonexistent") is None
@@ -290,7 +298,7 @@ def test_plan_titles() -> None:
     assert titles["lowbattery user"] == "Low ecoSOLAR"
     assert "default" not in titles
 
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json")).with_titles(
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles(
         titles
     )
     battery = plans.find_by_name("Low ecoSOLAR")
@@ -304,7 +312,7 @@ def test_plan_titles() -> None:
 
 
 def test_plan_without_title_uses_description() -> None:
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json")).with_titles({})
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles({})
 
     assert plans.default.name == "Eco Off Peak"
 

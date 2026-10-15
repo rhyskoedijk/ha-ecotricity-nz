@@ -1,15 +1,15 @@
 """Checks every network's fixtures against each other.
 
-Each folder under tests/fixtures/networks holds one network's plan list and the timeframe charts
-for its plans, saved as Ecotricity publishes them. Adding a network's folder is enough for these
-tests to cover it: every chart is read and matched against the prices worked out from that
-network's own plans, for the season and day type in the chart's file name.
+Each network's folder under tests/fixtures/networks holds a folder per price category, with that
+category's plan list and the timeframe charts for its plans, saved as Ecotricity publishes them.
+Adding a price category's folder is enough for these tests to cover it: every chart is read and
+matched against the prices worked out from that category's own plans, for the season and day type
+in the chart's file name.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,9 +21,11 @@ from custom_components.ecotricity_nz.tariff import bucket_names, bucket_period, 
 from tests.conftest import (
     NETWORKS,
     chart_files,
+    chart_plan,
     load_json_fixture,
-    load_network_fixture,
+    load_plan_list,
     network_codes,
+    price_categories,
 )
 
 if TYPE_CHECKING:
@@ -33,32 +35,37 @@ if TYPE_CHECKING:
 STRINGS = Path(__file__).parents[1] / "custom_components" / "ecotricity_nz" / "strings.json"
 
 
-def _plans(network: str) -> tuple[Plan, ...]:
-    return parse_plan_list(load_network_fixture(network, "plan_list.json")).all_plans
+def _plans(network: str, category: str) -> tuple[Plan, ...]:
+    return parse_plan_list(load_plan_list(network, category)).all_plans
 
 
 @pytest.mark.parametrize("network", network_codes())
 def test_network_folder(network: str) -> None:
-    # The folder is named by a real distributor code, and holds only that network's plans.
-    assert network in load_json_fixture("network_codes.json")
-    assert {plan.network for plan in _plans(network)} == {network}
-    content = load_network_fixture(network, "plan_list.json")["content"][0]
+    # The folder is named by a real distributor code, and holds at least one price category.
+    assert network in load_json_fixture("network_price_categories.json")["networks"]
+    assert any(category_network == network for category_network, _ in price_categories())
+
+
+@pytest.mark.parametrize(("network", "category"), price_categories())
+def test_price_category_folder(network: str, category: str) -> None:
+    # The folder holds only that network's and price category's plans and charts.
+    plans = _plans(network, category)
+    assert {plan.network for plan in plans} == {network}
+    content = load_plan_list(network, category)["content"][0]
     raw_plans = [content["default"], content["alternative"], *content["plan_list"]]
+    assert {plan["price_category"] for plan in raw_plans if plan} == {category}
     rate_networks = {
         rate["network"] for plan in raw_plans if plan for rate in plan["network_rates"]
     }
     assert rate_networks == {network}
-    for chart in (NETWORKS / network / "charts").glob("*.png"):
-        assert chart.name.startswith(f"{network}-")
+    for chart in (NETWORKS / network / category / "charts").glob("*.png"):
+        assert chart.name.startswith(f"{network}-{category}-")
 
 
 @pytest.mark.parametrize("chart", chart_files(), ids=lambda path: path.stem)
 def test_chart_matches_its_plan(chart: Path) -> None:
-    # Charts are named {network}-{category}-{plan}-{customer}-{start}-{end}-{WD|WE}-NOGST.png.
-    network, _category, code, _customer, start, _end, _day_type, _gst = chart.stem.split("-")
-    plan = next((plan for plan in _plans(network) if plan.code == code), None)
-    assert plan is not None, f"{code} isn't in {network}'s plan_list.json"
-    pricing = price_day(plan, datetime.strptime(start, "%Y%m%d").date())  # noqa: DTZ007 - a date
+    plan, day = chart_plan(chart)
+    pricing = price_day(plan, day)
     reading = read_chart(chart.read_bytes())
 
     imports = match_tiers(
@@ -78,12 +85,12 @@ def test_chart_matches_its_plan(chart: Path) -> None:
         assert len(exports) == SLOTS_PER_DAY
 
 
-@pytest.mark.parametrize("network", network_codes())
-def test_every_period_is_translated(network: str) -> None:
+@pytest.mark.parametrize(("network", "category"), price_categories())
+def test_every_period_is_translated(network: str, category: str) -> None:
     # Periods seen on real plans get a friendly name, so the period sensors' states and options
     # don't mix translated names with raw keys like super_off_peak.
     sensors = json.loads(STRINGS.read_text(encoding="utf-8"))["entity"]["sensor"]
-    for plan in _plans(network):
+    for plan in _plans(network, category):
         names = bucket_names(plan)
         for season in plan.seasons:
             pricing = price_day(plan, season.start)

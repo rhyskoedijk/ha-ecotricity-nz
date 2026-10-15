@@ -20,7 +20,14 @@ from custom_components.ecotricity_nz.api import (
     OnboardingClient,
 )
 from custom_components.ecotricity_nz.api.attestation import RETRY_HEADER, TOKEN_HEADER
-from tests.conftest import DEFAULT_NETWORK, TEST_ICP, load_json_fixture, load_network_fixture
+from tests.conftest import (
+    DEFAULT_NETWORK,
+    DEFAULT_PRICE_CATEGORY,
+    TEST_ICP,
+    load_json_fixture,
+    load_network_fixture,
+    load_plan_list,
+)
 
 BASE = "https://onboarding.test"
 ICP_URL = f"{BASE}/cgi-bin/RESTICP/energy/{TEST_ICP}"
@@ -47,7 +54,7 @@ def _client(hass: HomeAssistant) -> OnboardingClient:
 async def test_get_icp_and_plans(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     _mock_attestation(aioclient_mock)
     aioclient_mock.get(ICP_URL, json=load_network_fixture(DEFAULT_NETWORK, "icp.json"))
-    aioclient_mock.get(PLAN_URL, json=load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
+    aioclient_mock.get(PLAN_URL, json=load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
     client = _client(hass)
 
     icp = await client.async_get_icp(TEST_ICP.lower())
@@ -57,8 +64,8 @@ async def test_get_icp_and_plans(hass: HomeAssistant, aioclient_mock: AiohttpCli
     assert plans.default.description == "Eco Off Peak"
     _, url, _, headers = aioclient_mock.mock_calls[-1]
     assert url.query["meterType"] == "UN,EG,7304,7304"
-    assert url.query["capacityCode"] == "RTOU24"
-    assert url.query["networkCode"] == "CKHK"
+    assert url.query["capacityCode"] == DEFAULT_PRICE_CATEGORY
+    assert url.query["networkCode"] == DEFAULT_NETWORK
     assert headers[TOKEN_HEADER] == "tok"
     # One token covers both calls.
     assert aioclient_mock.call_count == 4

@@ -51,6 +51,12 @@ _TIER_COLOUR_TOLERANCE = 12.0
 # the same shade, a few pixels apart. Bars of one price measure the same height to the pixel, so
 # bars more than this many pixels apart are separate tiers.
 _TIER_HEIGHT_TOLERANCE = 2
+# A fit must also land every tier within this many pixels of its price. The cents tolerance alone
+# isn't enough: anchoring the tallest tier on a near-zero price (a network rate of 0c plus the
+# levy, say) gives a scale of hundreds of pixels per cent, where any bar is within 0.6c of that
+# price and the whole chart "fits" it. On every captured chart the matched tiers are within 1.4px
+# of their prices, at 5 to 10 pixels per cent.
+_FIT_PIXEL_TOLERANCE = 3.0
 
 
 class ChartReadError(EcotricityResponseError):
@@ -236,7 +242,7 @@ def _fit(
     """Assign each tier to the nearest bucket price at a given pixels-per-cent scale.
 
     Returns the worst error and the assignment, or None if any tier is further than `tolerance`
-    cents from every bucket.
+    cents, or `_FIT_PIXEL_TOLERANCE` pixels, from every bucket.
     """
     assignment: dict[ChartTier, str] = {}
     worst = 0.0
@@ -244,7 +250,7 @@ def _fit(
         price = tier.height / scale
         bucket, bucket_price = min(candidates.items(), key=lambda item: abs(item[1] - price))
         error = abs(bucket_price - price)
-        if error > tolerance:
+        if error > tolerance or error * scale > _FIT_PIXEL_TOLERANCE:
             return None
         worst = max(worst, error)
         assignment[tier] = bucket
@@ -263,6 +269,35 @@ def _usage_prices(bucket_prices: Mapping[str, float]) -> dict[str, float]:
     return {bucket: abs(price) for bucket, price in bucket_prices.items() if price}
 
 
+def _scale_fits(
+    tiers: Sequence[ChartTier],
+    candidates: Mapping[str, float],
+    other_tiers: Sequence[ChartTier],
+    other_candidates: Mapping[str, float],
+    tolerance: float,
+) -> list[tuple[float, tuple[float, dict[ChartTier, str]]]]:
+    """Return the scales that fit this side's tiers, and the other side's where it can be read."""
+    scales = _anchor_scales(tiers, candidates)
+    own = [
+        (scale, fit)
+        for scale in scales
+        if (fit := _fit(tiers, candidates, scale, tolerance)) is not None
+    ]
+    other_scales = _anchor_scales(other_tiers, other_candidates)
+    if not any(_fit(other_tiers, other_candidates, scale, tolerance) for scale in other_scales):
+        # No other side, or one that can't be read at any scale: it can't confirm a scale.
+        return own
+    both = [
+        (scale, fit)
+        for scale in scales + other_scales
+        if _fit(other_tiers, other_candidates, scale, tolerance) is not None
+        and (fit := _fit(tiers, candidates, scale, tolerance)) is not None
+    ]
+    if own and not both:
+        raise ChartReadError("Import and export bars don't fit the prices at one scale")
+    return both
+
+
 def match_tiers(
     tiers: Sequence[ChartTier],
     bucket_prices: Mapping[str, float],
@@ -275,13 +310,16 @@ def match_tiers(
 
     Bar height is proportional to the absolute price, but the pixels-per-cent scale differs
     between charts. Each candidate bucket is tried as the anchor for the tallest tier; a scale
-    fits when every tier lands within `tolerance` cents of a bucket price. When several buckets
-    share a price, the first one in `bucket_prices` order is used.
+    fits when every tier lands within `tolerance` cents, and a few pixels, of a bucket price.
+    When several buckets share a price, the first one in `bucket_prices` order is used.
 
-    A chart with few tiers can fit more than one scale (a single tier fits every price). Import
-    and export bars share one axis, so the other side's tiers and prices (`other_tiers` and
-    `other_prices`) are used to rule out scales they don't fit. If the slots still can't be
-    settled, the chart is rejected rather than guessed.
+    Import and export bars share one axis, so when the other side's tiers and prices are given
+    (`other_tiers` and `other_prices`), a scale must fit them too. That catches prices that are
+    wrong by the same amount everywhere, which one side alone can fit at a different scale. It
+    also settles charts with few tiers, which can fit more than one scale on their own (a single
+    tier fits every price). If the other side can't be read at any scale, it's left out rather
+    than letting it reject this side. If the slots still can't be settled, the chart is rejected
+    rather than guessed.
     """
     if not tiers:
         raise ChartReadError("Chart has no tiers to match")
@@ -289,26 +327,11 @@ def match_tiers(
     if not candidates:
         raise ChartReadError("Plan has no usage prices to match against")
 
-    fits = [
-        (scale, fit)
-        for scale in _anchor_scales(tiers, candidates)
-        if (fit := _fit(tiers, candidates, scale, tolerance)) is not None
-    ]
+    fits = _scale_fits(tiers, candidates, other_tiers, _usage_prices(other_prices or {}), tolerance)
     if not fits:
         raise ChartReadError("Chart bar heights don't match the plan's prices")
     if len({frozenset(fit[1].items()) for _, fit in fits}) > 1:
-        other_candidates = _usage_prices(other_prices or {})
-        scales = _anchor_scales(tiers, candidates) + _anchor_scales(other_tiers, other_candidates)
-        fits = [
-            (scale, fit)
-            for scale in scales
-            if other_tiers
-            and other_candidates
-            and _fit(other_tiers, other_candidates, scale, tolerance) is not None
-            and (fit := _fit(tiers, candidates, scale, tolerance)) is not None
-        ]
-        if len({frozenset(fit[1].items()) for _, fit in fits}) != 1:
-            raise ChartReadError("Chart bar heights fit more than one set of the plan's prices")
+        raise ChartReadError("Chart bar heights fit more than one set of the plan's prices")
     best = min((fit for _, fit in fits), key=lambda fit: fit[0])
 
     slots: list[str | None] = [None] * SLOTS_PER_DAY

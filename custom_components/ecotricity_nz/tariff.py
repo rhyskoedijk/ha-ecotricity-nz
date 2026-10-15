@@ -9,6 +9,8 @@ customers see there:
 - Retail and network rates in the same bucket are summed.
 - When a plan has an anytime retail energy rate but time-of-use network rates, the anytime rate is
   folded into each time-of-use bucket.
+- An anytime network rate with no anytime retail rate beside it (such as a transmission charge) is
+  folded into every other bucket.
 
 Everything here is in cents excluding GST. This module has no Home Assistant imports.
 """
@@ -307,6 +309,7 @@ def price_day(plan: Plan, day: date) -> DayPricing:
     for prefix in ("", *PREFIXES):
         _merge_anytime_into_tou(usage, prefix)
         _fill_missing_network(usage, prefix)
+        _merge_anytime_network(usage, prefix)
 
     # Levies apply to every kWh imported, so they're part of every import bucket's price.
     for key, bucket in list(usage.items()):
@@ -389,6 +392,32 @@ def _fill_missing_network(usage: dict[str, _Bucket], prefix: str) -> None:
         bucket = usage[key]
         if bucket.of(ComponentKind.SUPPLIER) and not bucket.of(ComponentKind.NETWORK):
             usage[key] = _Bucket((*bucket.components, *off_peak.of(ComponentKind.NETWORK)))
+
+
+def _merge_anytime_network(usage: dict[str, _Bucket], prefix: str) -> None:
+    """Fold an anytime network rate into every other bucket in the group.
+
+    Some networks publish a charge that applies at all hours (such as a transmission charge) as an
+    anytime network rate, alongside their time-of-use network rates. The onboarding site's charts
+    include it in every period's price rather than showing it as a price of its own. This runs
+    after `_fill_missing_network`, so it isn't counted as a period's own network rate.
+    """
+    anytime_key = prefix + ANYTIME
+    anytime = usage.get(anytime_key)
+    if anytime is None or anytime.of(ComponentKind.SUPPLIER):
+        return
+    others = [
+        key
+        for key in usage
+        if key.startswith(prefix)
+        and key != anytime_key
+        and (prefix or not key.startswith(PREFIXES))
+    ]
+    if not others:
+        return
+    for key in others:
+        usage[key] = _Bucket((*usage[key].components, *anytime.components))
+    del usage[anytime_key]
 
 
 def season_for(plan: Plan, day: date) -> Season | None:

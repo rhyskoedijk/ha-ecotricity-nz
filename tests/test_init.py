@@ -36,7 +36,7 @@ from custom_components.ecotricity_nz.api import (
     RateUnit,
     Season,
 )
-from custom_components.ecotricity_nz.api.parsers import parse_plan_list
+from custom_components.ecotricity_nz.api.parsers import parse_icp
 from custom_components.ecotricity_nz.api.timeframes import ChartReadError
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST,
@@ -51,11 +51,23 @@ from custom_components.ecotricity_nz.const import (
 )
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
 from tests.conftest import (
-    LOW_OFF_PEAK_PLAN_ID,
+    ANYTIME_PLAN,
+    DEFAULT_NETWORK,
+    DEFAULT_PRICE_CATEGORY,
     NZ,
+    SOLAR_PLAN,
     TEST_ICP,
+    TIME_OF_USE_PLAN,
     WINTER_PEAK,
+    chart_name,
+    extra_network_codes,
+    find_plan,
+    find_plan_where,
+    has_extra_network_buckets,
+    import_rates,
     load_network_fixture,
+    plan_id,
+    stored_charts,
 )
 
 PREFIX = f"sensor.icp_{TEST_ICP.lower()}"
@@ -117,7 +129,9 @@ async def test_gst_option(
     hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
 ) -> None:
     freezer.move_to(WINTER_PEAK)
-    await _setup(hass, config_entry, {CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID})
+    await _setup(
+        hass, config_entry, {CONF_INCLUDE_GST: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
+    )
 
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.3735)
     # Export credits are paid as published either way.
@@ -133,7 +147,7 @@ async def test_options_flow_reloads(
 
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
+        result["flow_id"], {CONF_INCLUDE_GST: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
     )
     await hass.async_block_till_done(wait_background_tasks=True)
 
@@ -150,7 +164,7 @@ async def test_flat_plan_needs_no_chart(
     # Low User outside winter: one import price all day, so no chart is needed.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
     mock_onboarding.async_get_chart.side_effect = EcotricityConnectionError("down")
-    await _setup(hass, config_entry, {CONF_PLAN_ID: "3001"})
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
 
     assert _state(hass, "plan") == "Low ecoANYTIME"
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
@@ -239,7 +253,7 @@ async def test_unlisted_plan_falls_back_and_raises_issue(
 
     # Choosing a listed plan again clears it.
     hass.config_entries.async_update_entry(
-        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
+        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
     )
     await hass.config_entries.async_reload(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -276,7 +290,10 @@ async def test_options_flow_while_setup_is_retrying(
     )
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert config_entry.options == {CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
+    assert config_entry.options == {
+        CONF_INCLUDE_GST: False,
+        CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN),
+    }
 
 
 async def test_repeated_attestation_failures_raise_issue(
@@ -450,7 +467,7 @@ async def test_consumption_retries_soon_after_a_failure(
 
 def _with_new_season(plans: PlanList) -> PlanList:
     """Publish an extra season, starting 1 April 2027, that adds a shoulder network rate."""
-    plan = plans.find(LOW_OFF_PEAK_PLAN_ID)
+    plan = plans.find(plan_id(TIME_OF_USE_PLAN))
     assert plan is not None
     season = Season(name="Seasonal Rates", start=date(2027, 4, 1), end=date(2027, 9, 30))
     shoulder = Rate(
@@ -613,10 +630,40 @@ async def test_code_without_a_fixed_period_is_named_from_the_plan(
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.138)
 
 
-def _oron_plan(plans: PlanList) -> Plan:
-    """Return the real Orion plan from issue #9, under the ID the config entry has chosen."""
-    oron = parse_plan_list(load_network_fixture("ORON", "plan_list.json")).default
-    return replace(oron, id=plans.default.id)
+def _extra_buckets_plan(config_entry: MockConfigEntry) -> tuple[Plan, date, dict[str, str]]:
+    """Return a fixture plan whose network charges for more periods than peak and off-peak.
+
+    Each extra charge code's rates are described as "Period A Usage", "Period B Usage" and so on,
+    so the test knows the names to expect whichever network the plan is from. Descriptions don't
+    change prices, so the plan's own charts still fit. Also returns a day with a stored chart, and
+    the name given to each extra code.
+    """
+    plan = find_plan_where(has_extra_network_buckets)
+    day = stored_charts(plan)[0][0]
+    names = {
+        code: f"Period {chr(ord('A') + index)}"
+        for index, code in enumerate(extra_network_codes(plan, day))
+    }
+
+    def renamed(rates: tuple[Rate, ...]) -> tuple[Rate, ...]:
+        return tuple(
+            replace(rate, description=f"{names[rate.charge]} Usage")
+            if rate.charge in names
+            else rate
+            for rate in rates
+        )
+
+    plan = replace(
+        plan,
+        id=str(config_entry.options[CONF_PLAN_ID]),
+        retail_rates=renamed(plan.retail_rates),
+        network_rates=renamed(plan.network_rates),
+    )
+    return plan, day, names
+
+
+def _key(name: str) -> str:
+    return name.lower().replace(" ", "_")
 
 
 async def test_price_sensors_are_named_from_the_plan(
@@ -626,34 +673,26 @@ async def test_price_sensors_are_named_from_the_plan(
     entity_registry: er.EntityRegistry,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    freezer.move_to(WINTER_PEAK)
-    plans: PlanList = mock_onboarding.async_get_plans.return_value
-    mock_onboarding.async_get_plans.return_value = PlanList(default=_oron_plan(plans))
+    plan, day, names = _extra_buckets_plan(config_entry)
+    freezer.move_to(datetime.combine(day, time(8, 15), NZ))
+    mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
     await _setup(hass, config_entry)
 
-    names = {
+    entities = {
         entry.unique_id.removeprefix(f"{TEST_ICP}_"): entry.entity_id.removeprefix(f"{PREFIX}_")
         for entry in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
-        if "_price_" in entry.unique_id
+        if "_price_" in entry.unique_id and "_price_eg_" not in entry.unique_id
     }
-    # Peak and off-peak have fixed names; the other codes take the plan's own descriptions.
-    assert names == {
-        "price_charge_high": "peak_import_price",
-        "price_charge_low": "off_peak_import_price",
-        "price_charge_3": "shoulder_import_price",
-        "price_charge_4": "super_off_peak_import_price",
-        "price_charge_5": "weekend_import_price",
-        "price_eg_charge_high": "peak_export_price",
-        "price_eg_charge_low": "off_peak_export_price",
+    # Fixed codes keep their fixed names; the others take the plan's own descriptions.
+    fixed = {"CHARGE_HIGH": "peak", "CHARGE_LOW": "off_peak"}
+    codes = {rate.charge for rate in import_rates(plan.network_rates, day)}
+    periods = {fixed[code] for code in codes if code in fixed} | {
+        _key(name) for name in names.values()
     }
-    assert _extra(hass, "current_import_period")["options"] == [
-        "peak",
-        "off_peak",
-        "shoulder",
-        "super_off_peak",
-        "weekend",
-    ]
-    assert _extra(hass, "current_export_period")["options"] == ["peak", "off_peak"]
+    expected = {code: f"{fixed[code]}_import_price" for code in codes if code in fixed}
+    expected |= {code: f"{_key(name)}_import_price" for code, name in names.items()}
+    assert entities == {f"price_{code.lower()}": entity for code, entity in expected.items()}
+    assert set(_extra(hass, "current_import_period")["options"]) == periods
 
 
 async def test_price_sensor_names_follow_the_plan(
@@ -663,46 +702,63 @@ async def test_price_sensor_names_follow_the_plan(
     entity_registry: er.EntityRegistry,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    freezer.move_to(WINTER_PEAK)
-    plans: PlanList = mock_onboarding.async_get_plans.return_value
-    plan = _oron_plan(plans)
+    plan, day, names = _extra_buckets_plan(config_entry)
+    code, name = next(iter(names.items()))
+    freezer.move_to(datetime.combine(day, time(8, 15), NZ))
     mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
     await _setup(hass, config_entry)
-    entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_charge_5")
+    entity_id = entity_registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{TEST_ICP}_price_{code.lower()}"
+    )
     assert entity_id is not None
     entity_registry.async_update_entity(entity_id, disabled_by=None)
     await hass.config_entries.async_reload(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     state = hass.states.get(entity_id)
     assert state is not None
-    assert state.attributes["friendly_name"].endswith("Weekend import price")
-    # Named prices are broken down like any other: 18c anytime, 4.5c network and the 0.2c levy,
-    # plus GST. The total is 22.7c plus GST.
-    assert float(state.state) == pytest.approx(0.2611, abs=0.0001)
-    assert _extra(hass, "weekend_import_price") == {
-        "supplier_rate": pytest.approx(0.207),
-        "network_rate": pytest.approx(0.0518, abs=0.0001),
-        "ea_levy": pytest.approx(0.0023),
+    # Names are shown in sentence case.
+    assert state.attributes["friendly_name"].endswith(f"{name.capitalize()} import price")
+
+    # Named prices are broken down like any other: the anytime energy rate, the period's network
+    # rate and the levy, each plus GST.
+    anytime = sum(rate.price for rate in import_rates(plan.retail_rates, day))
+    network = sum(
+        rate.price for rate in import_rates(plan.network_rates, day) if rate.charge == code
+    )
+    levies = [
+        rate
+        for rate in plan.rates
+        if rate.is_levy and rate.unit is RateUnit.PER_KWH and rate.applies_on(day)
+    ]
+    gst = 1.15 / 100
+    total = anytime + network + sum(levy.price for levy in levies)
+    assert float(state.state) == pytest.approx(total * gst, abs=0.0001)
+    assert _extra(hass, f"{_key(name)}_import_price") == {
+        "supplier_rate": pytest.approx(anytime * gst, abs=0.0001),
+        "network_rate": pytest.approx(network * gst, abs=0.0001),
+        **{_key(levy.description): pytest.approx(levy.price * gst, abs=0.0001) for levy in levies},
     }
 
     # Ecotricity renames the rate, then drops its description altogether.
-    for description, name in (
-        ("Saturday and Sunday Usage", "Saturday and sunday"),
-        ("", "Charge 5"),
-    ):
-        renamed = tuple(
-            replace(rate, description=description) if rate.charge == "CHARGE_5" else rate
+    number = code.removeprefix("CHARGE_")
+    for description, renamed in (("Renamed Usage", "Renamed"), ("", f"Charge {number}")):
+        rates = tuple(
+            replace(rate, description=description) if rate.charge == code else rate
             for rate in plan.network_rates
         )
+        retail = tuple(
+            replace(rate, description=description) if rate.charge == code else rate
+            for rate in plan.retail_rates
+        )
         mock_onboarding.async_get_plans.return_value = PlanList(
-            default=replace(plan, network_rates=renamed)
+            default=replace(plan, retail_rates=retail, network_rates=rates)
         )
         await config_entry.runtime_data.pricing.async_fetch_now()
         await hass.async_block_till_done(wait_background_tasks=True)
 
         state = hass.states.get(entity_id)
         assert state is not None
-        assert state.attributes["friendly_name"].endswith(f"{name} import price")
+        assert state.attributes["friendly_name"].endswith(f"{renamed} import price")
 
 
 _STANDARD_ATTRIBUTES = {
@@ -757,7 +813,7 @@ async def test_breakdown_keys_dont_depend_on_the_period(
 ) -> None:
     # Low User outside winter: an anytime supplier rate on top of the off-peak network rate.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
-    await _setup(hass, config_entry, {CONF_PLAN_ID: "3001"})
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
 
     assert set(_extra(hass, "current_import_price")) == {
         "period",
@@ -808,7 +864,7 @@ async def test_period_without_its_own_price_shows_the_price_charged(
     # Low User outside winter has one import and one export price all day, so peak hours are
     # charged at the off-peak price.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
-    await _setup(hass, config_entry, {CONF_PLAN_ID: "3001"})
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
     rate_sensors = [
         entry.entity_id
         for entry in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
@@ -867,15 +923,16 @@ async def test_network_and_sync_sensors(
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     await _setup(hass, portal_config_entry)
+    icp = parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
 
-    assert _state(hass, "network") == "Wellington Electricity Lines"
+    assert _state(hass, "network") == icp.network_name
     assert _extra(hass, "network") == {
-        "code": "CKHK",
+        "code": DEFAULT_NETWORK,
         "loss_factor_consumption": pytest.approx(1.045),
         "loss_factor_generation": pytest.approx(1.0),
     }
-    assert _state(hass, "pricing_category") == "Residential Time of Use"
-    assert _extra(hass, "pricing_category") == {"code": "RTOU24"}
+    assert _state(hass, "pricing_category") == icp.price_category_description
+    assert _extra(hass, "pricing_category") == {"code": DEFAULT_PRICE_CATEGORY}
     assert _state(hass, "latest_day_of_usage") == "2026-04-05"
     assert _state(hass, "last_meter_data_update") == "2026-04-05T15:06:00+00:00"
 
@@ -939,7 +996,7 @@ async def test_no_next_period_change_on_a_flat_plan(
 ) -> None:
     # Low User outside winter: one period all day, every day, until the season ends.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
-    await _setup(hass, config_entry, {CONF_PLAN_ID: "3001"})
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
 
     assert _state(hass, "next_import_period_change") == "unknown"
     assert _extra(hass, "current_import_period")["windows"] == ["00:00-24:00 off_peak"]
@@ -956,27 +1013,28 @@ async def test_time_of_use_chart_image(
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
     base = "https://onboarding.ecotricity.co.nz/timeframeimages_ecotricity/"
-    chart = "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930"
+    plan = find_plan(TIME_OF_USE_PLAN)
+    winter = date(2026, 6, 15)
     # Monday, GST on: the GST-inclusive weekday chart.
-    assert image.image_url == f"{base}{chart}-WD.png"
+    assert image.image_url == base + chart_name(plan, winter, include_gst=True)
     first_update = image.image_last_updated
 
     # Saturday, after the midnight refresh: the weekend chart.
     freezer.move_to(datetime(2026, 6, 19, 12, 1, tzinfo=UTC))
     await config_entry.runtime_data.pricing.async_refresh()
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert image.image_url == f"{base}{chart}-WE.png"
+    assert image.image_url == base + chart_name(plan, winter, weekend=True, include_gst=True)
     assert image.image_last_updated != first_update
 
     # GST off: the GST-exclusive chart.
     hass.config_entries.async_update_entry(
-        config_entry, options={CONF_INCLUDE_GST: False, CONF_PLAN_ID: LOW_OFF_PEAK_PLAN_ID}
+        config_entry, options={CONF_INCLUDE_GST: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
     )
     await hass.config_entries.async_reload(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
-    assert image.image_url == f"{base}{chart}-WE-NOGST.png"
+    assert image.image_url == base + chart_name(plan, winter, weekend=True)
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -1019,7 +1077,7 @@ async def test_time_of_use_chart_image_stays_on_the_onboarding_host(
     assert image is not None
     assert image.image_url == (
         "https://onboarding.ecotricity.co.nz/timeframeimages_ecotricity/"
-        "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD.png"
+        + chart_name(find_plan(TIME_OF_USE_PLAN), date(2026, 6, 15), include_gst=True)
     )
 
 
@@ -1058,7 +1116,7 @@ async def test_import_and_export_periods_are_separate(
     # Low ecoSOLAR in spring: one import price all day, peak and off-peak export prices.
     # Monday 15 October 2026, 8:15am NZDT, is in the weekday export peak.
     freezer.move_to(datetime(2026, 10, 14, 19, 15, tzinfo=UTC))
-    await _setup(hass, config_entry, {CONF_PLAN_ID: "2999"})
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(SOLAR_PLAN)})
 
     # Import is one price all day, so its period never changes this season.
     assert _state(hass, "current_import_period") == "off_peak"
@@ -1142,7 +1200,7 @@ async def test_controlled_load(
 ) -> None:
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
     plans: PlanList = mock_onboarding.async_get_plans.return_value
-    low_user = plans.find("3001")
+    low_user = plans.find(plan_id(ANYTIME_PLAN))
     assert low_user is not None
     controlled = [
         Rate(
@@ -1163,7 +1221,7 @@ async def test_controlled_load(
         network_rates=(*low_user.network_rates, controlled[1]),
     )
     mock_onboarding.async_get_plans.return_value = PlanList(default=with_controlled)
-    await _setup(hass, config_entry, {CONF_PLAN_ID: "3001"})
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
 
     # (12c + 3c + 0.2c EA levy) plus GST.
     assert float(_state(hass, "current_controlled_price")) == pytest.approx(0.1748)
@@ -1329,7 +1387,7 @@ async def test_export_chart_mismatch_keeps_import_windows(
         return real_match(tiers, bucket_prices, **kwargs)
 
     with patch.object(coordinator_module, "match_tiers", side_effect=match):
-        await _setup(hass, config_entry, {CONF_PLAN_ID: "2999"})
+        await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(SOLAR_PLAN)})
 
     assert _state(hass, "current_import_period") == "peak"
     assert _state(hass, "current_export_period") == "unavailable"

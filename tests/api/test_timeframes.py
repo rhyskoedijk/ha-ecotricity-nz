@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 from datetime import date
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
@@ -17,12 +18,20 @@ from custom_components.ecotricity_nz.api.timeframes import (
     needs_season,
     read_chart,
 )
-from tests.conftest import chart_file
+from custom_components.ecotricity_nz.tariff import price_day
+from tests.conftest import (
+    ANYTIME_PLAN,
+    SOLAR_PLAN,
+    TIME_OF_USE_PLAN,
+    chart_file,
+    chart_files,
+    chart_name,
+    chart_plan,
+    find_plan,
+)
 
-PREFIX = "CKHK-RTOU24-"
-SUFFIX = "-WD-NOGST.png"
-WINTER = "RESIDENTIAL-20260401-20260930"
-SPRING = "RESIDENTIAL-20261001-20261231"
+WINTER = date(2026, 6, 15)
+SPRING = date(2026, 10, 15)
 
 # Weekday peak on the fixture charts: 7am to 11am and 5pm to 9pm. Other networks differ, which is
 # why windows are read from each plan's own charts rather than assumed.
@@ -30,8 +39,9 @@ PEAK_SLOTS = frozenset(range(14, 22)) | frozenset(range(34, 42))
 ALL_SLOTS = frozenset(range(SLOTS_PER_DAY))
 
 
-def _chart(plan: str, season: str) -> bytes:
-    return chart_file(f"{PREFIX}{plan}_260401_T0-{season}{SUFFIX}").read_bytes()
+def _chart(plan: str, day: date) -> bytes:
+    """Return a default fixture plan's weekday chart, for the season containing a day."""
+    return chart_file(chart_name(find_plan(plan), day)).read_bytes()
 
 
 def _expected(peak: str, off_peak: str) -> tuple[str, ...]:
@@ -53,7 +63,7 @@ def test_needs_season() -> None:
 
 
 def test_read_two_tier_import_and_export() -> None:
-    reading = read_chart(_chart("BATT_SPECIAL_LOW", WINTER))
+    reading = read_chart(_chart(SOLAR_PLAN, WINTER))
 
     assert len(reading.import_tiers) == 2
     assert len(reading.export_tiers) == 2
@@ -69,7 +79,7 @@ def test_read_two_tier_import_and_export() -> None:
 
 def test_read_close_prices() -> None:
     # Legend: 24.04c off peak, 25.35c peak. Only 5% apart, so heights must be precise.
-    reading = read_chart(_chart("CKHK_OFPK_LOW", SPRING))
+    reading = read_chart(_chart(TIME_OF_USE_PLAN, SPRING))
 
     imports = match_tiers(reading.import_tiers, {"CHARGE_LOW": 24.04, "CHARGE_HIGH": 25.35})
     assert imports == _expected("CHARGE_HIGH", "CHARGE_LOW")
@@ -79,7 +89,7 @@ def test_read_close_prices() -> None:
 
 def test_read_flat_chart_with_unused_bucket() -> None:
     # Anytime plan outside winter: one tier, even though the plan also has a peak price.
-    reading = read_chart(_chart("CKHK_ANY_LOW", SPRING))
+    reading = read_chart(_chart(ANYTIME_PLAN, SPRING))
 
     [tier] = reading.import_tiers
     assert tier.slots == ALL_SLOTS
@@ -95,18 +105,43 @@ def test_read_flat_chart_with_unused_bucket() -> None:
     ) == (("CHARGE_24",) * SLOTS_PER_DAY)
 
 
-def test_read_shade_shared_by_two_prices() -> None:
-    # "off-peak" and "super off-peak" price for part of the day are drawn in the same shade, so
-    # only their heights tell them apart. Matching against the plan's prices is in test_tariff.py.
-    chart = "ORON-URES-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-20260901-20270331-WD-NOGST.png"
-    reading = read_chart(chart_file(chart).read_bytes())
+def _shared_shade(chart: Path) -> tuple[ChartTier, ChartTier] | None:
+    tiers = read_chart(chart.read_bytes()).import_tiers
+    return next(
+        (
+            (first, second)
+            for index, first in enumerate(tiers)
+            for second in tiers[index + 1 :]
+            if first.colour == second.colour
+        ),
+        None,
+    )
 
-    assert len(reading.import_tiers) == 4
-    cheaper, low = sorted(reading.import_tiers, key=lambda tier: tier.height)[:2]
-    assert low.colour == cheaper.colour
-    assert cheaper.slots == frozenset(range(6, 10))
-    assert low.slots == frozenset(range(6)) | frozenset(range(44, SLOTS_PER_DAY))
-    assert low.height / cheaper.height == pytest.approx(19.029 / 18.2, abs=0.01)
+
+def test_read_shade_shared_by_two_prices() -> None:
+    # Some charts draw two close prices, such as off-peak and super off-peak, in the same shade,
+    # so only their heights tell them apart.
+    chart, pair = next(
+        ((chart, pair) for chart in chart_files() if (pair := _shared_shade(chart))), (None, None)
+    )
+    assert chart is not None, "No fixture chart draws two prices in one shade"
+    assert pair is not None
+    first, second = pair
+
+    # They're separate tiers, of different heights, for different half-hours.
+    assert first.height != second.height
+    assert not first.slots & second.slots
+    # Matched against the plan's prices, they're different prices.
+    plan, day = chart_plan(chart)
+    pricing = price_day(plan, day)
+    reading = read_chart(chart.read_bytes())
+    slots = match_tiers(
+        reading.import_tiers,
+        pricing.import_buckets,
+        other_tiers=reading.export_tiers,
+        other_prices=pricing.export_buckets,
+    )
+    assert slots[min(first.slots)] != slots[min(second.slots)]
 
 
 def test_single_tier_is_not_assumed_cheapest() -> None:
@@ -150,8 +185,79 @@ def test_ambiguous_ratio_rejected() -> None:
     )
 
 
+def test_near_zero_price_doesnt_fit_every_tier() -> None:
+    # A price close to zero, such as a 0c network rate plus the levy, can't anchor the scale: it
+    # would make the scale hundreds of pixels per cent, where every bar is within a fraction of a
+    # cent of that price. Bars of clearly different heights must not all read as one price.
+    tiers = (
+        ChartTier(colour=(180, 218, 252), height=100.0, slots=frozenset(range(24))),
+        ChartTier(colour=(4, 78, 140), height=187.0, slots=frozenset(range(24, SLOTS_PER_DAY))),
+    )
+
+    with pytest.raises(ChartReadError, match="don't match"):
+        match_tiers(tiers, {"CHARGE_4": 0.2, "CHARGE_HIGH": 50.0})
+    # The same bars fit sensible prices at a sensible scale.
+    assert match_tiers(tiers, {"CHARGE_LOW": 18.2, "CHARGE_HIGH": 34.0}) == (
+        ("CHARGE_LOW",) * 24 + ("CHARGE_HIGH",) * 24
+    )
+
+
+_LOW = (180, 218, 252)
+_HIGH = (4, 78, 140)
+_EXPORT_LOW = (252, 210, 116)
+_EXPORT_HIGH = (228, 94, 52)
+
+
+def _two_tiers(colours: tuple, heights: tuple[float, float]) -> tuple[ChartTier, ...]:
+    """Two tiers: the first half of the day, then the second."""
+    return (
+        ChartTier(colour=colours[0], height=heights[0], slots=frozenset(range(24))),
+        ChartTier(colour=colours[1], height=heights[1], slots=frozenset(range(24, SLOTS_PER_DAY))),
+    )
+
+
+def test_prices_wrong_on_one_side_are_rejected() -> None:
+    # Import prices that are all short by the same amount (a charge left out, say) can still fit
+    # the import bars on their own, at a different scale. Export bars share the axis, so they
+    # show the scale is wrong.
+    imports = _two_tiers((_LOW, _HIGH), (222.0, 233.0))
+    exports = (ChartTier(colour=_EXPORT_LOW, height=113.0, slots=ALL_SLOTS),)
+    export_prices = {"EG_CHARGE_LOW": -13.74}
+
+    short = {"CHARGE_LOW": 24.01, "CHARGE_HIGH": 25.39}
+    assert match_tiers(imports, short)
+    with pytest.raises(ChartReadError, match="one scale"):
+        match_tiers(imports, short, other_tiers=exports, other_prices=export_prices)
+
+    full = {"CHARGE_LOW": 27.03, "CHARGE_HIGH": 28.41}
+    assert match_tiers(imports, full, other_tiers=exports, other_prices=export_prices) == (
+        ("CHARGE_LOW",) * 24 + ("CHARGE_HIGH",) * 24
+    )
+
+
+def test_unreadable_other_side_doesnt_reject_this_side() -> None:
+    # Export bars with a price the plan doesn't have can't confirm the scale, but they mustn't
+    # stop the import bars, which fit on their own, from being read.
+    imports = _two_tiers((_LOW, _HIGH), (136.0, 191.0))
+    exports = (
+        ChartTier(colour=_EXPORT_LOW, height=84.0, slots=frozenset(range(14))),
+        ChartTier(colour=_EXPORT_HIGH, height=142.0, slots=frozenset(range(14, 42))),
+        ChartTier(colour=(244, 158, 60), height=112.0, slots=frozenset(range(42, SLOTS_PER_DAY))),
+    )
+    export_prices = {"EG_CHARGE_LOW": -16.0, "EG_CHARGE_HIGH": -27.0}
+
+    with pytest.raises(ChartReadError):
+        match_tiers(exports, export_prices)
+    assert match_tiers(
+        imports,
+        {"CHARGE_LOW": 25.79, "CHARGE_HIGH": 36.26},
+        other_tiers=exports,
+        other_prices=export_prices,
+    ) == (("CHARGE_LOW",) * 24 + ("CHARGE_HIGH",) * 24)
+
+
 def test_mismatched_prices_rejected() -> None:
-    reading = read_chart(_chart("BATT_SPECIAL_LOW", WINTER))
+    reading = read_chart(_chart(SOLAR_PLAN, WINTER))
 
     with pytest.raises(ChartReadError):
         match_tiers(reading.import_tiers, {"CHARGE_LOW": 10.0, "CHARGE_HIGH": 50.0})

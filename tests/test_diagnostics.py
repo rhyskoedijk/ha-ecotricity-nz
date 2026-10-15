@@ -12,7 +12,11 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 )
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from tests.conftest import TEST_ICP, WINTER_PEAK
+from tests.conftest import (
+    DEFAULT_NETWORK,
+    TEST_ICP,
+    WINTER_PEAK,
+)
 
 
 @pytest.mark.usefixtures("mock_onboarding", "mock_portal")
@@ -34,7 +38,7 @@ async def test_diagnostics_redact_personal_data(
     assert diagnostics["pricing"]["import_slots"] is not None
     # Registry details are kept; only the identifying fields inside them are redacted.
     details = diagnostics["pricing"]["icp_details"]
-    assert details["network_code"] == "CKHK"
+    assert details["network_code"] == DEFAULT_NETWORK
     assert details["icp"] == "**REDACTED**"
     assert details["address"] == "**REDACTED**"
     for secret in (TEST_ICP, "123456", "secret", "Example Road", "900000001", "100001"):

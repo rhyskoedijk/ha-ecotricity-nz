@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix prices on networks that publish a charge for all hours as a network rate, such as Vector's transmission charge. It's now added to every import price (peak and off-peak), as Ecotricity's website does, instead of appearing as an anytime price of its own.
+- Fix time-of-use charts being read as a single price when a plan has a price close to zero, such as a network rate of 0c plus the levy. Every half-hour could be shown in that one period. The chart is now rejected instead, leaving the current price sensors unavailable and raising a repair issue if it keeps happening, rather than showing the wrong periods.
+- Time-of-use charts are now checked against both their import and export bars, which share one scale. Prices that are all wrong by the same amount are now caught, and the chart is rejected instead of being read with those prices.
+
 ## v0.3.0 (2026-10-15)
 
 Pricing only worked properly for networks shaped like Wellington Electricity's. This release fixes pricing on Orion and other similar networks that have extra network-defined charge buckets such as "weekend" and "super off-peak" (#9).

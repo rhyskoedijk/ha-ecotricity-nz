@@ -120,6 +120,33 @@ def test_find_plans() -> None:
     assert plans.find("missing") is None
 
 
+def test_plan_without_seasons_spans_its_rates() -> None:
+    # A plan whose rates apply all year can publish no seasons. It still needs one, to fill in its
+    # chart dates, so it gets one spanning its dated rates.
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    default = raw["content"][0]["default"]
+    default["seasons"] = []
+    dated = [rate for rate in default["network_rates"] if rate["valid_start"] and rate["valid_end"]]
+    for rate in dated:
+        rate["season"] = "All-Year Rates"
+
+    (season,) = parse_plan_list(raw).default.seasons
+
+    assert season.name == "All-Year Rates"
+    assert season.start == date.fromisoformat(min(rate["valid_start"] for rate in dated))
+    assert season.end == date.fromisoformat(max(rate["valid_end"] for rate in dated))
+
+
+def test_plan_without_seasons_or_dated_rates_has_no_season() -> None:
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    default = raw["content"][0]["default"]
+    default["seasons"] = []
+    for rate in [*default["retail_rates"], *default["network_rates"]]:
+        rate["valid_start"] = rate["valid_end"] = None
+
+    assert parse_plan_list(raw).default.seasons == ()
+
+
 @pytest.mark.parametrize(
     "payload",
     [

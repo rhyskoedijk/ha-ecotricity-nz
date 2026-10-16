@@ -17,7 +17,7 @@ These apply to everything you write: chat replies, docs, code comments, docstrin
 ## Hard rules
 
 - Never commit, push, tag or publish a release without the maintainer's explicit permission for that specific action. Approval for one commit doesn't carry over to the next.
-- Never call the live Ecotricity services from your own session without asking first. Work from fixtures; `scripts/api_client_smoke_test.py` is for the maintainer to run. The onboarding site blocks an IP for about 24 hours after a few hundred quick requests, so build fixtures one network at a time with `scripts/build_ecotricity_network_price_plans.py`, which paces its requests, and stop at the first refused connection.
+- Never call the live Ecotricity services from your own session without asking first. Work from fixtures; `scripts/api_client_smoke_test.py` is for the maintainer to run. The onboarding site blocks an IP for about 24 hours after a few hundred quick requests, so build fixtures with `scripts/build_ecotricity_network_price_plans.py`, which paces its requests and stops at the first refused connection. Its `--all` run takes hours; leave it to the maintainer to run in their own terminal.
 - Never call `RESTUSER/user/change` or any other onboarding endpoint that writes data. It creates a sign-up lead at Ecotricity.
 - Never commit personal or identifying data: credentials, real ICP numbers, addresses, account or contract numbers, meter serials, or a user's association with a network or price category. Public network codes may be kept in tests and fixtures. ICPs and other personal identifiers must be fake. Browser captures go in `.captures/` (git-ignored) and are deleted once fixtures are built.
 - Never log or expose secrets. Passwords, tokens and session cookies must not appear in logs, exceptions, diagnostics or test output.
@@ -62,6 +62,7 @@ scripts/develop                      # local Home Assistant at http://localhost:
 uv run python scripts/api_client_smoke_test.py  # live check against the real services (needs .env)
 uv run python scripts/build_ea_network_price_categories.py  # refresh networks and price categories from EA registry data
 uv run python scripts/build_ecotricity_network_price_plans.py VECT  # add a network's fixtures from the live site, paced (asks first: it calls Ecotricity)
+uv run python scripts/build_ecotricity_network_price_plans.py --all  # every network without fixtures, largest first (hours; the maintainer runs it)
 ```
 
 Manage dependencies with `uv add` and `uv lock`; never edit `uv.lock` by hand. The Home Assistant version used for development is set by the `pytest-homeassistant-custom-component` pin in `pyproject.toml`. When bumping it, also update the minimum in `hacs.json`, and read the release notes for API changes.
@@ -85,6 +86,8 @@ See `docs/architecture.md` for diagrams and `docs/api.md` for the services.
 
 - Nothing about pricing is fixed. Network codes, price categories, plan codes, charge codes, seasons and time-of-use windows vary by network and change over time. Never hard-code or assume values from the fixtures.
 - The user chooses their plan during setup (stored as the plan `id` in the options). Neither site reliably says which plan an ICP is on, so don't add automatic plan detection without new, verified evidence.
+- A plan can publish no seasons when its rates are the same all year. The parser then gives it one season spanning its dated rates (`_rates_season`), because charts and day pricing need a season. Don't assume `seasons` in the raw JSON is non-empty.
+- Price category codes can contain hyphens (`T-1RL`, `GS20-UA`), so never split a chart file name on `-` to find its network and category; `chart_file` and `chart_plan` in `tests/conftest.py` match it against the fixture folders.
 - Show plans with `Plan.name` (the customer-facing title, falling back to the internal description); match against the API with `Plan.description`.
 - Rates are grouped by bucket prefix: none for general import, `EG_` for export, `CN_` for controlled load (registry register code `CN`). Keep the groups apart; controlled-load sensors are only created when the plan has controlled rates. Controlled-load handling is unverified against real data (see `docs/api.md`).
 - Prices stay in cents excluding GST everywhere; only `sensor.py` converts to NZD. GST is added to import prices and daily charges only, never to export credits (residential customers who aren't GST-registered are paid the published rate).

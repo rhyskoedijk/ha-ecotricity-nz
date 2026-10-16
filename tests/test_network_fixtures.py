@@ -20,7 +20,9 @@ from custom_components.ecotricity_nz.api.timeframes import SLOTS_PER_DAY, match_
 from custom_components.ecotricity_nz.tariff import bucket_names, bucket_period, price_day
 from tests.conftest import (
     NETWORKS,
+    chart_file,
     chart_files,
+    chart_name,
     chart_plan,
     load_json_fixture,
     load_plan_list,
@@ -60,6 +62,18 @@ def test_price_category_folder(network: str, category: str) -> None:
     assert rate_networks == {network}
     for chart in (NETWORKS / network / category / "charts").glob("*.png"):
         assert chart.name.startswith(f"{network}-{category}-")
+
+
+@pytest.mark.parametrize(("network", "category"), price_categories())
+def test_every_plan_has_charts(network: str, category: str) -> None:
+    # Each chart is saved for the first season that uses it, so every plan has a weekday and a
+    # weekend chart for its first season, or the chart tests below don't cover it.
+    for plan in _plans(network, category):
+        assert plan.seasons, f"{plan.code} has no season to read charts for"
+        first = min(season.start for season in plan.seasons)
+        for weekend in (False, True):
+            chart = chart_file(chart_name(plan, first, weekend=weekend))
+            assert chart.exists(), f"{chart.name} is missing"
 
 
 @pytest.mark.parametrize("chart", chart_files(), ids=lambda path: path.stem)

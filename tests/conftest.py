@@ -196,8 +196,10 @@ def stored_charts(plan: Plan) -> list[tuple[date, Path]]:
 
 def chart_plan(chart: Path) -> tuple[Plan, date]:
     """Return the plan a fixture chart belongs to, and the first day of its season."""
-    # Charts are named {network}-{category}-{plan}-{customer}-{start}-{end}-{WD|WE}-NOGST.png.
-    network, category, code, _customer, start, *_ = chart.stem.split("-")
+    # Charts are named {network}-{category}-{plan}-{customer}-{start}-{end}-{WD|WE}-NOGST.png,
+    # and a category can have hyphens of its own, so it's taken from the folder.
+    network, category = chart.parents[2].name, chart.parents[1].name
+    code, _customer, start, *_ = chart.stem.removeprefix(f"{network}-{category}-").split("-")
     plans = parse_plan_list(load_plan_list(network, category)).all_plans
     plan = next((plan for plan in plans if plan.code == code), None)
     assert plan is not None, f"{code} isn't in {network}/{category}/plan_list.json"
@@ -218,8 +220,15 @@ def price_categories() -> list[tuple[str, str]]:
 
 def chart_file(name: str) -> Path:
     """Return a fixture chart by its file name, which starts with its network and price category."""
-    network, category, _ = name.split("-", 2)
-    return NETWORKS / network / category / "charts" / name
+    network = name.split("-", 1)[0]
+    # A category can have hyphens of its own, so match the name against the network's folders.
+    categories = [
+        path.name
+        for path in (NETWORKS / network).iterdir()
+        if name.startswith(f"{network}-{path.name}-")
+    ]
+    assert categories, f"{name} isn't in any of {network}'s price category folders"
+    return NETWORKS / network / max(categories, key=len) / "charts" / name
 
 
 def chart_files() -> list[Path]:

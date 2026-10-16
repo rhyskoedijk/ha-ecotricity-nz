@@ -181,11 +181,39 @@ def _parse_rate(raw: dict[str, Any], *, network: bool) -> Rate:
     )
 
 
+def _rates_season(rates: tuple[Rate, ...]) -> tuple[Season, ...]:
+    """Return one season spanning the plan's dated rates, for a plan that publishes no seasons.
+
+    Plans whose rates are the same all year can come with an empty season list. The web app then
+    shows every rate and fills the chart URL with the pricing year's dates, which the rates carry
+    as their validity dates.
+    """
+    dated = [rate for rate in rates if rate.valid_start and rate.valid_end]
+    if not dated:
+        return ()
+    names = {rate.season for rate in dated if rate.season}
+    return (
+        Season(
+            name=names.pop() if len(names) == 1 else "",
+            start=min(rate.valid_start for rate in dated if rate.valid_start),
+            end=max(rate.valid_end for rate in dated if rate.valid_end),
+        ),
+    )
+
+
 def _parse_plan(raw: dict[str, Any]) -> Plan:
     seasons = tuple(
         Season(name=str(item.get("season", "")), start=start, end=end)
         for item in _as_list(raw.get("seasons"))
         if (start := _parse_date(item.get("start"))) and (end := _parse_date(item.get("end")))
+    )
+    # The web app treats any rate carrying a priceplan_id key as a network charge.
+    retail_rates = tuple(
+        _parse_rate(rate, network="priceplan_id" in rate)
+        for rate in _as_list(raw.get("retail_rates"))
+    )
+    network_rates = tuple(
+        _parse_rate(rate, network=True) for rate in _as_list(raw.get("network_rates"))
     )
     return Plan(
         id=str(raw["id"]),
@@ -195,15 +223,9 @@ def _parse_plan(raw: dict[str, Any]) -> Plan:
         price_category=str(raw.get("price_category", "")),
         customer_type=str(raw.get("customer_type", "")),
         standard_low=raw.get("standard_low") or None,
-        # The web app treats any rate carrying a priceplan_id key as a network charge.
-        retail_rates=tuple(
-            _parse_rate(rate, network="priceplan_id" in rate)
-            for rate in _as_list(raw.get("retail_rates"))
-        ),
-        network_rates=tuple(
-            _parse_rate(rate, network=True) for rate in _as_list(raw.get("network_rates"))
-        ),
-        seasons=seasons,
+        retail_rates=retail_rates,
+        network_rates=network_rates,
+        seasons=seasons or _rates_season((*retail_rates, *network_rates)),
         timeframe_chart_weekday=raw.get("timeframes_chart_wd") or None,
         timeframe_chart_weekend=raw.get("timeframes_chart_we") or None,
     )

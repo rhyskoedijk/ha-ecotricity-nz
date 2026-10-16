@@ -27,7 +27,7 @@ uv run pre-commit run --all-files              # git hook checks
 
 CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
 
-Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name. Most tests run against `CKHK` and `RLUTOU`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
+Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name (categories can contain hyphens, such as `T-1RL`, so it matches the name against the network's folders rather than splitting it). Most tests run against `CKHK` and `RLUTOU`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
 
 The chart images are real Ecotricity charts; they contain only public pricing.
 
@@ -134,13 +134,16 @@ So each network gets one price category folder, which covers everything the inte
 
 ### Adding a network
 
-Ecotricity's onboarding site blocks an IP for about 24 hours after a burst of a few hundred requests (October 2026). Build one network at a time, and leave a gap between networks.
+Ecotricity's onboarding site blocks an IP for about 24 hours after a burst of a few hundred requests (October 2026), so the script paces every request and pauses between networks.
 
 ```bash
 uv run python scripts/build_ea_network_price_categories.py        # see which networks have no fixtures
 uv run python scripts/build_ecotricity_network_price_plans.py WAIK  # one network, its most common category
 uv run pytest tests/test_network_fixtures.py -k WAIK
+uv run python scripts/build_ecotricity_network_price_plans.py --all  # every network without fixtures, largest first
 ```
+
+`--all` builds every network in `network_price_categories.json` that has no fixture folder yet, most residential ICPs first, each in its most common category. It prints a line as each network starts, with its position, how long the run has taken and an estimate of what's left, then a line per request. It waits `--network-delay` seconds (60 by default) between networks.
 
 `scripts/build_ecotricity_network_price_plans.py` never sends an ICP. It:
 
@@ -148,7 +151,7 @@ uv run pytest tests/test_network_fixtures.py -k WAIK
 2. downloads the weekday and weekend charts of every plan for every season, keeping one per distinct image
 3. saves the plan list as published, plan IDs included, to `tests/fixtures/networks/{code}/{category}/plan_list.json`, and the charts to `charts/`
 
-It waits `--delay` seconds (5 by default) before every request, which is about 40 to 80 requests and a few minutes per network. It stops at the first error, such as a refused connection when the site has blocked you, and saves nothing; stop for the day if that happens. It won't overwrite an existing folder, so delete one to rebuild it.
+It waits `--delay` seconds (10 by default) before every request, which is about 30 to 80 requests and 5 to 15 minutes per network. It stops at the first connection error, such as a refused connection when the site has blocked you, without saving the network it was on; stop for the day if that happens. Networks already saved stay saved, so with `--all` the same command carries on from where it stopped. It won't overwrite an existing folder, so delete one to rebuild it.
 
 To build a folder by hand instead: save the plan list response (`RESTPLAN/plan/list_unbundle`) with `networkCode` and `capacityCode` set and no `icpNumber` (without a price category the site returns no plans), keeping it exactly as published, plan IDs included. Save the charts named exactly as Ecotricity publishes them: the path from the plan's `timeframes_chart_wd` or `timeframes_chart_we`, with the season's start and end dates in place of `SSSSSSSS` and `EEEEEEEE`, and `-NOGST` before `.png`. These are the charts the integration reads.
 

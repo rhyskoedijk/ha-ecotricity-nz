@@ -303,11 +303,22 @@ EXPORT_SHADES = [
 ]
 
 
-def _draw_chart(imports: list[tuple[tuple[int, int, int], int]], export: tuple) -> bytes:
-    """Draw a chart in Ecotricity's layout: 48 bars, import above the axis and export below."""
+def _draw_chart(
+    imports: list[tuple[tuple[int, int, int], int]],
+    export: tuple,
+    labels: list[int] | None = None,
+) -> bytes:
+    """Draw a chart in Ecotricity's layout: 48 bars, import above the axis and export below.
+
+    With `labels`, also draw the y-axis: a grey line with a dark label centred on each given y.
+    """
     image = Image.new("RGB", (924, 682), "white")
     draw = ImageDraw.Draw(image)
     zero = 344
+    if labels:
+        draw.line((61, min(labels), 61, max(labels)), fill=(204, 204, 204))
+        for y in labels:
+            draw.rectangle((40, y - 4, 55, y + 4), fill=(100, 100, 100))
     for slot, (colour, height) in enumerate(imports):
         left = 64 + slot * 17
         draw.rectangle((left, zero - height, left + 11, zero - 1), fill=colour)
@@ -378,3 +389,48 @@ def test_closest_export_shades_stay_separate() -> None:
     assert match_tiers(reading.export_tiers, {"EG_CHARGE_LOW": -10.0, "EG_CHARGE_HIGH": -15.0}) == (
         ("EG_CHARGE_LOW",) * 24 + ("EG_CHARGE_HIGH",) * 24
     )
+
+
+@pytest.mark.parametrize(
+    ("labels", "spacing"),
+    [
+        ([98 + 41 * tick for tick in range(10)], 41.0),
+        (None, None),
+        # Two labels aren't enough to trust, and uneven ones aren't an axis.
+        ([200, 300], None),
+        ([100, 141, 182, 260, 300], None),
+    ],
+)
+def test_axis_tick_spacing(labels: list[int] | None, spacing: float | None) -> None:
+    day = [(IMPORT_SHADES[0], 160)] * SLOTS_PER_DAY
+    reading = read_chart(_draw_chart(day, (EXPORT_SHADES[0], 100), labels))
+
+    assert reading.tick_spacing == spacing
+
+
+def test_axis_step_settles_prices_in_the_same_ratio() -> None:
+    # One price on each side, and import and export prices in the same ratio (20c:30c and
+    # -10c:-15c), so the bars fit off-peak at 10px per cent and peak at 6.67px per cent equally
+    # well. Only the axis tells them apart: its step is a round 5c at one scale, 7.5c at the other.
+    imports = (ChartTier(colour=(0, 0, 255), height=200, slots=ALL_SLOTS),)
+    exports = (ChartTier(colour=(255, 128, 0), height=100, slots=ALL_SLOTS),)
+    import_prices = {"CHARGE_LOW": 20.0, "CHARGE_HIGH": 30.0}
+    export_prices = {"EG_CHARGE_LOW": -10.0, "EG_CHARGE_HIGH": -15.0}
+
+    def read(tick_spacing: float | None) -> tuple[str, ...]:
+        return match_tiers(
+            imports,
+            import_prices,
+            other_tiers=exports,
+            other_prices=export_prices,
+            tick_spacing=tick_spacing,
+        )
+
+    with pytest.raises(ChartReadError, match="more than one"):
+        read(None)
+    assert read(50) == ("CHARGE_LOW",) * SLOTS_PER_DAY
+    # Labels 200/3 pixels apart make the step 10c at the other scale instead.
+    assert read(200 / 3) == ("CHARGE_HIGH",) * SLOTS_PER_DAY
+    # An axis that fits neither scale can't settle it.
+    with pytest.raises(ChartReadError, match="more than one"):
+        read(43)

@@ -67,12 +67,14 @@ def test_chart_matches_its_plan(chart: Path) -> None:
     plan, day = chart_plan(chart)
     pricing = price_day(plan, day)
     reading = read_chart(chart.read_bytes())
+    assert reading.tick_spacing is not None
 
     imports = match_tiers(
         reading.import_tiers,
         pricing.import_buckets,
         other_tiers=reading.export_tiers,
         other_prices=pricing.export_buckets,
+        tick_spacing=reading.tick_spacing,
     )
     assert len(imports) == SLOTS_PER_DAY
     if reading.export_tiers:
@@ -81,6 +83,7 @@ def test_chart_matches_its_plan(chart: Path) -> None:
             pricing.export_buckets,
             other_tiers=reading.import_tiers,
             other_prices=pricing.import_buckets,
+            tick_spacing=reading.tick_spacing,
         )
         assert len(exports) == SLOTS_PER_DAY
 

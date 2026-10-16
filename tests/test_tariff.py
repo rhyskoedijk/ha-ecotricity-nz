@@ -309,6 +309,7 @@ def _read_imports(chart: Path, imports: dict[str, float], exports: dict[str, flo
         imports,
         other_tiers=reading.export_tiers,
         other_prices=exports,
+        tick_spacing=reading.tick_spacing,
     )
 
 

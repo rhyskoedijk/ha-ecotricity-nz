@@ -82,6 +82,7 @@ def _match_import(chart: ChartReading, pricing: DayPricing) -> tuple[str, ...]:
         pricing.import_buckets,
         other_tiers=chart.export_tiers,
         other_prices=pricing.export_buckets,
+        tick_spacing=chart.tick_spacing,
     )
 
 
@@ -91,6 +92,7 @@ def _match_export(chart: ChartReading, pricing: DayPricing) -> tuple[str, ...]:
         pricing.export_buckets,
         other_tiers=chart.import_tiers,
         other_prices=pricing.import_buckets,
+        tick_spacing=chart.tick_spacing,
     )
 
 

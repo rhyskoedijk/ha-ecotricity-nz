@@ -273,6 +273,7 @@ def _chart_dict(chart: ChartReading) -> dict[str, Any]:
     return {
         "import_tiers": [_tier_dict(tier) for tier in chart.import_tiers],
         "export_tiers": [_tier_dict(tier) for tier in chart.export_tiers],
+        "tick_spacing": chart.tick_spacing,
     }
 
 
@@ -280,4 +281,6 @@ def _chart(raw: dict[str, Any]) -> ChartReading:
     return ChartReading(
         import_tiers=tuple(_tier(tier) for tier in raw["import_tiers"]),
         export_tiers=tuple(_tier(tier) for tier in raw["export_tiers"]),
+        # Snapshots saved before the axis was read have none; matching then works as before.
+        tick_spacing=None if raw.get("tick_spacing") is None else float(raw["tick_spacing"]),
     )

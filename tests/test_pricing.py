@@ -329,8 +329,17 @@ def _fixture_snapshot() -> PricingSnapshot:
 def test_snapshot_round_trip() -> None:
     snapshot = _fixture_snapshot()
     # Through JSON, as Home Assistant's store saves it. Only the unused personal details differ.
+    assert all(chart.tick_spacing for chart in snapshot.charts.values())
     saved = json.loads(json.dumps(_snapshot_dict(snapshot)))
     assert _snapshot(saved) == replace(snapshot, icp=replace(snapshot.icp, address="", region=""))
+
+
+def test_snapshot_saved_before_the_axis_was_read() -> None:
+    # Older files have no tick spacing; their charts still load, and match as they used to.
+    saved = json.loads(json.dumps(_snapshot_dict(_fixture_snapshot())))
+    for chart in saved["charts"].values():
+        del chart["tick_spacing"]
+    assert all(chart.tick_spacing is None for chart in _snapshot(saved).charts.values())
 
 
 @pytest.mark.usefixtures("mock_onboarding")

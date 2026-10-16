@@ -17,8 +17,10 @@ Pillow is a Home Assistant core dependency, so no extra requirement is needed.
 from __future__ import annotations
 
 import io
+import math
 import statistics
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from PIL import Image, UnidentifiedImageError
@@ -51,12 +53,32 @@ _TIER_COLOUR_TOLERANCE = 12.0
 # the same shade, a few pixels apart. Bars of one price measure the same height to the pixel, so
 # bars more than this many pixels apart are separate tiers.
 _TIER_HEIGHT_TOLERANCE = 2
+# A fit must land every tier within this many cents of a bucket price.
+_FIT_PRICE_TOLERANCE = 0.6
 # A fit must also land every tier within this many pixels of its price. The cents tolerance alone
 # isn't enough: anchoring the tallest tier on a near-zero price (a network rate of 0c plus the
 # levy, say) gives a scale of hundreds of pixels per cent, where any bar is within 0.6c of that
 # price and the whole chart "fits" it. On every captured chart the matched tiers are within 1.4px
 # of their prices, at 5 to 10 pixels per cent.
 _FIT_PIXEL_TOLERANCE = 3.0
+# The y-axis is a grey line at least this long, left of the first bar, with its labels to its left.
+_MIN_AXIS_LENGTH = 100
+# Axis lines and text are grey: no channel brighter than this, and channels this close together.
+_MAX_AXIS_BRIGHTNESS = 240
+_MAX_AXIS_SATURATION = 20
+# Label text is dark; the axis line and plot background are lighter.
+_MAX_TEXT_BRIGHTNESS = 450
+# Rows of one label are at most this far apart (a "5" has a gap of a few pixels).
+_MAX_LABEL_GAP = 5
+# Axis labels sit at most this many pixels beyond either end of the axis line.
+_LABEL_MARGIN = 8
+# The tick spacing is only trusted from at least this many evenly spaced labels.
+_MIN_TICKS = 3
+_TICK_SPACING_TOLERANCE = 2.0
+# Chart axes step in "nice" values: 1, 2, 2.5 or 5 times a power of ten. A scale whose tick step
+# lands within this share of one of them is plausible.
+_NICE_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
+_NICE_STEP_TOLERANCE = 0.04
 
 
 class ChartReadError(EcotricityResponseError):
@@ -80,6 +102,8 @@ class ChartReading:
 
     import_tiers: tuple[ChartTier, ...]
     export_tiers: tuple[ChartTier, ...]
+    tick_spacing: float | None = None
+    """Pixels between the y-axis labels, or None if the axis couldn't be read."""
 
 
 def needs_season(template: str) -> bool:
@@ -215,6 +239,56 @@ def _group_tiers(
     )
 
 
+def _is_axis_pixel(pixel: tuple[int, int, int]) -> bool:
+    """Return whether a pixel is grey (axis line or text), not background or a bar."""
+    return max(pixel) < _MAX_AXIS_BRIGHTNESS and max(pixel) - min(pixel) < _MAX_AXIS_SATURATION
+
+
+def _axis_line(image: Image.Image, before: int) -> tuple[int, int, int] | None:
+    """Return the x, top and bottom of the y-axis line, the nearest long grey line left of a bar."""
+    pixels = image.load()
+    assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
+    for x in range(before - 1, -1, -1):
+        ys = [y for y in range(image.size[1]) if _is_axis_pixel(pixels[x, y])]  # type: ignore[arg-type]
+        run = _longest_run(ys)
+        if run is not None and run[1] - run[0] + 1 >= _MIN_AXIS_LENGTH:
+            return x, *run
+    return None
+
+
+def _tick_spacing(image: Image.Image, first_bar: int) -> float | None:
+    """Return the pixels between the y-axis labels, or None if they can't be found.
+
+    Where the labels are doesn't say what they read, but their spacing is one tick step, which
+    `match_tiers` uses to choose between scales that fit the bars equally well.
+    """
+    axis = _axis_line(image, first_bar)
+    if axis is None:
+        return None
+    axis_x, top, bottom = axis
+    pixels = image.load()
+    assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
+    rows = [
+        y
+        for y in range(max(top - _LABEL_MARGIN, 0), min(bottom + _LABEL_MARGIN, image.size[1]))
+        if any(sum(pixels[x, y]) < _MAX_TEXT_BRIGHTNESS for x in range(axis_x - 1))  # type: ignore[arg-type]
+    ]
+    labels: list[list[int]] = []
+    for y in rows:
+        if labels and y - labels[-1][-1] <= _MAX_LABEL_GAP:
+            labels[-1].append(y)
+        else:
+            labels.append([y])
+    if len(labels) < _MIN_TICKS:
+        return None
+    centres = [(label[0] + label[-1]) / 2 for label in labels]
+    gaps = [below - above for above, below in pairwise(centres)]
+    spacing = statistics.median(gaps)
+    if any(abs(gap - spacing) > _TICK_SPACING_TOLERANCE for gap in gaps):
+        return None
+    return float(spacing)
+
+
 def read_chart(data: bytes) -> ChartReading:
     """Read the import and export tiers from a timeframe chart PNG."""
     try:
@@ -233,16 +307,20 @@ def read_chart(data: bytes) -> ChartReading:
         raise ChartReadError("Some half-hours have no import bar")
     if any(bar is not None for bar in exports) and any(bar is None for bar in exports):
         raise ChartReadError("Some half-hours have no export bar")
-    return ChartReading(import_tiers=_group_tiers(imports), export_tiers=_group_tiers(exports))
+    return ChartReading(
+        import_tiers=_group_tiers(imports),
+        export_tiers=_group_tiers(exports),
+        tick_spacing=_tick_spacing(image, columns[0][0]),
+    )
 
 
 def _fit(
-    tiers: Sequence[ChartTier], candidates: Mapping[str, float], scale: float, tolerance: float
+    tiers: Sequence[ChartTier], candidates: Mapping[str, float], scale: float
 ) -> tuple[float, dict[ChartTier, str]] | None:
     """Assign each tier to the nearest bucket price at a given pixels-per-cent scale.
 
-    Returns the worst error and the assignment, or None if any tier is further than `tolerance`
-    cents, or `_FIT_PIXEL_TOLERANCE` pixels, from every bucket.
+    Returns the worst error and the assignment, or None if any tier is further than
+    `_FIT_PRICE_TOLERANCE` cents, or `_FIT_PIXEL_TOLERANCE` pixels, from every bucket.
     """
     assignment: dict[ChartTier, str] = {}
     worst = 0.0
@@ -250,7 +328,7 @@ def _fit(
         price = tier.height / scale
         bucket, bucket_price = min(candidates.items(), key=lambda item: abs(item[1] - price))
         error = abs(bucket_price - price)
-        if error > tolerance or error * scale > _FIT_PIXEL_TOLERANCE:
+        if error > _FIT_PRICE_TOLERANCE or error * scale > _FIT_PIXEL_TOLERANCE:
             return None
         worst = max(worst, error)
         assignment[tier] = bucket
@@ -269,29 +347,31 @@ def _usage_prices(bucket_prices: Mapping[str, float]) -> dict[str, float]:
     return {bucket: abs(price) for bucket, price in bucket_prices.items() if price}
 
 
+def _is_nice_step(tick_spacing: float, scale: float) -> bool:
+    """Return whether a scale makes the axis step a value a chart would use, such as 5c."""
+    step = tick_spacing / scale
+    magnitude = 10 ** math.floor(math.log10(step))
+    return any(abs(step / magnitude - nice) <= nice * _NICE_STEP_TOLERANCE for nice in _NICE_STEPS)
+
+
 def _scale_fits(
     tiers: Sequence[ChartTier],
     candidates: Mapping[str, float],
     other_tiers: Sequence[ChartTier],
     other_candidates: Mapping[str, float],
-    tolerance: float,
 ) -> list[tuple[float, tuple[float, dict[ChartTier, str]]]]:
     """Return the scales that fit this side's tiers, and the other side's where it can be read."""
     scales = _anchor_scales(tiers, candidates)
-    own = [
-        (scale, fit)
-        for scale in scales
-        if (fit := _fit(tiers, candidates, scale, tolerance)) is not None
-    ]
+    own = [(scale, fit) for scale in scales if (fit := _fit(tiers, candidates, scale)) is not None]
     other_scales = _anchor_scales(other_tiers, other_candidates)
-    if not any(_fit(other_tiers, other_candidates, scale, tolerance) for scale in other_scales):
+    if not any(_fit(other_tiers, other_candidates, scale) for scale in other_scales):
         # No other side, or one that can't be read at any scale: it can't confirm a scale.
         return own
     both = [
         (scale, fit)
         for scale in scales + other_scales
-        if _fit(other_tiers, other_candidates, scale, tolerance) is not None
-        and (fit := _fit(tiers, candidates, scale, tolerance)) is not None
+        if _fit(other_tiers, other_candidates, scale) is not None
+        and (fit := _fit(tiers, candidates, scale)) is not None
     ]
     if own and not both:
         raise ChartReadError("Import and export bars don't fit the prices at one scale")
@@ -304,22 +384,26 @@ def match_tiers(
     *,
     other_tiers: Sequence[ChartTier] = (),
     other_prices: Mapping[str, float] | None = None,
-    tolerance: float = 0.6,
+    tick_spacing: float | None = None,
 ) -> tuple[str, ...]:
     """Return the charge bucket for each half-hour slot.
 
     Bar height is proportional to the absolute price, but the pixels-per-cent scale differs
     between charts. Each candidate bucket is tried as the anchor for the tallest tier; a scale
-    fits when every tier lands within `tolerance` cents, and a few pixels, of a bucket price.
-    When several buckets share a price, the first one in `bucket_prices` order is used.
+    fits when every tier lands within `_FIT_PRICE_TOLERANCE` cents, and a few pixels, of a bucket
+    price. When several buckets share a price, the first one in `bucket_prices` order is used.
 
     Import and export bars share one axis, so when the other side's tiers and prices are given
     (`other_tiers` and `other_prices`), a scale must fit them too. That catches prices that are
     wrong by the same amount everywhere, which one side alone can fit at a different scale. It
     also settles charts with few tiers, which can fit more than one scale on their own (a single
     tier fits every price). If the other side can't be read at any scale, it's left out rather
-    than letting it reject this side. If the slots still can't be settled, the chart is rejected
-    rather than guessed.
+    than letting it reject this side.
+
+    A chart with one price on each side can still fit two scales, when the plan's import and
+    export prices happen to be in about the same ratio. Then `tick_spacing`, the pixels between
+    the y-axis labels, settles it: only the right scale makes the axis step a round value such as
+    5c. If the slots still can't be settled, the chart is rejected rather than guessed.
     """
     if not tiers:
         raise ChartReadError("Chart has no tiers to match")
@@ -327,10 +411,12 @@ def match_tiers(
     if not candidates:
         raise ChartReadError("Plan has no usage prices to match against")
 
-    fits = _scale_fits(tiers, candidates, other_tiers, _usage_prices(other_prices or {}), tolerance)
+    fits = _scale_fits(tiers, candidates, other_tiers, _usage_prices(other_prices or {}))
     if not fits:
         raise ChartReadError("Chart bar heights don't match the plan's prices")
-    if len({frozenset(fit[1].items()) for _, fit in fits}) > 1:
+    if len({frozenset(fit[1].items()) for _, fit in fits}) > 1 and tick_spacing:
+        fits = [(scale, fit) for scale, fit in fits if _is_nice_step(tick_spacing, scale)]
+    if len({frozenset(fit[1].items()) for _, fit in fits}) != 1:
         raise ChartReadError("Chart bar heights fit more than one set of the plan's prices")
     best = min((fit for _, fit in fits), key=lambda fit: fit[0])
 

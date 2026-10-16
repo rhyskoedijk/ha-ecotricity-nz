@@ -128,7 +128,7 @@ A network's price categories mostly share the same Ecotricity data. Comparing th
 So each network gets one price category folder, which covers everything the integration parses:
 
 - For a new network, use its most common residential category in `network_price_categories.json`.
-- A network that already has a folder keeps it: `CKHK/RLUTOU` (the test ICP's, which most tests use), `ORON/URES` and `VECT/ARHLC`.
+- A network that already has a folder keeps it: `CKHK/RLUTOU` (the test ICP's, which most tests use), `ORON/URES`, `POCO/W05A`, `UNET/WRHLC` and `VECT/ARHLC`.
 - Add a second category only when it differs in shape from the first: different plans, seasons, charge codes, rate descriptions, units or validity dates. A difference in prices alone, such as Orion's daily charge, isn't worth a fixture, because it doesn't exercise anything new.
 - Save the charts of every plan in the category, not just one plan. Charts differ between plans, and different plans exercise different pricing rules. Keep one chart per distinct image: later seasons often reuse an earlier season's chart, byte for byte.
 

@@ -151,6 +151,7 @@
           "peak": "Peak",
           "off_peak": "Off-peak",
           "shoulder": "Shoulder",
+          "shoulder_peak": "Shoulder peak",
           "super_off_peak": "Super off-peak",
           "weekend": "Weekend"
         }
@@ -162,6 +163,7 @@
           "peak": "Peak",
           "off_peak": "Off-peak",
           "shoulder": "Shoulder",
+          "shoulder_peak": "Shoulder peak",
           "super_off_peak": "Super off-peak",
           "weekend": "Weekend"
         }

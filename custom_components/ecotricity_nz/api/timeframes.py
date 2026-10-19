@@ -456,10 +456,10 @@ def _bar_heights(image: Image.Image) -> list[tuple[int, int]] | None:
 def _estimate_clipped(
     image: Image.Image, import_entries: list[LegendEntry], export_entries: list[LegendEntry]
 ) -> tuple[list[LegendEntry], list[LegendEntry]]:
-    """Estimate clipped prices from their bars, scaled by the entries with a printed price."""
+    """Estimate clipped prices from their bars in an RGB chart, scaled by the printed prices."""
     if not any(entry.clipped for entry in (*import_entries, *export_entries)):
         return import_entries, export_entries
-    heights = _bar_heights(image.convert("RGB"))
+    heights = _bar_heights(image)
     if heights is None:
         return import_entries, export_entries
 

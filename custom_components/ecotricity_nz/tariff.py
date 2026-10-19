@@ -259,7 +259,6 @@ class SidePricing:
     """One side's half-hours and per-period prices for a day."""
 
     slots: DaySlots
-    alignment: Alignment
     buckets: dict[str, float]
     """Each overall period's own price."""
     components: dict[str, tuple[PriceComponent, ...]]
@@ -631,7 +630,6 @@ def price_side(slots: DaySlots, alignment: Alignment) -> SidePricing:
     used = {slot.bucket for slot in labelled.all}
     return SidePricing(
         slots=labelled,
-        alignment=alignment,
         buckets={bucket: own[bucket].price for bucket in sorted(used)},
         components={bucket: own[bucket].components for bucket in sorted(used)},
     )

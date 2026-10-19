@@ -366,16 +366,6 @@ async def test_unreadable_chart_leaves_price_unavailable(
     assert issue_registry.async_get_issue(DOMAIN, issue_id)
 
 
-def _price_sensor(hass: HomeAssistant, entity_registry: er.EntityRegistry, bucket: str) -> str:
-    entity_id = entity_registry.async_get_entity_id(
-        "sensor", DOMAIN, f"{TEST_ICP}_price_{bucket.lower()}"
-    )
-    assert entity_id is not None, bucket
-    state = hass.states.get(entity_id)
-    assert state is not None, bucket
-    return state.state
-
-
 async def test_unreadable_chart_prices_periods_from_the_rates(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -396,19 +386,9 @@ async def test_unreadable_chart_prices_periods_from_the_rates(
     slots = day_slots(side_rates(plan, day, export=False), chart, chart, export=False)
     expected = price_side(slots, plan_alignment([slots])).buckets
     assert len(expected) > 1
-    # Period price sensors are disabled by default.
-    for bucket in expected:
-        unique_id = f"{TEST_ICP}_price_{bucket.lower()}"
-        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-        assert entity_id is not None, bucket
-        entity_registry.async_update_entity(entity_id, disabled_by=None)
-    await hass.config_entries.async_reload(config_entry.entry_id)
-    await hass.async_block_till_done(wait_background_tasks=True)
-
     for bucket, cents in expected.items():
-        assert float(_price_sensor(hass, entity_registry, bucket)) == pytest.approx(
-            cents * GST_FACTOR / 100, abs=1e-4
-        )
+        price = await _enabled_price(hass, config_entry, entity_registry, bucket.lower())
+        assert float(price) == pytest.approx(cents * GST_FACTOR / 100, abs=1e-4)
     assert _state(hass, "current_import_price") == "unavailable"
 
 
@@ -1382,6 +1362,20 @@ def test_daily_charge_keys() -> None:
     )
 
 
+async def _enabled_price(
+    hass: HomeAssistant, entry: MockConfigEntry, entity_registry: er.EntityRegistry, key: str
+) -> str:
+    """Enable a period price sensor, which is disabled by default, and return its state."""
+    entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_{key}")
+    assert entity_id is not None, key
+    entity_registry.async_update_entity(entity_id, disabled_by=None)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    state = hass.states.get(entity_id)
+    assert state is not None, key
+    return state.state
+
+
 async def test_controlled_load(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1421,9 +1415,12 @@ async def test_controlled_load(
         "network_rate": pytest.approx(0.0345),
         "ea_levy": pytest.approx(0.0023),
     }
-    assert entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_cn_charge_24")
     # Import prices are unaffected.
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
+    # So is the controlled period's own price sensor, once enabled.
+    assert float(await _enabled_price(hass, config_entry, entity_registry, "cn_charge_24")) == (
+        pytest.approx(0.1748)
+    )
 
 
 async def test_controlled_period_from_a_later_season_has_its_sensor(
@@ -1457,8 +1454,8 @@ async def test_controlled_period_from_a_later_season_has_its_sensor(
     )
     await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
 
-    assert entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_cn_charge_low")
     assert _state(hass, "current_controlled_price") == "unknown"
+    assert await _enabled_price(hass, config_entry, entity_registry, "cn_charge_low") == "unknown"
 
 
 @pytest.mark.usefixtures("mock_onboarding")

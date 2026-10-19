@@ -153,7 +153,7 @@ To build a folder by hand instead: save the plan list response (`RESTPLAN/plan/l
 
 ### Keeping a network's charts
 
-The build script saves every chart of a network, but only charts that test something no other chart does are kept in git. In October 2026 every network's charts were read and described by the pricing scenarios they show (how many periods, whether Ecotricity's and the network's periods line up, hours with no network rate, a cut-off legend price, overlapping or unpublished seasons and so on), and one chart was kept for each scenario: 34 of 576 charts, from 11 networks. The test ICP's network (the one with `icp.json`) was kept whole, because the integration tests run against it.
+The build script saves every chart of a network, but only charts that test something no other chart does are kept in git. In October 2026 every network's charts were read and described by the pricing scenarios they show (how many periods, whether Ecotricity's and the network's periods line up, hours with no network rate, a cut-off legend price, overlapping or unpublished seasons and so on), and one chart was kept for each scenario: 34 of 576 charts, from 11 networks. The test ICP's network (the one with `icp.json`) keeps more, because the integration tests run against it.
 
 After building a network, or when a bug turns up a scenario the kept charts don't cover:
 

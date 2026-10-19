@@ -236,10 +236,15 @@ async def async_setup_entry(
     def _sync_plan_sensors() -> None:
         wanted = _plan_sensors(pricing, icp, tz)
         new = [create() for unique_id, create in wanted.items() if unique_id not in known]
-        known.clear()
+        # The periods aren't fully known until the charts can be read, so keep every sensor.
+        keep_all = pricing.data.tou_error is not None
+        if not keep_all:
+            known.clear()
         known.update(wanted)
         if new:
             async_add_entities(new)
+        if keep_all:
+            return
 
         for registry_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
             unique_id = registry_entry.unique_id
@@ -418,7 +423,11 @@ class BucketPriceSensor(_PricingEntity):
                 pricing.controlled_components[self._bucket],
             )
         side = self._side(export=group == "export")
-        if side is None or self._bucket not in side.buckets:
+        if side is None:
+            # The charts can't be read, so the price comes from the plan's rates where it can.
+            parts = pricing.rate_buckets.get(self._bucket)
+            return (sum(part.price for part in parts), parts) if parts is not None else None
+        if self._bucket not in side.buckets:
             return None
         return side.buckets[self._bucket], side.components[self._bucket]
 

@@ -24,6 +24,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
 from custom_components.ecotricity_nz.tariff import (
     Alignment,
     DaySlots,
+    SideRates,
     Slot,
     TouPeriod,
     bucket_name,
@@ -38,6 +39,8 @@ from custom_components.ecotricity_nz.tariff import (
     plan_alignment,
     price_day,
     price_side,
+    rate_periods,
+    rates_alignment,
     resolve_bucket,
     season_for,
     side_rates,
@@ -47,6 +50,7 @@ from tests.conftest import (
     SOLAR_PLAN,
     TIME_OF_USE_PLAN,
     chart_file,
+    chart_files,
     chart_name,
     chart_reading,
     explained_chart,
@@ -424,6 +428,92 @@ def test_one_price_all_day_needs_no_chart() -> None:
     slots = day_slots(rates, None, None, export=False)
 
     assert {slot.price for slot in slots.all} == {30.0}
+
+
+def _peak_only_network_export() -> SideRates:
+    """One Ecotricity export rate, and a network export rate for the peak only."""
+    return side_rates(
+        _plan(
+            _supplier("CHARGE_24", -16.0, register_type="EG"),
+            _network("CHARGE_HIGH", -5.0, register_type="EG"),
+        ),
+        SPRING,
+        export=True,
+    )
+
+
+def test_network_rate_for_some_hours_is_read_from_the_chart() -> None:
+    reading = ChartReading(
+        import_entries=_entries((0, 24, "20.00")),
+        export_entries=_entries((0, 17, "-16.00"), (17, 21, "-21.00"), (21, 24, "-16.00")),
+    )
+    slots = day_slots(_peak_only_network_export(), reading, reading, export=True)
+
+    assert [slot.price for slot in slots.weekday[33:36]] == [-16.0, -21.0, -21.0]
+    assert {slot.price for slot in slots.weekend} == {-16.0, -21.0}
+
+
+def test_one_network_rate_applies_all_day_without_a_chart() -> None:
+    slots = day_slots(_peak_only_network_export(), None, None, export=True)
+
+    assert {slot.price for slot in slots.all} == {-21.0}
+
+
+def test_one_network_rate_applies_all_day_when_the_chart_has_no_windows_for_it() -> None:
+    reading = ChartReading(import_entries=_entries((0, 24, "20.00")), export_entries=())
+    slots = day_slots(_peak_only_network_export(), reading, reading, export=True)
+
+    assert {slot.price for slot in slots.all} == {-21.0}
+
+
+def test_fixture_charts_agree_where_one_network_rate_is_taken_to_apply_all_day() -> None:
+    # Without a chart, a side whose network has one time-of-use rate gets that rate all day;
+    # every fixture chart of such a side shows that price all day too.
+    checked = 0
+    for chart in chart_files():
+        for rates, slots in explained_chart(chart).values():
+            if rates.flat() is None and (likely := rates.likely_flat()) is not None:
+                assert {slot.price for slot in slots} == {likely.price}, chart.name
+                checked += 1
+    assert checked
+
+
+def _rate_prices(rates: SideRates, alignment: Alignment) -> dict[str, float | None]:
+    return {
+        bucket: None if parts is None else sum(part.price for part in parts)
+        for bucket, parts in rate_periods(rates, alignment).items()
+    }
+
+
+def test_rates_alone_price_periods_that_line_up() -> None:
+    rates = side_rates(_plan(*SUPPLIER_PEAK_RATES, *NETWORK_PEAK_RATES), SPRING, export=False)
+
+    assert rates_alignment(rates) is Alignment.SUPPLIER
+    assert _rate_prices(rates, Alignment.SUPPLIER) == {"CHARGE_HIGH": 40.0, "CHARGE_LOW": 22.0}
+
+
+def test_rates_alone_price_the_network_periods_with_one_supplier_rate() -> None:
+    rates = side_rates(
+        _plan(_supplier("CHARGE_24", 20.0), *NETWORK_PEAK_RATES), SPRING, export=False
+    )
+
+    assert rates_alignment(rates) is Alignment.NETWORK
+    assert _rate_prices(rates, Alignment.NETWORK) == {"CHARGE_HIGH": 30.0, "CHARGE_LOW": 22.0}
+
+
+def test_rates_alone_leave_a_period_only_one_party_has_unpriced() -> None:
+    # Which of Ecotricity's rates goes with the network's shoulder only the chart can tell.
+    rates = side_rates(
+        _plan(*SUPPLIER_PEAK_RATES, *NETWORK_PEAK_RATES, _network("CHARGE_3", 5.0)),
+        SPRING,
+        export=False,
+    )
+
+    assert _rate_prices(rates, Alignment.SPLIT) == {
+        "CHARGE_3": None,
+        "CHARGE_HIGH": 40.0,
+        "CHARGE_LOW": 22.0,
+    }
 
 
 def test_missing_chart_is_rejected() -> None:

@@ -51,12 +51,18 @@ from custom_components.ecotricity_nz.const import (
     CONSUMPTION_UPDATE_INTERVAL,
     DOMAIN,
     FAILURE_ISSUE_THRESHOLD,
+    GST_FACTOR,
     PRICING_FETCH_INTERVAL,
     PRICING_RETRY_INTERVAL,
     RETRY_AFTER_FAILURE,
 )
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
-from custom_components.ecotricity_nz.tariff import side_rates
+from custom_components.ecotricity_nz.tariff import (
+    day_slots,
+    plan_alignment,
+    price_side,
+    side_rates,
+)
 from tests.conftest import (
     ANYTIME_PLAN,
     DEFAULT_NETWORK,
@@ -66,7 +72,9 @@ from tests.conftest import (
     TEST_ICP,
     TIME_OF_USE_PLAN,
     WINTER_PEAK,
+    chart_file,
     chart_name,
+    chart_reading,
     extra_network_codes,
     find_plan,
     find_plan_where,
@@ -344,7 +352,7 @@ async def test_unreadable_chart_leaves_price_unavailable(
 
     assert _state(hass, "current_import_price") == "unavailable"
     assert _state(hass, "current_import_period") == "unavailable"
-    # The per-rate and daily sensors still work.
+    # The daily charge doesn't need the chart.
     assert float(_state(hass, "daily_charge")) == pytest.approx(1.7825)
 
     # Counted per fetch, not per check, since charts are only downloaded when pricing is fetched.
@@ -356,6 +364,104 @@ async def test_unreadable_chart_leaves_price_unavailable(
     for _ in range(FAILURE_ISSUE_THRESHOLD - 1):
         await coordinator.async_fetch_now()
     assert issue_registry.async_get_issue(DOMAIN, issue_id)
+
+
+def _price_sensor(hass: HomeAssistant, entity_registry: er.EntityRegistry, bucket: str) -> str:
+    entity_id = entity_registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{TEST_ICP}_price_{bucket.lower()}"
+    )
+    assert entity_id is not None, bucket
+    state = hass.states.get(entity_id)
+    assert state is not None, bucket
+    return state.state
+
+
+async def test_unreadable_chart_prices_periods_from_the_rates(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A new install whose charts can't be read still has a price sensor for each period, priced
+    # from the plan's rates as the readable chart would price it.
+    freezer.move_to(WINTER_PEAK)
+    mock_onboarding.async_get_chart.side_effect = None
+    mock_onboarding.async_get_chart.return_value = b"not a png"
+    await _setup(hass, config_entry)
+
+    plan = find_plan(TIME_OF_USE_PLAN)
+    day = WINTER_PEAK.astimezone(NZ).date()
+    chart = chart_reading(chart_file(chart_name(plan, day)))
+    slots = day_slots(side_rates(plan, day, export=False), chart, chart, export=False)
+    expected = price_side(slots, plan_alignment([slots])).buckets
+    assert len(expected) > 1
+    # Period price sensors are disabled by default.
+    for bucket in expected:
+        unique_id = f"{TEST_ICP}_price_{bucket.lower()}"
+        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        assert entity_id is not None, bucket
+        entity_registry.async_update_entity(entity_id, disabled_by=None)
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    for bucket, cents in expected.items():
+        assert float(_price_sensor(hass, entity_registry, bucket)) == pytest.approx(
+            cents * GST_FACTOR / 100, abs=1e-4
+        )
+    assert _state(hass, "current_import_price") == "unavailable"
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_price_sensors_are_kept_while_the_chart_cannot_be_read(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Which periods the plan has isn't known until the chart is read, so none are removed.
+    freezer.move_to(WINTER_PEAK)
+    mock_onboarding.async_get_chart.side_effect = None
+    mock_onboarding.async_get_chart.return_value = b"not a png"
+    config_entry.add_to_hass(hass)
+    kept = entity_registry.async_get_or_create(
+        "sensor", DOMAIN, f"{TEST_ICP}_price_charge_3", config_entry=config_entry
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entity_registry.async_get(kept.entity_id) is not None
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_chart_templates_without_season_dates(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A plan can name one fixed chart rather than a template with the season's dates.
+    freezer.move_to(WINTER_PEAK)
+    plan = find_plan(TIME_OF_USE_PLAN)
+    season = next(item for item in plan.seasons if item.contains(WINTER_PEAK.date()))
+
+    def fixed(template: str | None) -> str:
+        assert template is not None
+        return template.replace("SSSSSSSS", season.start.strftime("%Y%m%d")).replace(
+            "EEEEEEEE", season.end.strftime("%Y%m%d")
+        )
+
+    fixed_plan = replace(
+        plan,
+        timeframe_chart_weekday=fixed(plan.timeframe_chart_weekday),
+        timeframe_chart_weekend=fixed(plan.timeframe_chart_weekend),
+    )
+    mock_onboarding.async_get_plans.return_value = PlanList(default=fixed_plan)
+    await _setup(hass, config_entry)
+
+    assert config_entry.runtime_data.pricing.data.tou_error is None
+    assert _state(hass, "current_import_price") != "unavailable"
 
 
 @pytest.mark.usefixtures("mock_onboarding")

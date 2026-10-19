@@ -65,10 +65,12 @@ from .tariff import (
     Alignment,
     DayPricing,
     DaySlots,
+    controlled_prices,
     day_slots,
     plan_alignment,
     price_day,
     price_side,
+    rates_alignment,
     season_for,
     side_rates,
 )
@@ -412,7 +414,10 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         plan = self._select_plan(snapshot.plans)
         season = season_for(plan, day)
         today, seasons, errors = _plan_slots(snapshot, plan, day)
-        alignments = (plan_alignment(seasons[False]), plan_alignment(seasons[True]))
+        alignments = (
+            _alignment(plan, day, seasons, export=False),
+            _alignment(plan, day, seasons, export=True),
+        )
         pricing = price_day(plan, day, today[False], today[True], alignments)
         tou_error = "; ".join(errors) or None
         if tou_error is None:
@@ -424,7 +429,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             day=day,
             season=season,
             pricing=pricing,
-            periods=_plan_periods(plan, day, seasons, alignments),
+            periods=_plan_periods(plan, day, seasons, pricing, alignments),
             fetched_at=snapshot.fetched_at,
             tou_error=tou_error,
         )
@@ -453,12 +458,15 @@ def _needs_season(plan: Plan) -> bool:
 
 
 def _chart_path(template: str | None, season: Season | None) -> str:
+    """Return the chart to read for a season. A template without season dates ignores it."""
     if not template:
         raise ChartReadError("The plan has no timeframe chart")
-    if season is None and needs_season(template):
+    if not needs_season(template):
+        return chart_path(template, None, None)
+    if season is None:
         # Ecotricity may not have published the season yet. It's fetched daily until it is.
         raise ChartReadError("No published season covers today")
-    return chart_path(template, season.start, season.end) if season else template
+    return chart_path(template, season.start, season.end)
 
 
 def _seasons(plan: Plan, day: date, *, upcoming: bool) -> list[Season | None]:
@@ -502,10 +510,14 @@ def _season_slots(
     rates = side_rates(plan, day, export=export)
     if rates.is_empty:
         return None
-    if rates.flat() is not None:
-        return day_slots(rates, None, None, export=export)
-    weekday = snapshot.charts.get(_chart_path(plan.timeframe_chart_weekday, season))
-    weekend = snapshot.charts.get(_chart_path(plan.timeframe_chart_weekend, season))
+    try:
+        weekday = snapshot.charts.get(_chart_path(plan.timeframe_chart_weekday, season))
+        weekend = snapshot.charts.get(_chart_path(plan.timeframe_chart_weekend, season))
+    except ChartReadError:
+        # No chart is published for the day, which a side with one price all day doesn't need.
+        if rates.likely_flat() is None:
+            raise
+        weekday = weekend = None
     return day_slots(rates, weekday, weekend, export=export)
 
 
@@ -542,20 +554,32 @@ def _plan_slots(
     return today, seasons, errors
 
 
+def _alignment(
+    plan: Plan, day: date, seasons: dict[bool, list[DaySlots]], *, export: bool
+) -> Alignment:
+    """Return whose periods decide a side's price, from its rates if no season's charts are read."""
+    if seasons[export]:
+        return plan_alignment(seasons[export])
+    return rates_alignment(side_rates(plan, day, export=export))
+
+
 def _plan_periods(
     plan: Plan,
     day: date,
     seasons: dict[bool, list[DaySlots]],
+    pricing: DayPricing,
     alignments: tuple[Alignment, Alignment],
 ) -> PlanPeriods:
     """Return the periods the plan uses today or in any later season with readable charts.
 
-    Controlled load needs no charts, so its periods come from every later season's rates.
+    Controlled load needs no charts, so its periods come from every later season's rates. A side
+    whose charts can't be read today has the periods its rates give (`rate_buckets`), so its
+    sensors stay.
     """
-    buckets: set[str] = set()
+    buckets: set[str] = set(pricing.rate_buckets)
     for item in _seasons(plan, day, upcoming=True):
         start = max(item.start, day) if item else day
-        buckets.update(price_day(plan, start, None, None).controlled_buckets)
+        buckets.update(controlled_prices(plan, start)[0])
     supplier: set[str] = set()
     network: set[str] = set()
     for export, alignment in ((False, alignments[0]), (True, alignments[1])):

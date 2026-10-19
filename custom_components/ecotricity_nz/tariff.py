@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, timedelta
 from enum import StrEnum
 from itertools import product
@@ -280,6 +280,9 @@ class DayPricing:
     daily_charges: tuple[DailyCharge, ...]
     has_export: bool
     """Whether the plan has export rates on the day."""
+    rate_buckets: dict[str, tuple[PriceComponent, ...] | None] = field(default_factory=dict)
+    """Each period's parts from the rates alone, on a side whose charts couldn't be read (see
+    `rate_periods`). None for a period whose price only the chart can tell."""
 
     @property
     def daily_total(self) -> float:
@@ -338,11 +341,20 @@ class SideRates:
         return combos
 
     def flat(self) -> Slot | None:
-        """Return the only possible half-hour, when the side has one price all day."""
+        """Return the only possible half-hour, when the side can only have one price all day."""
+        combos = self.candidates()
+        return _slot(combos[0]) if len(combos) == 1 else None
+
+    def likely_flat(self) -> Slot | None:
+        """Return the side's one price, if every network rate it has applies all day.
+
+        A network with one time-of-use rate on a side usually charges it all day (an anytime
+        plan's off-peak rate), but can charge it only in some hours and nothing in the others
+        (an export peak rate). Only a chart can tell, so this is a fallback for when there isn't
+        one.
+        """
         combos = [combo for combo in self.candidates() if combo.has_network]
-        if len(combos) != 1:
-            return None
-        return _slot(combos[0])
+        return _slot(combos[0]) if len(combos) == 1 else None
 
 
 def side_rates(plan: Plan, day: date, *, export: bool) -> SideRates:
@@ -456,22 +468,31 @@ def day_slots(
 ) -> DaySlots:
     """Return one side's half-hours for a weekday and a weekend day.
 
-    A side with one possible price all day needs no chart. Raises ChartReadError if the charts
-    are needed but missing, or can't be explained.
+    A side with one possible price all day needs no chart. One whose network rates likely apply
+    all day (see `SideRates.likely_flat`) is read from its charts where there are any, and
+    otherwise given that one price. Raises ChartReadError if the charts are needed but missing,
+    or can't be explained.
     """
     if (flat := rates.flat()) is not None:
-        slots = (flat,) * SLOTS_PER_DAY
-        return DaySlots(weekday=slots, weekend=slots)
+        return _all_day(flat)
     if weekday is None or weekend is None:
+        if (likely := rates.likely_flat()) is not None:
+            return _all_day(likely)
         raise ChartReadError("The plan's charts for the season couldn't be downloaded or read")
+    weekday_entries = weekday.export_entries if export else weekday.import_entries
+    weekend_entries = weekend.export_entries if export else weekend.import_entries
+    if not (weekday_entries and weekend_entries):
+        if (likely := rates.likely_flat()) is not None:
+            return _all_day(likely)
+        raise ChartReadError(f"The chart has no {'export' if export else 'import'} windows")
+    return DaySlots(
+        weekday=explain(weekday_entries, rates), weekend=explain(weekend_entries, rates)
+    )
 
-    def side(chart: ChartReading) -> tuple[LegendEntry, ...]:
-        entries = chart.export_entries if export else chart.import_entries
-        if not entries:
-            raise ChartReadError(f"The chart has no {'export' if export else 'import'} windows")
-        return entries
 
-    return DaySlots(weekday=explain(side(weekday), rates), weekend=explain(side(weekend), rates))
+def _all_day(slot: Slot) -> DaySlots:
+    slots = (slot,) * SLOTS_PER_DAY
+    return DaySlots(weekday=slots, weekend=slots)
 
 
 def _price_key(price: float) -> float:
@@ -487,6 +508,52 @@ def _determines(seasons: Iterable[DaySlots], key: str) -> bool:
         if any(len(values) > 1 for values in prices.values()):
             return False
     return True
+
+
+def rates_alignment(rates: SideRates) -> Alignment:
+    """Return whose periods most likely decide a side's price, from its rates alone.
+
+    For a side with no readable charts in any season. Like `plan_alignment`, Ecotricity's
+    periods are preferred, unless Ecotricity has one rate all day.
+    """
+    return Alignment.SUPPLIER if rates.supplier else Alignment.NETWORK
+
+
+def rate_periods(
+    rates: SideRates, alignment: Alignment
+) -> dict[str, tuple[PriceComponent, ...] | None]:
+    """Return each period's own price parts from the rates alone, for when the charts can't be read.
+
+    A period's own price is Ecotricity's rate for it plus the network's rate for the same period.
+    When only one party has periods, the other's one rate applies throughout. Any other
+    combination needs the chart, so the period's parts are None.
+    """
+    anytime = rates.prefix + ANYTIME
+    supplier = rates.supplier or {anytime: ()}
+    network = rates.network or {anytime: ()}
+    if alignment is Alignment.SUPPLIER:
+        buckets = sorted(supplier)
+    elif alignment is Alignment.NETWORK:
+        buckets = sorted(network)
+    else:
+        buckets = sorted((supplier.keys() | network.keys()) - {anytime}) or [anytime]
+
+    def parts(
+        group: dict[str, tuple[PriceComponent, ...]], bucket: str
+    ) -> tuple[PriceComponent, ...] | None:
+        if bucket in group:
+            return group[bucket]
+        return next(iter(group.values())) if len(group) == 1 else None
+
+    periods: dict[str, tuple[PriceComponent, ...] | None] = {}
+    for bucket in buckets:
+        own_supplier, own_network = parts(supplier, bucket), parts(network, bucket)
+        periods[bucket] = (
+            None
+            if own_supplier is None or own_network is None
+            else (*own_supplier, *own_network, *rates.always)
+        )
+    return periods
 
 
 def plan_alignment(seasons: Sequence[DaySlots]) -> Alignment:
@@ -570,7 +637,7 @@ def price_side(slots: DaySlots, alignment: Alignment) -> SidePricing:
     )
 
 
-def _controlled(
+def controlled_prices(
     plan: Plan, day: date
 ) -> tuple[dict[str, float], dict[str, tuple[PriceComponent, ...]]]:
     """Return controlled-load prices per bucket, which no chart shows.
@@ -615,13 +682,25 @@ def price_day(
     export_slots: DaySlots | None,
     alignments: tuple[Alignment, Alignment] = (Alignment.SUPPLIER, Alignment.SUPPLIER),
 ) -> DayPricing:
-    """Return a day's prices from its half-hours (see `day_slots`) and the plan's daily charges."""
+    """Return a day's prices from its half-hours (see `day_slots`) and the plan's daily charges.
+
+    A side with rates but no half-hours (its charts couldn't be read) gets each period's price
+    from the rates alone, in `rate_buckets`.
+    """
+    rate_buckets: dict[str, tuple[PriceComponent, ...] | None] = {}
+    for export, slots, alignment in (
+        (False, import_slots, alignments[0]),
+        (True, export_slots, alignments[1]),
+    ):
+        rates = side_rates(plan, day, export=export)
+        if slots is None and not rates.is_empty:
+            rate_buckets.update(rate_periods(rates, alignment))
     daily = tuple(
         DailyCharge(rate.description, rate.price, is_network=rate.is_network)
         for rate in plan.rates
         if rate.applies_on(day) and rate.unit is RateUnit.PER_DAY
     )
-    controlled, controlled_components = _controlled(plan, day)
+    controlled, controlled_components = controlled_prices(plan, day)
     return DayPricing(
         import_side=price_side(import_slots, alignments[0]) if import_slots else None,
         export_side=price_side(export_slots, alignments[1]) if export_slots else None,
@@ -629,6 +708,7 @@ def price_day(
         controlled_components=controlled_components,
         daily_charges=daily,
         has_export=not side_rates(plan, day, export=True).is_empty,
+        rate_buckets=rate_buckets,
     )
 
 

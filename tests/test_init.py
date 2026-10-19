@@ -1098,8 +1098,8 @@ async def test_network_and_sync_sensors(
     assert _state(hass, "network") == icp.network_name
     assert _extra(hass, "network") == {"code": DEFAULT_NETWORK}
     # Ecotricity bills its energy rate on usage times the loss factor; export has none here.
-    assert _state(hass, "import_loss_factor") == str(icp.loss_factor_consumption)
-    assert _state(hass, "export_loss_factor") == str(icp.loss_factor_generation)
+    assert _state(hass, "network_import_loss_factor") == str(icp.loss_factor_consumption)
+    assert _state(hass, "network_export_loss_factor") == str(icp.loss_factor_generation)
     assert _state(hass, "pricing_category") == icp.price_category_description
     assert _extra(hass, "pricing_category") == {"code": DEFAULT_PRICE_CATEGORY}
     assert _state(hass, "latest_day_of_usage") == "2026-04-05"
@@ -1330,8 +1330,8 @@ async def test_entity_categories(
     assert diagnostic == {
         "icp",
         "network",
-        "import_loss_factor",
-        "export_loss_factor",
+        "network_import_loss_factor",
+        "network_export_loss_factor",
         "pricing_category",
         "meter",
         "registered_generation_capacity",

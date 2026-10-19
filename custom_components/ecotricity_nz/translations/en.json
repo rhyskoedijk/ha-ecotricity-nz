@@ -90,11 +90,11 @@
       "registered_generation_capacity": {
         "name": "Registered generation capacity"
       },
-      "import_loss_factor": {
-        "name": "Import loss factor"
+      "network_import_loss_factor": {
+        "name": "Network import loss factor"
       },
-      "export_loss_factor": {
-        "name": "Export loss factor"
+      "network_export_loss_factor": {
+        "name": "Network export loss factor"
       },
       "plan": {
         "name": "Plan"

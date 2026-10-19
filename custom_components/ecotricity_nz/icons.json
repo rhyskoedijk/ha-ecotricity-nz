@@ -21,10 +21,10 @@
       "registered_generation_capacity": {
         "default": "mdi:solar-power-variant"
       },
-      "import_loss_factor": {
+      "network_import_loss_factor": {
         "default": "mdi:transmission-tower-import"
       },
-      "export_loss_factor": {
+      "network_export_loss_factor": {
         "default": "mdi:transmission-tower-export"
       },
       "plan": {

@@ -99,8 +99,8 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         attrs_fn=lambda data: {"code": data.icp.network_code},
     ),
     PricingSensorDescription(
-        key="import_loss_factor",
-        translation_key="import_loss_factor",
+        key="network_import_loss_factor",
+        translation_key="network_import_loss_factor",
         entity_category=EntityCategory.DIAGNOSTIC,
         suggested_display_precision=4,
         value_fn=lambda data: data.icp.loss_factor_consumption,
@@ -171,8 +171,8 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
 )
 
 EXPORT_LOSS_FACTOR = PricingSensorDescription(
-    key="export_loss_factor",
-    translation_key="export_loss_factor",
+    key="network_export_loss_factor",
+    translation_key="network_export_loss_factor",
     entity_category=EntityCategory.DIAGNOSTIC,
     suggested_display_precision=4,
     value_fn=lambda data: data.icp.loss_factor_generation,

@@ -29,14 +29,7 @@ from .api import (
     PortalIndicator,
     Season,
 )
-from .api.timeframes import (
-    ChartReadError,
-    ChartReading,
-    chart_path,
-    match_tiers,
-    needs_season,
-    read_chart,
-)
+from .api.timeframes import ChartReadError, ChartReading, chart_path, needs_season, read_chart
 from .const import (
     BACKFILL_PAUSE_SECONDS,
     CONF_ICP,
@@ -68,32 +61,22 @@ from .statistics import (
     statistic_id,
 )
 from .store import PricingSnapshot, PricingStore
-from .tariff import DayPricing, SlotMap, price_day, season_for
+from .tariff import (
+    Alignment,
+    DayPricing,
+    DaySlots,
+    day_slots,
+    plan_alignment,
+    price_day,
+    price_side,
+    season_for,
+    side_rates,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from homeassistant.core import HomeAssistant
-
-
-def _match_import(chart: ChartReading, pricing: DayPricing) -> tuple[str, ...]:
-    return match_tiers(
-        chart.import_tiers,
-        pricing.import_buckets,
-        other_tiers=chart.export_tiers,
-        other_prices=pricing.export_buckets,
-        tick_spacing=chart.tick_spacing,
-    )
-
-
-def _match_export(chart: ChartReading, pricing: DayPricing) -> tuple[str, ...]:
-    return match_tiers(
-        chart.export_tiers,
-        pricing.export_buckets,
-        other_tiers=chart.import_tiers,
-        other_prices=pricing.import_buckets,
-        tick_spacing=chart.tick_spacing,
-    )
 
 
 @dataclass(slots=True)
@@ -109,6 +92,23 @@ type EcotricityConfigEntry = ConfigEntry[EcotricityRuntimeData]
 
 
 @dataclass(frozen=True, slots=True)
+class PlanPeriods:
+    """The periods the plan uses in today's and every upcoming season with readable charts.
+
+    Entities are created from these, so they don't come and go with the seasons.
+    """
+
+    buckets: frozenset[str] = frozenset()
+    """Every overall period's bucket, for import, export and controlled load."""
+    supplier: frozenset[str] = frozenset()
+    """Ecotricity's period buckets on the sides that are split."""
+    network: frozenset[str] = frozenset()
+    """The network's period buckets on the sides that are split."""
+    import_alignment: Alignment = Alignment.SUPPLIER
+    export_alignment: Alignment = Alignment.SUPPLIER
+
+
+@dataclass(frozen=True, slots=True)
 class PricingData:
     """Pricing state for one ICP on one day."""
 
@@ -118,8 +118,7 @@ class PricingData:
     day: date
     season: Season | None
     pricing: DayPricing
-    import_slots: SlotMap | None
-    export_slots: SlotMap | None
+    periods: PlanPeriods
     fetched_at: datetime
     """When the pricing was last fetched from Ecotricity."""
     tou_error: str | None = None
@@ -373,13 +372,19 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         return dict(self._snapshot.plan_titles) if self._snapshot else {}
 
     async def _async_charts(self, plan: Plan, day: date) -> dict[str, ChartReading]:
-        """Download and read the charts for this season and, once it's published, the next.
+        """Download and read the charts for this season and every published season after it.
 
-        A chart that can't be downloaded or read keeps its saved reading, if there is one.
+        This season's and the next are downloaded at every fetch; later ones only until they've
+        been read once, since they're only needed to know which periods the plan uses. A chart
+        that can't be downloaded or read keeps its saved reading, if there is one.
         """
         saved = self._snapshot.charts if self._snapshot else {}
+        refresh = set(_chart_paths(plan, day, upcoming=False))
         charts: dict[str, ChartReading] = {}
-        for path in _chart_paths(plan, day):
+        for path in _chart_paths(plan, day, upcoming=True):
+            if path not in refresh and path in saved:
+                charts[path] = saved[path]
+                continue
             try:
                 data = await self._onboarding.async_get_chart(path)
                 charts[path] = await self.hass.async_add_executor_job(read_chart, data)
@@ -406,8 +411,10 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         """Work out a day's prices and windows from saved pricing. Makes no requests."""
         plan = self._select_plan(snapshot.plans)
         season = season_for(plan, day)
-        pricing = price_day(plan, day)
-        import_slots, export_slots, tou_error = _slot_maps(snapshot, plan, season, pricing)
+        today, seasons, errors = _plan_slots(snapshot, plan, day)
+        alignments = (plan_alignment(seasons[False]), plan_alignment(seasons[True]))
+        pricing = price_day(plan, day, today[False], today[True], alignments)
+        tou_error = "; ".join(errors) or None
         if tou_error is None:
             self._clear_issue(ISSUE_TOU_CHART)
         return PricingData(
@@ -417,8 +424,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             day=day,
             season=season,
             pricing=pricing,
-            import_slots=import_slots,
-            export_slots=export_slots,
+            periods=_plan_periods(plan, day, seasons, alignments),
             fetched_at=snapshot.fetched_at,
             tou_error=tou_error,
         )
@@ -455,14 +461,30 @@ def _chart_path(template: str | None, season: Season | None) -> str:
     return chart_path(template, season.start, season.end) if season else template
 
 
-def _chart_paths(plan: Plan, day: date) -> list[str]:
-    """Return the chart paths for the day's season and the one after it, where published."""
+def _seasons(plan: Plan, day: date, *, upcoming: bool) -> list[Season | None]:
+    """Return the day's season and the next, or with `upcoming` every season not yet over.
+
+    A plan whose charts don't depend on the season has one set of charts, for every day.
+    """
     season = season_for(plan, day)
-    seasons = [season]
+    if not _needs_season(plan):
+        return [None]
+    if upcoming:
+        later = sorted(
+            (item for item in plan.seasons if item.end >= day and item != season),
+            key=lambda item: (item.start, item.end),
+        )
+        return [season, *later] if season else list(later)
+    seasons: list[Season | None] = [season]
     if season is not None and (following := season_for(plan, season.end + timedelta(days=1))):
         seasons.append(following)
+    return seasons
+
+
+def _chart_paths(plan: Plan, day: date, *, upcoming: bool) -> list[str]:
+    """Return the chart paths for the seasons from `_seasons`, where published."""
     paths: list[str] = []
-    for item in seasons:
+    for item in _seasons(plan, day, upcoming=upcoming):
         for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend):
             try:
                 path = _chart_path(template, item)
@@ -473,58 +495,82 @@ def _chart_paths(plan: Plan, day: date) -> list[str]:
     return paths
 
 
-def _slot_maps(
-    snapshot: PricingSnapshot, plan: Plan, season: Season | None, pricing: DayPricing
-) -> tuple[SlotMap | None, SlotMap | None, str | None]:
-    """Work out which bucket applies in each half-hour, from the saved chart readings."""
-    flat_import = (
-        SlotMap.flat(next(iter(pricing.import_buckets)))
-        if len(pricing.import_buckets) == 1
-        else None
-    )
-    flat_export = (
-        SlotMap.flat(next(iter(pricing.export_buckets)))
-        if len(pricing.export_buckets) == 1
-        else None
-    )
-    need_import = flat_import is None and bool(pricing.import_buckets)
-    need_export = flat_export is None and bool(pricing.export_buckets)
-    if not need_import and not need_export:
-        return flat_import, flat_export, None
+def _season_slots(
+    snapshot: PricingSnapshot, plan: Plan, season: Season | None, day: date, *, export: bool
+) -> DaySlots | None:
+    """Return one side's half-hours for a season, or None if the plan has no rates for it."""
+    rates = side_rates(plan, day, export=export)
+    if rates.is_empty:
+        return None
+    if rates.flat() is not None:
+        return day_slots(rates, None, None, export=export)
+    weekday = snapshot.charts.get(_chart_path(plan.timeframe_chart_weekday, season))
+    weekend = snapshot.charts.get(_chart_path(plan.timeframe_chart_weekend, season))
+    return day_slots(rates, weekday, weekend, export=export)
 
-    import_slots, export_slots = flat_import, flat_export
+
+def _plan_slots(
+    snapshot: PricingSnapshot, plan: Plan, day: date
+) -> tuple[dict[bool, DaySlots | None], dict[bool, list[DaySlots]], list[str]]:
+    """Return today's half-hours, every readable season's half-hours, and today's errors.
+
+    Each is keyed by whether it's export. An upcoming season whose charts can't be read yet is
+    left out, so it can't stop today's prices working.
+    """
+    today: dict[bool, DaySlots | None] = {}
+    seasons: dict[bool, list[DaySlots]] = {}
     errors: list[str] = []
-    try:
-        weekday = _saved_chart(snapshot, _chart_path(plan.timeframe_chart_weekday, season))
-        weekend = _saved_chart(snapshot, _chart_path(plan.timeframe_chart_weekend, season))
-    except ChartReadError as err:
-        errors.append(str(err))
-    else:
-        # Match import and export separately, so a problem with one keeps the other. Each side
-        # only looks at the other to settle a chart its own bars can't.
-        if need_import:
+    upcoming = [
+        item for item in _seasons(plan, day, upcoming=True) if item != season_for(plan, day)
+    ]
+    for export in (False, True):
+        try:
+            today[export] = _season_slots(snapshot, plan, season_for(plan, day), day, export=export)
+        except ChartReadError as err:
+            today[export] = None
+            errors.append(f"{'Export' if export else 'Import'}: {err}")
+        seasons[export] = [slots for slots in (today[export],) if slots is not None]
+        for item in upcoming:
+            start = max(item.start, day) if item else day
             try:
-                import_slots = SlotMap(
-                    weekday=_match_import(weekday, pricing),
-                    weekend=_match_import(weekend, pricing),
-                )
+                slots = _season_slots(snapshot, plan, item, start, export=export)
             except ChartReadError as err:
-                errors.append(f"Import: {err}")
-        if need_export:
-            try:
-                export_slots = SlotMap(
-                    weekday=_match_export(weekday, pricing),
-                    weekend=_match_export(weekend, pricing),
-                )
-            except ChartReadError as err:
-                errors.append(f"Export: {err}")
-    return import_slots, export_slots, "; ".join(errors) or None
+                LOGGER.debug("Leaving out a season whose charts can't be read: %s", err)
+                continue
+            if slots is not None:
+                seasons[export].append(slots)
+    return today, seasons, errors
 
 
-def _saved_chart(snapshot: PricingSnapshot, path: str) -> ChartReading:
-    if (chart := snapshot.charts.get(path)) is None:
-        raise ChartReadError(f"The chart {path} couldn't be downloaded or read")
-    return chart
+def _plan_periods(
+    plan: Plan,
+    day: date,
+    seasons: dict[bool, list[DaySlots]],
+    alignments: tuple[Alignment, Alignment],
+) -> PlanPeriods:
+    """Return the periods the plan uses today or in any later season with readable charts.
+
+    Controlled load needs no charts, so its periods come from every later season's rates.
+    """
+    buckets: set[str] = set()
+    for item in _seasons(plan, day, upcoming=True):
+        start = max(item.start, day) if item else day
+        buckets.update(price_day(plan, start, None, None).controlled_buckets)
+    supplier: set[str] = set()
+    network: set[str] = set()
+    for export, alignment in ((False, alignments[0]), (True, alignments[1])):
+        for slots in seasons[export]:
+            buckets.update(price_side(slots, alignment).buckets)
+            if alignment is Alignment.SPLIT:
+                supplier.update(slot.supplier for slot in slots.all)
+                network.update(slot.network for slot in slots.all)
+    return PlanPeriods(
+        buckets=frozenset(buckets),
+        supplier=frozenset(supplier),
+        network=frozenset(network),
+        import_alignment=alignments[0],
+        export_alignment=alignments[1],
+    )
 
 
 class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):

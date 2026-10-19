@@ -87,6 +87,15 @@
       "meter": {
         "name": "Meter"
       },
+      "registered_generation_capacity": {
+        "name": "Registered generation capacity"
+      },
+      "import_loss_factor": {
+        "name": "Import loss factor"
+      },
+      "export_loss_factor": {
+        "name": "Export loss factor"
+      },
       "plan": {
         "name": "Plan"
       },
@@ -96,17 +105,14 @@
       "next_pricing_season_change": {
         "name": "Next pricing season change"
       },
+      "last_pricing_update": {
+        "name": "Last pricing update"
+      },
       "daily_charge": {
         "name": "Daily charge"
       },
       "current_import_price": {
         "name": "Current import price"
-      },
-      "current_export_price": {
-        "name": "Current export price"
-      },
-      "current_controlled_price": {
-        "name": "Current controlled price"
       },
       "anytime_import_price": {
         "name": "Anytime import price"
@@ -120,6 +126,9 @@
       "named_import_price": {
         "name": "{name} import price"
       },
+      "current_export_price": {
+        "name": "Current export price"
+      },
       "anytime_export_price": {
         "name": "Anytime export price"
       },
@@ -131,6 +140,9 @@
       },
       "named_export_price": {
         "name": "{name} export price"
+      },
+      "current_controlled_price": {
+        "name": "Current controlled price"
       },
       "anytime_controlled_price": {
         "name": "Anytime controlled price"
@@ -149,21 +161,33 @@
         "state": {
           "anytime": "Anytime",
           "peak": "Peak",
-          "off_peak": "Off-peak",
-          "shoulder": "Shoulder",
           "shoulder_peak": "Shoulder peak",
+          "shoulder": "Shoulder",
+          "off_peak": "Off-peak",
           "super_off_peak": "Super off-peak",
           "weekend": "Weekend"
         }
       },
-      "current_export_period": {
-        "name": "Current export period",
+      "current_supplier_import_period": {
+        "name": "Current supplier import period",
         "state": {
           "anytime": "Anytime",
           "peak": "Peak",
-          "off_peak": "Off-peak",
-          "shoulder": "Shoulder",
           "shoulder_peak": "Shoulder peak",
+          "shoulder": "Shoulder",
+          "off_peak": "Off-peak",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
+        }
+      },
+      "current_network_import_period": {
+        "name": "Current network import period",
+        "state": {
+          "anytime": "Anytime",
+          "peak": "Peak",
+          "shoulder_peak": "Shoulder peak",
+          "shoulder": "Shoulder",
+          "off_peak": "Off-peak",
           "super_off_peak": "Super off-peak",
           "weekend": "Weekend"
         }
@@ -171,8 +195,47 @@
       "next_import_period_change": {
         "name": "Next import period change"
       },
+      "current_export_period": {
+        "name": "Current export period",
+        "state": {
+          "anytime": "Anytime",
+          "peak": "Peak",
+          "shoulder_peak": "Shoulder peak",
+          "shoulder": "Shoulder",
+          "off_peak": "Off-peak",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
+        }
+      },
+      "current_supplier_export_period": {
+        "name": "Current supplier export period",
+        "state": {
+          "anytime": "Anytime",
+          "peak": "Peak",
+          "shoulder_peak": "Shoulder peak",
+          "shoulder": "Shoulder",
+          "off_peak": "Off-peak",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
+        }
+      },
+      "current_network_export_period": {
+        "name": "Current network export period",
+        "state": {
+          "anytime": "Anytime",
+          "peak": "Peak",
+          "shoulder_peak": "Shoulder peak",
+          "shoulder": "Shoulder",
+          "off_peak": "Off-peak",
+          "super_off_peak": "Super off-peak",
+          "weekend": "Weekend"
+        }
+      },
       "next_export_period_change": {
         "name": "Next export period change"
+      },
+      "latest_day_of_usage": {
+        "name": "Latest day of usage"
       },
       "latest_day_imported": {
         "name": "Latest day imported"
@@ -183,17 +246,8 @@
       "latest_day_carbon_savings": {
         "name": "Latest day carbon savings"
       },
-      "latest_day_of_usage": {
-        "name": "Latest day of usage"
-      },
       "last_meter_data_update": {
         "name": "Last meter data update"
-      },
-      "last_pricing_update": {
-        "name": "Last pricing update"
-      },
-      "registered_generation_capacity": {
-        "name": "Registered generation capacity"
       }
     }
   },

@@ -26,12 +26,15 @@ import aiohttp
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from custom_components.ecotricity_nz.api import OnboardingClient, PortalClient
-from custom_components.ecotricity_nz.api.timeframes import (
-    chart_path,
-    match_tiers,
-    read_chart,
+from custom_components.ecotricity_nz.api.timeframes import chart_path, read_chart
+from custom_components.ecotricity_nz.tariff import (
+    day_slots,
+    day_windows,
+    plan_alignment,
+    price_day,
+    season_for,
+    side_rates,
 )
-from custom_components.ecotricity_nz.tariff import price_day, season_for
 
 NZ = ZoneInfo("Pacific/Auckland")
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -101,28 +104,40 @@ async def main() -> int:
                     )
 
         today = datetime.now(NZ).date()
-        pricing = price_day(plan, today)
-        print(f"Plan {plan.name} ({plan.description}), prices today (cents excl GST):")
-        print("  import", pricing.import_buckets)
-        print("  export", pricing.export_buckets)
-        print(f"  daily {pricing.daily_total:.2f}")
-
         season = season_for(plan, today)
-        for label, template in (
-            ("weekday", plan.timeframe_chart_weekday),
-            ("weekend", plan.timeframe_chart_weekend),
-        ):
-            if not template:
+        charts = []
+        for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend):
+            path = chart_path(template, season.start, season.end) if season and template else None
+            charts.append(read_chart(await onboarding.async_get_chart(path)) if path else None)
+        sides = []
+        for export in (False, True):
+            rates = side_rates(plan, today, export=export)
+            sides.append(None if rates.is_empty else day_slots(rates, *charts, export=export))
+        pricing = price_day(
+            plan,
+            today,
+            sides[0],
+            sides[1],
+            (
+                plan_alignment([s for s in sides[:1] if s]),
+                plan_alignment([s for s in sides[1:] if s]),
+            ),
+        )
+        print(f"Plan {plan.name} ({plan.description}), today (cents excl GST):")
+        for label, side in (("import", pricing.import_side), ("export", pricing.export_side)):
+            if side is None:
                 continue
-            path = chart_path(template, season.start, season.end) if season else template
-            reading = read_chart(await onboarding.async_get_chart(path))
-            slots = match_tiers(reading.import_tiers, pricing.import_buckets)
-            changes = [
-                f"{slot // 2:02d}:{30 * (slot % 2):02d} {bucket}"
-                for slot, bucket in enumerate(slots)
-                if slot == 0 or slots[slot - 1] != bucket
-            ]
-            print(f"  {label} import windows: {', '.join(changes)}")
+            print(f"  {label} periods ({side.alignment.value}): {side.buckets}")
+            for day_type, slots in (
+                ("weekday", side.slots.weekday),
+                ("weekend", side.slots.weekend),
+            ):
+                windows = ", ".join(
+                    f"{start}-{end} {slot.bucket} {slot.price:.2f}"
+                    for start, end, slot in day_windows(slots)
+                )
+                print(f"  {label} {day_type}: {windows}")
+        print(f"  daily {pricing.daily_total:.2f}")
     return 0
 
 

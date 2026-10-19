@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
@@ -37,7 +38,12 @@ from custom_components.ecotricity_nz.api import (
     Season,
 )
 from custom_components.ecotricity_nz.api.parsers import parse_icp
-from custom_components.ecotricity_nz.api.timeframes import ChartReadError
+from custom_components.ecotricity_nz.api.timeframes import (
+    ChartReading,
+    LegendEntry,
+    read_chart,
+    shown_price,
+)
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST,
     CONF_PLAN_ID,
@@ -50,6 +56,7 @@ from custom_components.ecotricity_nz.const import (
     RETRY_AFTER_FAILURE,
 )
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
+from custom_components.ecotricity_nz.tariff import side_rates
 from tests.conftest import (
     ANYTIME_PLAN,
     DEFAULT_NETWORK,
@@ -467,26 +474,38 @@ async def test_consumption_retries_soon_after_a_failure(
     assert consumption.last_update_success
 
 
+NEW_SEASON = Season(name="Seasonal Rates", start=date(2027, 4, 1), end=date(2027, 9, 30))
+NEW_SEASON_CHART = b"new season chart"
+
+
 def _with_new_season(plans: PlanList) -> PlanList:
-    """Publish an extra season, starting 1 April 2027, that adds a shoulder network rate."""
+    """Publish an extra season, starting 1 April 2027, that adds shoulder rates.
+
+    Both Ecotricity and the network charge a shoulder rate in it, from noon to midnight.
+    """
     plan = plans.find(plan_id(TIME_OF_USE_PLAN))
     assert plan is not None
-    season = Season(name="Seasonal Rates", start=date(2027, 4, 1), end=date(2027, 9, 30))
-    shoulder = Rate(
-        id="9001",
-        description="Uncontrolled - Shoulder",
-        charge="CHARGE_3",
-        register_type=None,
-        unit=RateUnit.PER_KWH,
-        raw_unit="cents/kWh",
-        price=8.5,
-        is_network=True,
-        season=season.name,
-        valid_start=season.start,
-        valid_end=season.end,
-    )
+
+    def shoulder(description: str, price: float, *, network: bool) -> Rate:
+        return Rate(
+            id=f"900{int(network)}",
+            description=description,
+            charge="CHARGE_3",
+            register_type=None,
+            unit=RateUnit.PER_KWH,
+            raw_unit="cents/kWh",
+            price=price,
+            is_network=network,
+            season=NEW_SEASON.name,
+            valid_start=NEW_SEASON.start,
+            valid_end=NEW_SEASON.end,
+        )
+
     updated = replace(
-        plan, network_rates=(*plan.network_rates, shoulder), seasons=(*plan.seasons, season)
+        plan,
+        retail_rates=(*plan.retail_rates, shoulder("Shoulder Usage", 18.5, network=False)),
+        network_rates=(*plan.network_rates, shoulder("Uncontrolled - Shoulder", 8.5, network=True)),
+        seasons=(*plan.seasons, NEW_SEASON),
     )
     return PlanList(
         default=updated if plans.default is plan else plans.default,
@@ -495,6 +514,44 @@ def _with_new_season(plans: PlanList) -> PlanList:
     )
 
 
+def _new_season_reading(plan: Plan) -> ChartReading:
+    """Return the new season's legend: off-peak to noon, then shoulder."""
+    rates = side_rates(plan, NEW_SEASON.start, export=False)
+    prices = {
+        combo.supplier: shown_price(combo.price)
+        for combo in rates.candidates()
+        if combo.network == "CHARGE_3"
+    }
+    return ChartReading(
+        import_entries=(
+            LegendEntry(0, 720, prices["CHARGE_LOW"]),
+            LegendEntry(720, 1440, prices["CHARGE_3"]),
+        ),
+        export_entries=(LegendEntry(0, 1440, "-13.74"),),
+    )
+
+
+@pytest.fixture
+def new_season_charts(mock_onboarding: MagicMock) -> Generator[None]:
+    """Serve a chart for the new season, as Ecotricity does once it's published."""
+    serve = mock_onboarding.async_get_chart.side_effect
+    plan = _with_new_season(mock_onboarding.async_get_plans.return_value).find(
+        plan_id(TIME_OF_USE_PLAN)
+    )
+    assert plan is not None
+
+    async def chart(path: str) -> bytes:
+        return NEW_SEASON_CHART if "-20270401-" in path else serve(path)
+
+    def read(data: bytes) -> ChartReading:
+        return _new_season_reading(plan) if data == NEW_SEASON_CHART else read_chart(data)
+
+    mock_onboarding.async_get_chart.side_effect = chart
+    with patch.object(coordinator_module, "read_chart", side_effect=read):
+        yield
+
+
+@pytest.mark.usefixtures("new_season_charts")
 async def test_new_season_adds_sensors(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -506,7 +563,7 @@ async def test_new_season_adds_sensors(
     await _setup(hass, config_entry)
     unique_id = f"{TEST_ICP}_price_charge_3"
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is None
-    assert "uncontrolled_shoulder" not in _extra(hass, "current_import_period")["options"]
+    assert "shoulder" not in _extra(hass, "current_import_period")["options"]
 
     # Ecotricity publishes next year's seasons part way through this one.
     mock_onboarding.async_get_plans.return_value = _with_new_season(
@@ -516,14 +573,15 @@ async def test_new_season_adds_sensors(
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is not None
-    # The period sensor can show the new period from now on, named from the season's rate.
-    assert "uncontrolled_shoulder" in _extra(hass, "current_import_period")["options"]
+    # The period sensor can show the new period from now on, named from Ecotricity's rate.
+    assert "shoulder" in _extra(hass, "current_import_period")["options"]
     season = hass.states.get(f"{PREFIX}_pricing_season")
     assert season is not None
     assert "2027-04-01/2027-09-30" in season.attributes["published"]
     assert season.attributes["end"] == date(2026, 9, 30)
 
 
+@pytest.mark.usefixtures("new_season_charts")
 async def test_prices_the_plan_no_longer_has_are_removed(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -546,7 +604,7 @@ async def test_prices_the_plan_no_longer_has_are_removed(
 
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, shoulder) is None
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, peak) is not None
-    assert "uncontrolled_shoulder" not in _extra(hass, "current_import_period")["options"]
+    assert "shoulder" not in _extra(hass, "current_import_period")["options"]
 
     # If it comes back, so does its sensor.
     mock_onboarding.async_get_plans.return_value = _with_new_season(plans)
@@ -577,6 +635,33 @@ async def test_stale_price_sensors_are_removed_at_setup(
 
     assert entity_registry.async_get(stale.entity_id) is None
     assert entity_registry.async_get(other.entity_id) is not None
+
+
+@pytest.mark.usefixtures("new_season_charts")
+async def test_later_seasons_charts_are_downloaded_once(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Every published season's charts are read, so the plan's periods are known for the year.
+    # Seasons after the next are only downloaded until they've been read once.
+    freezer.move_to(WINTER_PEAK)
+    mock_onboarding.async_get_plans.return_value = _with_new_season(
+        mock_onboarding.async_get_plans.return_value
+    )
+    await _setup(hass, config_entry)
+
+    def later_season_downloads() -> int:
+        return sum(
+            "-20270401-" in call.args[0] for call in mock_onboarding.async_get_chart.call_args_list
+        )
+
+    assert later_season_downloads() == 2
+    freezer.tick(PRICING_FETCH_INTERVAL)
+    await config_entry.runtime_data.pricing.async_refresh()
+    assert mock_onboarding.async_get_icp.await_count == 2
+    assert later_season_downloads() == 2
 
 
 async def test_pricing_is_fetched_weekly(
@@ -861,36 +946,29 @@ async def test_daily_charge_components_are_attributes_only(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
-async def test_period_without_its_own_price_shows_the_price_charged(
+@pytest.mark.usefixtures("new_season_charts")
+async def test_period_that_doesnt_apply_today_has_no_price(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
     entity_registry: er.EntityRegistry,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    # Low User outside winter has one import and one export price all day, so peak hours are
-    # charged at the off-peak price.
-    freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
-    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
-    rate_sensors = [
-        entry.entity_id
-        for entry in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
-        if "_price_" in entry.unique_id
-    ]
-    for entity_id in rate_sensors:
-        entity_registry.async_update_entity(entity_id, disabled_by=None)
+    # A shoulder period that starts next season has its price sensor already, with no value
+    # until then rather than another period's price.
+    freezer.move_to(WINTER_PEAK)
+    mock_onboarding.async_get_plans.return_value = _with_new_season(
+        mock_onboarding.async_get_plans.return_value
+    )
+    await _setup(hass, config_entry)
+    entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_charge_3")
+    assert entity_id is not None
+    entity_registry.async_update_entity(entity_id, disabled_by=None)
     await hass.config_entries.async_reload(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert _state(hass, "peak_import_price") == _state(hass, "off_peak_import_price")
-    peak = _extra(hass, "peak_import_price")
-    assert peak.pop("charged_as") == "off_peak"
-    assert peak == _extra(hass, "off_peak_import_price")
-
-    assert _state(hass, "peak_export_price") == _state(hass, "off_peak_export_price") == "0.1374"
-    export = _extra(hass, "peak_export_price")
-    assert export.pop("charged_as") == "off_peak"
-    # The 0c network export rate adds nothing, so it isn't listed.
-    assert export == {"supplier_rate": pytest.approx(0.1374)}
+    assert _state(hass, "shoulder_import_price") == "unknown"
+    assert _extra(hass, "shoulder_import_price") == {}
 
 
 async def test_plan_names_fall_back_when_mappings_fail(
@@ -932,11 +1010,10 @@ async def test_network_and_sync_sensors(
     icp = parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
 
     assert _state(hass, "network") == icp.network_name
-    assert _extra(hass, "network") == {
-        "code": DEFAULT_NETWORK,
-        "loss_factor_consumption": pytest.approx(1.045),
-        "loss_factor_generation": pytest.approx(1.0),
-    }
+    assert _extra(hass, "network") == {"code": DEFAULT_NETWORK}
+    # Ecotricity bills its energy rate on usage times the loss factor; export has none here.
+    assert _state(hass, "import_loss_factor") == str(icp.loss_factor_consumption)
+    assert _state(hass, "export_loss_factor") == str(icp.loss_factor_generation)
     assert _state(hass, "pricing_category") == icp.price_category_description
     assert _extra(hass, "pricing_category") == {"code": DEFAULT_PRICE_CATEGORY}
     assert _state(hass, "latest_day_of_usage") == "2026-04-05"
@@ -1167,6 +1244,8 @@ async def test_entity_categories(
     assert diagnostic == {
         "icp",
         "network",
+        "import_loss_factor",
+        "export_loss_factor",
         "pricing_category",
         "meter",
         "registered_generation_capacity",
@@ -1239,6 +1318,41 @@ async def test_controlled_load(
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_cn_charge_24")
     # Import prices are unaffected.
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
+
+
+async def test_controlled_period_from_a_later_season_has_its_sensor(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A controlled night rate that only starts next season. Controlled load needs no chart, so
+    # its sensor is there from now, with no value until the rate applies.
+    freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    low_user = plans.find(plan_id(ANYTIME_PLAN))
+    assert low_user is not None
+    later = next(season for season in low_user.seasons if season.start > date(2026, 10, 15))
+    night = Rate(
+        id="c1",
+        description="Controlled night",
+        charge="CHARGE_LOW",
+        register_type="CN",
+        unit=RateUnit.PER_KWH,
+        raw_unit="cents/kWh",
+        price=9.0,
+        is_network=False,
+        valid_start=later.start,
+        valid_end=later.end,
+    )
+    mock_onboarding.async_get_plans.return_value = PlanList(
+        default=replace(low_user, retail_rates=(*low_user.retail_rates, night))
+    )
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
+
+    assert entity_registry.async_get_entity_id("sensor", DOMAIN, f"{TEST_ICP}_price_cn_charge_low")
+    assert _state(hass, "current_controlled_price") == "unknown"
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -1383,21 +1497,112 @@ async def test_series_listed_without_readings_is_not_reread(
 async def test_export_chart_mismatch_keeps_import_windows(
     hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
 ) -> None:
-    # Low ecoSOLAR in winter has time-of-use import and export prices.
+    # Low ecoSOLAR in winter has time-of-use import and export prices. An export price the plan's
+    # rates can't explain leaves import working.
     freezer.move_to(WINTER_PEAK)
-    real_match = coordinator_module.match_tiers
 
-    def match(tiers: Any, bucket_prices: dict[str, float], **kwargs: Any) -> tuple[str, ...]:
-        if any(bucket.startswith("EG_") for bucket in bucket_prices):
-            raise ChartReadError("Chart bar heights don't match the plan's prices")
-        return real_match(tiers, bucket_prices, **kwargs)
+    def read(data: bytes) -> ChartReading:
+        reading = read_chart(data)
+        wrong = tuple(replace(entry, text="-99.99") for entry in reading.export_entries)
+        return replace(reading, export_entries=wrong)
 
-    with patch.object(coordinator_module, "match_tiers", side_effect=match):
+    with patch.object(coordinator_module, "read_chart", side_effect=read):
         await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(SOLAR_PLAN)})
 
     assert _state(hass, "current_import_period") == "peak"
     assert _state(hass, "current_export_period") == "unavailable"
     assert "Export:" in _extra(hass, "current_import_price")["tou_error"]
+
+
+def _import_legend(plan: Plan, day: date, *windows: tuple[int, int, str, str]) -> tuple:
+    """Return import legend entries for (start hour, end hour, supplier, network) windows."""
+    rates = side_rates(plan, day, export=False)
+    prices = {
+        (combo.supplier, combo.network): shown_price(combo.price)
+        for combo in rates.candidates()
+        if combo.has_network
+    }
+    return tuple(
+        LegendEntry(start * 60, end * 60, prices[supplier, network])
+        for start, end, supplier, network in windows
+    )
+
+
+async def test_periods_that_dont_line_up_get_their_own_sensors(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Ecotricity's peak runs 7am to 11am but the network's 9am to 1pm, so 8:15am is Ecotricity's
+    # peak at the network's off-peak rate.
+    freezer.move_to(WINTER_PEAK)
+    plan = find_plan(TIME_OF_USE_PLAN)
+    day = WINTER_PEAK.astimezone(NZ).date()
+    high, low = "CHARGE_HIGH", "CHARGE_LOW"
+    mixed = _import_legend(
+        plan,
+        day,
+        (0, 7, low, low),
+        (7, 9, high, low),
+        (9, 11, high, high),
+        (11, 13, low, high),
+        (13, 24, low, low),
+    )
+    lined_up = [True]
+
+    def read(data: bytes) -> ChartReading:
+        reading = read_chart(data)
+        return reading if lined_up[0] else replace(reading, import_entries=mixed)
+
+    lined_up[0] = False
+    with patch.object(coordinator_module, "read_chart", side_effect=read):
+        await _setup(hass, config_entry)
+        supplier = f"{TEST_ICP}_current_supplier_import_period"
+        network = f"{TEST_ICP}_current_network_import_period"
+        assert entity_registry.async_get_entity_id("sensor", DOMAIN, supplier) is not None
+        assert entity_registry.async_get_entity_id("sensor", DOMAIN, network) is not None
+        assert _state(hass, "current_supplier_import_period") == "peak"
+        assert _state(hass, "current_network_import_period") == "off_peak"
+        # The overall period is the one whose own price is nearest: Ecotricity's peak at the
+        # network's off-peak rate is much nearer off-peak.
+        assert _state(hass, "current_import_period") == "off_peak"
+        rates = side_rates(plan, day, export=False)
+        price = next(
+            combo.price
+            for combo in rates.candidates()
+            if (combo.supplier, combo.network) == (high, low)
+        )
+        assert float(_state(hass, "current_import_price")) == pytest.approx(
+            price * 1.15 / 100, abs=0.0001
+        )
+        assert _extra(hass, "current_supplier_import_period")["windows"] == [
+            "00:00-07:00 off_peak",
+            "07:00-11:00 peak",
+            "11:00-24:00 off_peak",
+        ]
+        assert _extra(hass, "current_network_import_period")["windows"] == [
+            "00:00-09:00 off_peak",
+            "09:00-13:00 peak",
+            "13:00-24:00 off_peak",
+        ]
+        # The overall windows change wherever the price does.
+        assert len(_extra(hass, "current_import_period")["windows"]) == 5
+        # Export lines up, so it keeps one period sensor.
+        assert (
+            entity_registry.async_get_entity_id(
+                "sensor", DOMAIN, f"{TEST_ICP}_current_supplier_export_period"
+            )
+            is None
+        )
+
+        # Once the periods line up again, the extra sensors go.
+        lined_up[0] = True
+        await config_entry.runtime_data.pricing.async_fetch_now()
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert entity_registry.async_get_entity_id("sensor", DOMAIN, supplier) is None
+    assert entity_registry.async_get_entity_id("sensor", DOMAIN, network) is None
 
 
 def _drop_import_reading(mock_portal: MagicMock, missing: datetime) -> list[bool]:

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.helpers.storage import Store
 
 from .api import IcpDetails, MeterChannel, Plan, PlanList, Rate, RateUnit, Season
-from .api.timeframes import ChartReading, ChartTier
+from .api.timeframes import ChartReading, LegendEntry
 from .const import DOMAIN, LOGGER
 
 if TYPE_CHECKING:
@@ -25,7 +25,23 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
-STORAGE_VERSION = 1
+# Version 2 reads chart legends rather than bar heights; older snapshots are fetched again.
+STORAGE_VERSION = 2
+
+
+class _SnapshotStore(Store[dict[str, Any]]):
+    """A store that drops snapshots saved in an older format, so pricing is fetched again."""
+
+    async def _async_migrate_func(
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any],  # noqa: ARG002 - the signature Store calls
+    ) -> dict[str, Any]:
+        LOGGER.debug(
+            "Discarding saved pricing in format %s.%s", old_major_version, old_minor_version
+        )
+        return {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,14 +64,12 @@ class PricingStore:
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         """Initialise the store."""
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.pricing"
-        )
+        self._store = _SnapshotStore(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.pricing")
 
     async def async_load(self) -> PricingSnapshot | None:
         """Return the saved snapshot, or None if there isn't a usable one."""
         raw = await self._store.async_load()
-        if raw is None:
+        if not raw:
             return None
         try:
             return _snapshot(raw)
@@ -256,31 +270,30 @@ def _plan(raw: dict[str, Any]) -> Plan:
     )
 
 
-def _tier_dict(tier: ChartTier) -> dict[str, Any]:
-    return {"colour": list(tier.colour), "height": tier.height, "slots": sorted(tier.slots)}
+def _entry_dict(entry: LegendEntry) -> list[Any]:
+    return [entry.start, entry.end, entry.text, entry.clipped, entry.estimate]
 
 
-def _tier(raw: dict[str, Any]) -> ChartTier:
-    red, green, blue = (int(value) for value in raw["colour"])
-    return ChartTier(
-        colour=(red, green, blue),
-        height=float(raw["height"]),
-        slots=frozenset(int(slot) for slot in raw["slots"]),
+def _entry(raw: list[Any]) -> LegendEntry:
+    start, end, text, clipped, estimate = raw
+    return LegendEntry(
+        start=int(start),
+        end=int(end),
+        text=str(text),
+        clipped=bool(clipped),
+        estimate=None if estimate is None else float(estimate),
     )
 
 
 def _chart_dict(chart: ChartReading) -> dict[str, Any]:
     return {
-        "import_tiers": [_tier_dict(tier) for tier in chart.import_tiers],
-        "export_tiers": [_tier_dict(tier) for tier in chart.export_tiers],
-        "tick_spacing": chart.tick_spacing,
+        "import": [_entry_dict(entry) for entry in chart.import_entries],
+        "export": [_entry_dict(entry) for entry in chart.export_entries],
     }
 
 
 def _chart(raw: dict[str, Any]) -> ChartReading:
     return ChartReading(
-        import_tiers=tuple(_tier(tier) for tier in raw["import_tiers"]),
-        export_tiers=tuple(_tier(tier) for tier in raw["export_tiers"]),
-        # Snapshots saved before the axis was read have none; matching then works as before.
-        tick_spacing=None if raw.get("tick_spacing") is None else float(raw["tick_spacing"]),
+        import_entries=tuple(_entry(entry) for entry in raw["import"]),
+        export_entries=tuple(_entry(entry) for entry in raw["export"]),
     )

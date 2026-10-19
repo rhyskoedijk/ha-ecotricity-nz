@@ -33,6 +33,7 @@ from custom_components.ecotricity_nz.const import (
     PRICING_RETRY_MAX_INTERVAL,
 )
 from custom_components.ecotricity_nz.store import (
+    STORAGE_VERSION,
     PricingSnapshot,
     _snapshot,
     _snapshot_dict,
@@ -248,7 +249,11 @@ async def test_saved_pricing_for_another_icp_is_ignored(
     snapshot = _fixture_snapshot()
     data = _snapshot_dict(snapshot)
     data["icp"]["icp"] = "9999999999ZZ9Z9"
-    hass_storage[_storage_key(config_entry)] = {"version": 1, "key": "x", "data": data}
+    hass_storage[_storage_key(config_entry)] = {
+        "version": STORAGE_VERSION,
+        "key": "x",
+        "data": data,
+    }
 
     await _setup(hass, config_entry)
     mock_onboarding.async_get_icp.assert_awaited()
@@ -264,7 +269,11 @@ async def test_damaged_saved_pricing_is_fetched_again(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
-    hass_storage[_storage_key(config_entry)] = {"version": 1, "key": "x", "data": {"icp": {}}}
+    hass_storage[_storage_key(config_entry)] = {
+        "version": STORAGE_VERSION,
+        "key": "x",
+        "data": {"icp": {}},
+    }
 
     await _setup(hass, config_entry)
     assert "Ignoring the saved pricing" in caplog.text
@@ -329,17 +338,32 @@ def _fixture_snapshot() -> PricingSnapshot:
 def test_snapshot_round_trip() -> None:
     snapshot = _fixture_snapshot()
     # Through JSON, as Home Assistant's store saves it. Only the unused personal details differ.
-    assert all(chart.tick_spacing for chart in snapshot.charts.values())
+    assert snapshot.charts
     saved = json.loads(json.dumps(_snapshot_dict(snapshot)))
     assert _snapshot(saved) == replace(snapshot, icp=replace(snapshot.icp, address="", region=""))
 
 
-def test_snapshot_saved_before_the_axis_was_read() -> None:
-    # Older files have no tick spacing; their charts still load, and match as they used to.
-    saved = json.loads(json.dumps(_snapshot_dict(_fixture_snapshot())))
-    for chart in saved["charts"].values():
-        del chart["tick_spacing"]
-    assert all(chart.tick_spacing is None for chart in _snapshot(saved).charts.values())
+async def test_pricing_saved_in_an_older_format_is_fetched_again(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Snapshots from before chart legends were read hold bar heights, which no longer mean
+    # anything, so they're dropped and pricing is fetched again.
+    freezer.move_to(WINTER_PEAK)
+    old = _snapshot_dict(_fixture_snapshot())
+    hass_storage[_storage_key(config_entry)] = {
+        "version": STORAGE_VERSION - 1,
+        "key": _storage_key(config_entry),
+        "data": old,
+    }
+
+    await _setup(hass, config_entry)
+    mock_onboarding.async_get_icp.assert_awaited()
+    assert _state(hass, "current_import_price") != "unavailable"
+    assert hass_storage[_storage_key(config_entry)]["version"] == STORAGE_VERSION
 
 
 @pytest.mark.usefixtures("mock_onboarding")

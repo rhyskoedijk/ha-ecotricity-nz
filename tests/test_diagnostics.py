@@ -35,7 +35,8 @@ async def test_diagnostics_redact_personal_data(
     text = json.dumps(diagnostics, default=str)
 
     assert diagnostics["pricing"]["plan"]["description"] == "Low User"
-    assert diagnostics["pricing"]["import_slots"] is not None
+    assert diagnostics["pricing"]["pricing"]["import_side"]["slots"] is not None
+    assert diagnostics["pricing"]["periods"]["import_alignment"] == "network"
     # Registry details are kept; only the identifying fields inside them are redacted.
     details = diagnostics["pricing"]["icp_details"]
     assert details["network_code"] == DEFAULT_NETWORK

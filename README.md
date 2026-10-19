@@ -8,14 +8,14 @@ This is a community integration and isn't affiliated with Ecotricity NZ. The Eco
 
 ## Features
 
-- **Current prices**: the import and export price right now, following your plan's peak, off-peak and shoulder windows. Each price is broken down into supplier, network and levy rates via sensor attributes.
-- **Time-of-use periods**: the current period, today's windows, and when the period next changes. Useful for automations and utility meter helpers.
+- **Current prices**: the exact import and export price right now. Each price is broken down into supplier, network and levy rates via sensor attributes.
+- **Time-of-use periods**: the current period, today's windows, and when the period or price next changes. Useful for automations and utility meter helpers. Where Ecotricity's and your network's TOU periods don't line up, they each get a sensor so you can track usage accurately.
 - **Every price on your plan**: a sensor for each period's price, plus the fixed daily charge. The fixed daily charge is broken down into supplier, network, and metering hire rates via sensor attributes.
 - **Pricing seasons**: the current season and when the next one starts, as prices and windows can change between them.
 - **Time-of-use chart**: Ecotricity's own chart for today, as an image.
 - **Usage history**: hourly import, export and carbon savings statistics, backfilled as far back as the Ecotricity portal data goes. This functionality requires your customer portal login.
 - **Controlled load**: prices for controlled-load supply such as ripple-controlled hot water, if your plan has them.
-- **ICP, smart meter, and regional network info**: sensors for your ICP number, smart meter serial number (with type and certification expiry attributes), and regional network (with import and export loss factor multiplier attributes).
+- **ICP, smart meter, and regional network info**: sensors for your ICP number, smart meter serial number (with type and certification expiry attributes), regional network, and your connection's import and export line loss factors.
 
 ## Installation
 
@@ -59,26 +59,32 @@ All entities belong to a device named **ICP &lt;icp&gt;**, so entity IDs look li
 
 ### Pricing
 
-| Entity                                      | Description                                                                                 | Attributes                                               |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Current import price                        | Import price for the current half-hour.                                                     | `period`, `supplier_rate`, `network_rate`, `ea_levy`     |
-| Current export price                        | Export credit for the current half-hour. Only created if you export.                        | `period`, `supplier_rate`, `network_rate`                |
-| Current controlled price                    | Controlled-load price. Only created if your plan has one.                                   | `supplier_rate`, `network_rate`                          |
-| Daily charge                                | Total fixed charge per day, in NZD/d.                                                       | `supplier_rate`, `network_rate`, `metering_rate`         |
-| _Period_ import, export or controlled price | One sensor per period on your plan, for example **Peak import price**. Disabled by default. | `charged_as`, `supplier_rate`, `network_rate`, `ea_levy` |
+| Entity                                      | Description                                                                                 | Attributes                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Current import price                        | Import price for the current half-hour.                                                     | `period`, `supplier_rate`, `network_rate`, `ea_levy` |
+| Current export price                        | Export credit for the current half-hour. Only created if you export.                        | `period`, `supplier_rate`, `network_rate`            |
+| Current controlled price                    | Controlled-load price. Only created if your plan has one.                                   | `supplier_rate`, `network_rate`                      |
+| Daily charge                                | Total fixed charge per day, in NZD/d.                                                       | `supplier_rate`, `network_rate`, `metering_rate`     |
+| _Period_ import, export or controlled price | One sensor per period on your plan, for example **Peak import price**. Disabled by default. | `supplier_rate`, `network_rate`, `ea_levy`           |
 
-If a season doesn't price a period separately and one price applies all day (e.g. it's "off-peak" all day), that period's sensor shows the price you're actually charged, and `charged_as` says which period it is. Anytime, peak and off-peak have the same names on every plan. Every other price takes its name from your plan's own rate descriptions, the same ones the Ecotricity portal lists. For example, the "Shoulder Usage" rate provides a **Shoulder import price** sensor and the period `shoulder`; the "Super Off Peak Usage" rate provides **Super off peak import price** and `super_off_peak`. These names follow your plan, so if Ecotricity renames a rate, the sensor's name changes with it (its entity ID and history stay the same). Price sensors are only created for prices your plan has, and are removed if your plan stops having them (e.g. you switch plans). Likewise, the period sensors only list the periods your plan uses as options, so for example, a peak and off-peak only plan won't offer shoulder.
+A period's price sensor shows that period's own price today, and has no value on days the period doesn't apply (a winter-only peak in summer, say). Where Ecotricity's and your network's periods don't line up, some hours cost something in between (see below); the current price sensors always show the exact price. Anytime, peak and off-peak have the same names on every plan. Every other price takes its name from your plan's own rate descriptions, the same ones the Ecotricity portal lists. For example, the "Shoulder Usage" rate provides a **Shoulder import price** sensor and the period `shoulder`; the "Super Off Peak Usage" rate provides **Super off peak import price** and `super_off_peak`. These names follow your plan, so if Ecotricity renames a rate, the sensor's name changes with it (its entity ID and history stay the same). Price sensors are only created for prices your plan has, and are removed if your plan stops having them (e.g. you switch plans). Likewise, the period sensors only list the periods your plan uses as options, so for example, a peak and off-peak only plan won't offer shoulder.
 
 ### Time of use
 
-| Entity                     | Description                                                                                                            | Attributes                                                    |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Current import period      | `anytime`, `peak`, `off_peak`, or a period named from your plan, such as `shoulder`, `super_off_peak`, `weekend`, etc. | `windows`, list of today's windows such as `07:00-11:00 peak` |
-| Current export period      | As above, for export. Import and export can have different windows.                                                    | `windows`                                                     |
-| Next import period change  | When the import period next changes.                                                                                   | `period`, `price`                                             |
-| Next export period change  | When the export period next changes.                                                                                   | `period`, `price`                                             |
-| Next pricing season change | When the pricing season next starts.                                                                                   |                                                               |
-| Time-of-use chart          | Image of Ecotricity's chart for today's day type and season.                                                           |                                                               |
+| Entity                         | Description                                                                                                            | Attributes                                                    |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Current import period          | `anytime`, `peak`, `off_peak`, or a period named from your plan, such as `shoulder`, `super_off_peak`, `weekend`, etc. | `windows`, list of today's windows such as `07:00-11:00 peak` |
+| Current export period          | As above, for export. Import and export can have different windows.                                                    | `windows`                                                     |
+| Current supplier import period | Ecotricity's own import period. Only created where Ecotricity's and your network's periods don't line up (see below).  | `windows`                                                     |
+| Current network import period  | Your network's own import period. Only created alongside the one above.                                                | `windows`                                                     |
+| Current supplier export period | As above, for export.                                                                                                  | `windows`                                                     |
+| Current network export period  | As above, for export.                                                                                                  | `windows`                                                     |
+| Next import period change      | When the import period or price next changes.                                                                          | `period`, `price`                                             |
+| Next export period change      | When the export period or price next changes.                                                                          | `period`, `price`                                             |
+| Next pricing season change     | When the pricing season next starts.                                                                                   |                                                               |
+| Time-of-use chart              | Image of Ecotricity's chart for today's day type and season.                                                           |                                                               |
+
+Each half-hour's price is one of Ecotricity's rates plus one of your network's rates. On most plans their periods line up, and there's one import period and one export period. On some they don't: on Vector, for example, Ecotricity's evening peak ends at 9pm but the network's winter peak runs to 10pm, so 9pm to 10pm costs Ecotricity's off-peak rate plus the network's peak rate. For those plans, **Current supplier import period** and **Current network import period** (or the export ones) show each side's own period, and **Current import period** shows the overall period: the one whose own price is nearest what you're paying. Today's windows split wherever the price changes, so `21:00-22:00 peak` shows up as its own window with its own price.
 
 ### Usage
 
@@ -95,17 +101,19 @@ These sensors are only enabled if you have supplied your Ecotricity customer acc
 
 These describe your electricity connection and integration settings. They're listed under **Diagnostic** on the device page.
 
-| Entity                         | Description                                                           | Attributes                                                  |
-| ------------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------- |
-| ICP                            | Your ICP number.                                                      |                                                             |
-| Network                        | Your network lines company.                                           | `code`, `loss_factor_consumption`, `loss_factor_generation` |
-| Pricing category               | Your network pricing category, such as "Residential Time of Use".     | `code`                                                      |
-| Meter                          | Your meter serial number.                                             | `type`, `smart`, `certification_expiry`                     |
-| Plan                           | Your current Ecotricity plan.                                         | `internal_name`, `code`                                     |
-| Pricing season                 | The current pricing season and its dates.                             | `start`, `end`, `published`                                 |
-| Registered generation capacity | The solar or other generation your network has approved, in kW.       |                                                             |
-| Last meter data update         | When Ecotricity's portal last received new readings from your meter.  |                                                             |
-| Last pricing update            | When this integration last fetched pricing from Ecotricity's website. |                                                             |
+| Entity                         | Description                                                                | Attributes                              |
+| ------------------------------ | -------------------------------------------------------------------------- | --------------------------------------- |
+| ICP                            | Your ICP number.                                                           |                                         |
+| Network                        | Your network lines company.                                                | `code`                                  |
+| Import loss factor             | Your connection's line loss factor for import, such as 1.045.              |                                         |
+| Export loss factor             | Your connection's line loss factor for export. Only created if you export. |                                         |
+| Pricing category               | Your network pricing category, such as "Residential Time of Use".          | `code`                                  |
+| Meter                          | Your meter serial number.                                                  | `type`, `smart`, `certification_expiry` |
+| Plan                           | Your current Ecotricity plan.                                              | `internal_name`, `code`                 |
+| Pricing season                 | The current pricing season and its dates.                                  | `start`, `end`, `published`             |
+| Registered generation capacity | The solar or other generation your network has approved, in kW.            |                                         |
+| Last meter data update         | When Ecotricity's portal last received new readings from your meter.       |                                         |
+| Last pricing update            | When this integration last fetched pricing from Ecotricity's website.      |                                         |
 
 ## Statistic Entities
 
@@ -236,7 +244,8 @@ automation:
 ## Known limitations
 
 - Only residential plans are supported.
-- Ecotricity publishes peak and off-peak hours only as chart images, not as data. The integration reads the bars on those charts and checks them against the plan's prices. If the bars could match more than one set of prices, the chart is treated as unreadable rather than guessed. When a chart can't be read, the current price and period sensors become unavailable and a repair notice appears. Import and export are checked separately, so if only the export chart is unreadable, the import sensors keep working.
+- Ecotricity publishes peak and off-peak hours only as chart images, not as data. The integration reads the price list under each chart and checks every price against the plan's rates. If a price can't be read, or the rates don't explain it, the chart is treated as unreadable rather than guessed. When a chart can't be read, the current price and period sensors become unavailable and a repair notice appears. Import and export are checked separately, so if only the export prices are unreadable, the import sensors keep working.
+- Ecotricity bills its energy rates on your usage plus line losses, but its charts, and so the price sensors, leave the losses out. To include them, multiply the `supplier_rate` attribute by the **Import loss factor** sensor and add the difference to the current price: `price + supplier_rate × (loss factor - 1)`. Network rates and the levy are billed on your metered usage alone, without line losses.
 - Controlled-load support hasn't been tested against a real controlled-load ICP. It's based on Ecotricity's site code and the electricity registry's codes. If your controlled-load prices look wrong, please open an issue.
 - Ecotricity's onboarding website guards its data with a browser check, which this integration reproduces in code. If Ecotricity changes that check, pricing updates stop until the integration is updated, and a repair notice tells you so. The saved pricing keeps working, so the current season's prices and windows carry on, and so does the next season if Ecotricity had already published it. A season published after that won't be picked up.
 

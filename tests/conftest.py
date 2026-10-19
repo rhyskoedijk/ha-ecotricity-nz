@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Generator, Iterable
 from datetime import UTC, date, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,6 +27,7 @@ from custom_components.ecotricity_nz.api.parsers import (
     parse_plan_titles,
     parse_values,
 )
+from custom_components.ecotricity_nz.api.timeframes import ChartReading, read_chart, shown_price
 from custom_components.ecotricity_nz.const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
@@ -34,10 +36,12 @@ from custom_components.ecotricity_nz.const import (
     CONF_PLAN_ID,
     DOMAIN,
 )
+from custom_components.ecotricity_nz.tariff import SideRates, Slot, explain, side_rates
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # One folder per network, named by its distributor code, holding icp.json where the network has a
 # test ICP, and one folder per price category with that category's plan_list.json and charts/.
+# Only charts that test something no other chart does are kept (docs/development.md).
 NETWORKS = FIXTURES / "networks"
 # The network and price category most tests run against: the test ICP's.
 DEFAULT_NETWORK = "CKHK"
@@ -148,20 +152,6 @@ def has_extra_network_buckets(plan: Plan) -> bool:
     )
 
 
-def has_anytime_network_rate(plan: Plan) -> bool:
-    """A network rate that applies at all hours, next to the network's time-of-use rates.
-
-    Some networks publish a charge such as a transmission charge this way, with no anytime retail
-    rate beside it.
-    """
-    for season in plan.seasons:
-        network = {rate.charge for rate in import_rates(plan.network_rates, season.start)}
-        retail = {rate.charge for rate in import_rates(plan.retail_rates, season.start)}
-        if ANYTIME in network and ANYTIME not in retail and network - {ANYTIME}:
-            return True
-    return False
-
-
 def chart_name(plan: Plan, day: date, *, weekend: bool = False, include_gst: bool = False) -> str:
     """Return the file name of a plan's chart for the season containing a day.
 
@@ -182,8 +172,7 @@ def chart_name(plan: Plan, day: date, *, weekend: bool = False, include_gst: boo
 def stored_charts(plan: Plan) -> list[tuple[date, Path]]:
     """Return the first day of each season with a stored chart for the plan, and the chart.
 
-    Charts are stored once per distinct image, so a season that reuses an earlier season's chart
-    has no file of its own.
+    Only charts that test something no other chart does are kept, so most seasons have none.
     """
     charts = []
     for season in sorted(plan.seasons, key=lambda season: season.start):
@@ -200,10 +189,88 @@ def chart_plan(chart: Path) -> tuple[Plan, date]:
     # and a category can have hyphens of its own, so it's taken from the folder.
     network, category = chart.parents[2].name, chart.parents[1].name
     code, _customer, start, *_ = chart.stem.removeprefix(f"{network}-{category}-").split("-")
-    plans = parse_plan_list(load_plan_list(network, category)).all_plans
-    plan = next((plan for plan in plans if plan.code == code), None)
+    raw = json.loads((chart.parents[1] / "plan_list.json").read_text(encoding="utf-8"))
+    plan = next((plan for plan in parse_plan_list(raw).all_plans if plan.code == code), None)
     assert plan is not None, f"{code} isn't in {network}/{category}/plan_list.json"
     return plan, datetime.strptime(start, "%Y%m%d").replace(tzinfo=UTC).date()
+
+
+@cache
+def chart_reading(chart: Path) -> ChartReading:
+    """Return a fixture chart's reading, read once per test run."""
+    return read_chart(chart.read_bytes())
+
+
+def explained_chart(chart: Path) -> dict[bool, tuple[SideRates, tuple[Slot, ...]]]:
+    """Return each side of a fixture chart (keyed by whether it's export), explained by its plan."""
+    plan, day = chart_plan(chart)
+    reading = chart_reading(chart)
+    sides: dict[bool, tuple[SideRates, tuple[Slot, ...]]] = {}
+    for export, entries in ((False, reading.import_entries), (True, reading.export_entries)):
+        rates = side_rates(plan, day, export=export)
+        if not rates.is_empty:
+            sides[export] = (rates, explain(entries, rates))
+    return sides
+
+
+def find_chart_where(scenario: Callable[[Path], bool]) -> Path:
+    """Return the first fixture chart, from any network, that shows a pricing scenario."""
+    chart = next((chart for chart in chart_files() if scenario(chart)), None)
+    assert chart is not None, f"No fixture chart has the {scenario.__name__} scenario"
+    return chart
+
+
+def has_mixed_periods(chart: Path) -> bool:
+    """Half-hours where Ecotricity's period and the network's aren't the same period.
+
+    The price is then one period's supplier rate plus another period's network rate.
+    """
+    return any(
+        ANYTIME
+        not in (slot.supplier.removeprefix(rates.prefix), slot.network.removeprefix(rates.prefix))
+        and slot.supplier != slot.network
+        for rates, slots in explained_chart(chart).values()
+        for slot in slots
+    )
+
+
+def has_hours_without_a_network_rate(chart: Path) -> bool:
+    """A network that publishes rates for some periods only, and charges nothing in the others."""
+    return any(
+        rates.network and slot.network == rates.prefix + ANYTIME
+        for rates, slots in explained_chart(chart).values()
+        for slot in slots
+    )
+
+
+def has_clipped_price(chart: Path) -> bool:
+    """A legend line so long that its last price runs off the image."""
+    reading = chart_reading(chart)
+    return any(entry.clipped for entry in (*reading.import_entries, *reading.export_entries))
+
+
+def has_clipped_price_needing_its_bar(chart: Path) -> bool:
+    """A cut-off price whose remaining digits fit more than one of the plan's prices."""
+    reading = chart_reading(chart)
+    for export, (rates, _slots) in explained_chart(chart).items():
+        prices = {shown_price(combo.price) for combo in rates.candidates()}
+        entries = reading.export_entries if export else reading.import_entries
+        for entry in entries:
+            if (
+                entry.clipped
+                and len({price for price in prices if price.startswith(entry.text)}) > 1
+            ):
+                return True
+    return False
+
+
+def has_overlapping_seasons(plan: Plan) -> bool:
+    """Seasons that overlap, such as "Standard Rates" all year and a winter season inside it."""
+    return any(
+        a is not b and a.start <= b.end and b.start <= a.end
+        for a in plan.seasons
+        for b in plan.seasons
+    )
 
 
 def network_codes() -> list[str]:

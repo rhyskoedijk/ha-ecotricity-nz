@@ -87,21 +87,22 @@ flowchart TD
     B --> F{"Chosen plan still listed?"}
     F -- yes --> Q["Use the chosen plan"]
     F -- no --> S["Use the site's default plan;<br/>repair issue asks for a new choice"]
-    Q & S --> G["Price today's buckets<br/>(tariff.py)"]
-    G --> H{"More than one price<br/>in a direction?"}
-    H -- no --> I["Same bucket all day"]
-    H -- yes --> J["Weekday and weekend charts<br/>for the season, saved at the last fetch"]
-    J --> K["Read bars and match heights<br/>to bucket prices"]
-    K -- fits --> L["48 half-hour slots<br/>per day type"]
-    K -- "doesn't fit" --> M["Current price unavailable;<br/>repair issue after 3 fetches"]
+    Q & S --> G["Today's rates<br/>(tariff.py)"]
+    G --> H{"More than one possible price<br/>in a direction?"}
+    H -- no --> I["Same price all day"]
+    H -- yes --> J["Weekday and weekend chart legends<br/>for the season, saved at the last fetch"]
+    J --> K["Explain each window's price as one supplier<br/>and one network rate"]
+    K -- explained --> L["48 half-hour prices<br/>per day type"]
+    K -- "not explained" --> M["Current price unavailable;<br/>repair issue after 3 fetches"]
+    L --> N["Periods: Ecotricity's, the network's,<br/>or both when they don't line up"]
 ```
 
-The pricing coordinator keeps fetching separate from working out prices. A fetch downloads the ICP details, plans (with their seasons and rates), plan names, and the chart readings for the current season and the next one once it's published. `store.py` saves all of it to `.storage/ecotricity_nz.<entry_id>.pricing`. Each day's prices and windows are worked out from that saved copy with no requests: rates and seasons carry their own dates, and `SlotMap` covers weekdays and weekends. So once a season's pricing has been fetched, everything keeps working through restarts and without an internet connection, into the next season too if Ecotricity had published it.
+The pricing coordinator keeps fetching separate from working out prices. A fetch downloads the ICP details, plans (with their seasons and rates), plan names, and the chart readings for every published season that hasn't ended. `store.py` saves all of it to `.storage/ecotricity_nz.<entry_id>.pricing`. Each day's prices and windows are worked out from that saved copy with no requests: rates and seasons carry their own dates, and `DaySlots` covers weekdays and weekends. So once a season's pricing has been fetched, everything keeps working through restarts and without an internet connection, into the next season too if Ecotricity had published it.
 
 Just after each NZ midnight, the coordinator works out the new day from the saved pricing and updates the entities. That isn't a coordinator refresh, and it never fetches. Separately, it checks once a day (`PRICING_CHECK_INTERVAL`), counted from when the entry loaded, so installs don't all fetch at midnight on the 1st. A check only fetches when `_fetch_reason` gives a reason:
 
 - Nothing is saved yet, or the refresh action asked for it.
-- A different plan was chosen in the options, since only the chosen plan's charts are downloaded.
+- A different plan was chosen in the options, since only the chosen plan's charts are downloaded. A new plan's charts are all downloaded at once, up to two per season (16 requests at most so far), paced like any other fetch.
 - A week has passed since the last fetch, to pick up rate changes and newly published seasons.
 - Once a day at most: on the 1st of the month (seasons start on the 1st), on the last day of a season, while no published season covers today or tomorrow, and while today's time-of-use windows can't be worked out.
 
@@ -109,11 +110,16 @@ A reason stays true until a fetch succeeds. After a failure, the check interval 
 
 Nothing here is specific to one network. Network codes, price categories, plan codes, charge buckets, seasons and time-of-use windows all come from the services for the ICP being set up. Test fixtures may retain public network codes, but use synthetic ICPs and exclude customer-specific details.
 
-The per-period price sensors follow the plan. Whenever a refresh turns up a bucket that has no sensor yet (because a new season added a shoulder rate, or a different plan was chosen in the options), the sensor platform adds one. When the plan no longer has a bucket (a different plan was chosen, or Ecotricity withdrew a season), its sensor is removed from the entity registry, so only the plan's own prices are listed. The period sensors' options follow the same buckets.
+`api/timeframes.py` reads each chart's legend: every window and its exact price (see [api.md](api.md#timeframe-charts-time-of-use-hours)). `tariff.py` then explains each price as one of Ecotricity's rates plus one of the network's, plus anytime rates and levies (`explain`), following the rules in [api.md](api.md#how-prices-are-made-up). A price no combination explains rejects the chart rather than being guessed. Each half-hour (`Slot`) keeps its exact price, the two rates' buckets, and the parts it was built from (supplier charge, network charge and levies), so the price sensors can show a breakdown that matches the plan.
 
-`tariff.py` turns the plan's retail, network and levy rates into one price per bucket for the day, following the same rules as the onboarding site (listed in [api.md](api.md#how-the-site-combines-rates)). An anytime retail rate is added to every network-defined non-anytime bucket, including charge codes the integration does not map to a friendly period, and an anytime network rate (such as a transmission charge) is added to every other bucket in its group. The chart supplies which bucket applies in each half-hour, and the bar heights double as a check: if they don't line up with the prices `tariff.py` worked out, the chart is rejected rather than trusted. Alongside each bucket's total it keeps the parts it was built from (supplier charge, network charge and levies), each tagged with the period of its own rate, so the price sensors can show a breakdown that matches the plan.
+Each side (import and export) then gets its periods (`plan_alignment`, across today's season and every later one with readable charts):
 
-The current price, current period and next period change sensors (each for import and export) re-evaluate at every half-hour boundary using their own timers, so they change when the window does rather than at the next poll. The next period change looks no further than the next season change, because a new season can bring new windows.
+- If the price only depends on Ecotricity's period, that's the period. Where Ecotricity has one rate all day and the price depends on the network's period (the battery plans' import), the network's.
+- Otherwise the side is split. The period sensor shows the overall period, the one whose own price is nearest the half-hour's price (`price_side`), and a supplier and a network period sensor show each one's own periods.
+
+The plan's periods are worked out over every season, not only today's, so sensors don't come and go with the seasons. Whenever a refresh turns up a period that has no price sensor yet (because a new season added a shoulder rate, or a different plan was chosen in the options), or a side becomes split, the sensor platform adds the sensors. When the plan no longer has a period, or a side lines up again, they're removed from the entity registry, so only the plan's own prices and periods are listed. The period sensors' options follow the same periods.
+
+The current price, current period and next period change sensors (each for import and export) re-evaluate at every half-hour boundary using their own timers, so they change when the window does rather than at the next poll. The next period change is the next change of period or price, so it also catches a price change within one period on a split side, and looks no further than the next season change, because a new season can bring new windows.
 
 The time-of-use chart image entity points Home Assistant at Ecotricity's chart for today's day type and season; Home Assistant downloads and caches it. When no published season covers today, the chart's dates are unknown, so the entity has no image URL rather than a broken one.
 
@@ -182,7 +188,7 @@ sequenceDiagram
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Onboarding site unreachable          | The saved pricing carries on. The fetch is tried again after 1 hour, then 2, 4 and 8 hours, staying at 8 hours, and the daily check resumes once a fetch works or nothing is due. With nothing saved yet, `UpdateFailed` with the same `retry_after`, and at setup the entry retries.                                                                    |
 | Attestation rejected                 | As above, and after three failures in a row a repair issue says the site has probably changed. Only a 403, or a challenge or token in JSON the integration can't make sense of, counts. Any other error status from the attestation endpoints, or a reply that isn't JSON at all (such as a maintenance page), is treated as the site being unreachable. |
-| Chart unreadable or prices don't fit | Current price and period sensors go unavailable; everything else keeps working. Import and export are matched separately, so a mismatch on one side leaves the other working. Repair issue after three fetches in a row with the problem.                                                                                                                |
+| Chart unreadable or prices don't fit | Current price and period sensors go unavailable; everything else keeps working. Import and export are explained separately, so a mismatch on one side leaves the other working. A later season whose charts can't be read is left out until they can. Repair issue after three fetches in a row with the problem.                                         |
 | Portal login rejected                | `ConfigEntryAuthFailed` starts the reauthentication flow.                                                                                                                                                                                                                                                                                                |
 | Portal unreachable                   | Includes the portal still refusing the session straight after a successful login. The consumption import (including the first backfill) retries after 30 minutes; pricing doesn't use the portal.                                                                                                                                                        |
 | Chosen plan no longer listed         | The site's default plan is used, and a repair issue asks for a new choice in the options.                                                                                                                                                                                                                                                                |

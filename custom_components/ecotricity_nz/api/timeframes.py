@@ -1,15 +1,15 @@
-"""Read time-of-use windows from Ecotricity's plan timeframe charts.
+"""Read time-of-use windows and prices from the legend of Ecotricity's plan timeframe charts.
 
 Ecotricity publishes the hours each rate applies only as a server-rendered PNG per plan, season
 and day type (weekday or weekend). No API, page data or public dataset carries them (see
-docs/api.md). Each chart draws 48 half-hour bars: blue import bars above the axis and orange export
-bars below it, with each bar's height proportional to its price and its shade marking its tier.
+docs/api.md). Under the bars, each chart has a legend in a monospace font listing every import
+and export window with its price, for example "7am - 11am : -21.00c": cents excluding GST, as the
+GST-inclusive price rounded to the cent and converted back (see `shown_price`).
 
-This module finds the 48 bars, groups them into tiers by colour and height, and measures each tier's
-height. A shade usually marks one price, but not always, so bars of one shade with different heights
-are separate tiers. Turning tiers into prices and charge buckets happens in `match_tiers`, which
-checks the bar heights against the API's own prices so a misread chart is rejected rather than
-trusted.
+This module reads that legend by matching each character against the templates in `glyphs.py`.
+A window with a price that runs off the right edge of the image (long battery-plan export lines)
+keeps the digits that fit, with an estimate of the price from its bar's height, so the plan's
+rates can settle which price it is. Turning windows into rates happens in `tariff.py`.
 
 Pillow is a Home Assistant core dependency, so no extra requirement is needed.
 """
@@ -17,68 +17,58 @@ Pillow is a Home Assistant core dependency, so no extra requirement is needed.
 from __future__ import annotations
 
 import io
-import math
+import re
 import statistics
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
+from functools import cache
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from PIL import Image, UnidentifiedImageError
 
 from .exceptions import EcotricityResponseError
+from .glyphs import GLYPHS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from datetime import date
 
 SLOTS_PER_DAY = 48
+SLOT_MINUTES = 30
+MINUTES_PER_DAY = 24 * 60
 _START_PLACEHOLDER = "SSSSSSSS"
 _END_PLACEHOLDER = "EEEEEEEE"
 _NO_GST_SUFFIX = "-NOGST.png"
+_GST = Decimal("1.15")
+_CENT = Decimal("0.01")
 
-# A pixel belongs to an import bar when it is clearly blue, and to an export bar when it is
+# Legend text is dark grey to black on white. Lighter pixels are anti-aliasing at glyph edges.
+_INK = 200
+# Rows of one text line are at most this far apart; lines are about 10 pixels apart.
+_MAX_LINE_GAP = 2
+_GLYPH_ROWS = 16
+# Characters are matched to the nearest template. On the fixture charts every character is within
+# 0.11 of its own template and at least 0.39 from any other, so this accepts small rendering
+# changes but never a different character.
+_MAX_GLYPH_DISTANCE = 0.2
+# The import and export columns are much further apart than words within a column.
+_COLUMN_GAP_WIDTHS = 4
+# Each column's heading ("Import rate", "Export rate") is this many characters, which gives the
+# width of one character from the centres of its first and last.
+_HEADING_LENGTH = 11
+_HEADINGS = {"I": False, "E": True}
+_TIME = r"(\d{1,2})(?::(\d\d))?([ap]m)"
+_ENTRY = re.compile(rf"{_TIME} *- *{_TIME} *: *(-?\d+\.\d\d)c")
+# A price cut off by the image's right edge, which can only be the line's last entry.
+_CLIPPED = re.compile(rf"{_TIME} *- *{_TIME} *: *(-?[\d.]*)$")
+# A pixel belongs to an import bar when it's clearly blue, and to an export bar when it's
 # clearly orange. Grey axis lines, white background and black text fall in neither.
 _HUE_MARGIN = 40
-# Light bars are stippled, so runs of bar pixels may have small gaps.
-_MAX_RUN_GAP = 3
-# Bars are much taller than the legend swatches; ignore runs shorter than this.
-_MIN_RUN_LENGTH = 12
-# Bar columns contain at least this share of the busiest column's bar pixels.
-_BAR_PROFILE_SHARE = 0.5
-# Bars whose median colours are closer than this belong to the same tier. Ecotricity's palette
-# has 7 import and 6 export shades, the closest two only 23.5 apart (RGB distance), while the
-# same shade read from different bars varies by about 4. Halfway keeps every shade separate.
-_TIER_COLOUR_TOLERANCE = 12.0
-# Bars of one shade can still be different prices: some network charts draw two close prices in
-# the same shade, a few pixels apart. Bars of one price measure the same height to the pixel, so
-# bars more than this many pixels apart are separate tiers.
-_TIER_HEIGHT_TOLERANCE = 2
-# A fit must land every tier within this many cents of a bucket price.
-_FIT_PRICE_TOLERANCE = 0.6
-# A fit must also land every tier within this many pixels of its price. The cents tolerance alone
-# isn't enough: anchoring the tallest tier on a near-zero price (a network rate of 0c plus the
-# levy, say) gives a scale of hundreds of pixels per cent, where any bar is within 0.6c of that
-# price and the whole chart "fits" it. On every captured chart the matched tiers are within 1.4px
-# of their prices, at 5 to 10 pixels per cent.
-_FIT_PIXEL_TOLERANCE = 3.0
-# The y-axis is a grey line at least this long, left of the first bar, with its labels to its left.
-_MIN_AXIS_LENGTH = 100
-# Axis lines and text are grey: no channel brighter than this, and channels this close together.
-_MAX_AXIS_BRIGHTNESS = 240
-_MAX_AXIS_SATURATION = 20
-# Label text is dark; the axis line and plot background are lighter.
-_MAX_TEXT_BRIGHTNESS = 450
-# Rows of one label are at most this far apart (a "5" has a gap of a few pixels).
-_MAX_LABEL_GAP = 5
-# Axis labels sit at most this many pixels beyond either end of the axis line.
-_LABEL_MARGIN = 8
-# The tick spacing is only trusted from at least this many evenly spaced labels.
-_MIN_TICKS = 3
-_TICK_SPACING_TOLERANCE = 2.0
-# Chart axes step in "nice" values: 1, 2, 2.5 or 5 times a power of ten. A scale whose tick step
-# lands within this share of one of them is plausible.
-_NICE_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
-_NICE_STEP_TOLERANCE = 0.04
+# Light bars are stippled, so a bar's columns can have small gaps.
+_MAX_BAR_GAP = 2
+# Prices too close to zero to measure a bar against.
+_MIN_SCALE_PRICE = 1.0
 
 
 class ChartReadError(EcotricityResponseError):
@@ -86,24 +76,37 @@ class ChartReadError(EcotricityResponseError):
 
 
 @dataclass(frozen=True, slots=True)
-class ChartTier:
-    """Bars of one shade and height on a chart."""
+class LegendEntry:
+    """One window from a chart's legend, with its price."""
 
-    colour: tuple[int, int, int]
-    height: float
-    """Median bar height in pixels. Proportional to the absolute price."""
-    slots: frozenset[int]
-    """Half-hour slot indexes (0 is 00:00 to 00:30) drawn in this shade."""
+    start: int
+    """Minutes after midnight."""
+    end: int
+    """Minutes after midnight; 1440 is the midnight that ends the day."""
+    text: str
+    """The price as printed, in cents excluding GST, for example "-21.00". Cut short if the
+    legend line runs off the image."""
+    clipped: bool = False
+    estimate: float | None = None
+    """The price estimated from the bar heights, for a clipped entry where it could be measured."""
+
+    @property
+    def price(self) -> float | None:
+        """Return the printed price, or None if it's cut short."""
+        return None if self.clipped else float(self.text)
+
+    @property
+    def slots(self) -> range:
+        """Return the half-hour slot indexes the window covers (0 is 00:00 to 00:30)."""
+        return range(self.start // SLOT_MINUTES, self.end // SLOT_MINUTES)
 
 
 @dataclass(frozen=True, slots=True)
 class ChartReading:
-    """Import and export tiers read from one chart."""
+    """Import and export windows read from one chart's legend."""
 
-    import_tiers: tuple[ChartTier, ...]
-    export_tiers: tuple[ChartTier, ...]
-    tick_spacing: float | None = None
-    """Pixels between the y-axis labels, or None if the axis couldn't be read."""
+    import_entries: tuple[LegendEntry, ...]
+    export_entries: tuple[LegendEntry, ...]
 
 
 def needs_season(template: str) -> bool:
@@ -116,8 +119,8 @@ def chart_path(
 ) -> str:
     """Return the chart path for a season.
 
-    Charts excluding GST are used for reading, because their bar heights match the API's prices.
-    The GST-inclusive version is for display; note that Ecotricity adds GST to its export rows too.
+    Charts excluding GST are used for reading, because their legend prices match the API's. The
+    GST-inclusive version is for display; note that Ecotricity adds GST to its export rows too.
     """
     path = template
     if start is not None and end is not None:
@@ -128,6 +131,268 @@ def chart_path(
     return path + (".png" if include_gst else _NO_GST_SUFFIX)
 
 
+def shown_price(cents: float) -> str:
+    """Return a price as a chart's legend prints it, such as "30.56" for 30.5532.
+
+    The legend rounds the GST-inclusive price to the cent and converts that back, rounding again,
+    so it can differ from the price rounded directly by a cent.
+    """
+    with_gst = (Decimal(repr(cents)) * _GST).quantize(_CENT, ROUND_HALF_UP)
+    return str((with_gst / _GST).quantize(_CENT, ROUND_HALF_UP))
+
+
+type _Glyph = tuple[tuple[int, ...], ...]
+type _Run = tuple[int, int]
+
+_TEMPLATES: dict[str, _Glyph] = {
+    char: tuple(tuple(int(value, 16) * 16 for value in row) for row in rows)
+    for char, rows in GLYPHS.items()
+}
+
+
+def glyph_distance(glyph: _Glyph, template: _Glyph) -> float:
+    """Return how different two glyphs are, from 0 (identical) to about 1.
+
+    Both are aligned on their left edge and top row. A shift of a pixel either way is also tried,
+    since anti-aliasing can move a glyph's first column.
+    """
+    best = 1.0
+    for shift in (0, -1, 1):
+        diff = mass = 0
+        for y in range(max(len(glyph), len(template))):
+            row = glyph[y] if y < len(glyph) else ()
+            other = template[y] if y < len(template) else ()
+            width = max(len(row), len(other) + shift)
+            for x in range(min(0, shift), width):
+                a = row[x] if 0 <= x < len(row) else 0
+                b = other[x - shift] if 0 <= x - shift < len(other) else 0
+                diff += abs(a - b)
+                mass += max(a, b)
+        if mass:
+            best = min(best, diff / mass)
+        if best < _MAX_GLYPH_DISTANCE / 4:
+            break
+    return best
+
+
+@cache
+def _match_glyph(glyph: _Glyph) -> str:
+    """Return the character a glyph is, cached because charts repeat the same pixels."""
+    char, distance = min(
+        ((char, glyph_distance(glyph, template)) for char, template in _TEMPLATES.items()),
+        key=lambda item: item[1],
+    )
+    if distance > _MAX_GLYPH_DISTANCE:
+        raise ChartReadError("The chart's legend has a character that can't be read")
+    return char
+
+
+class _Legend:
+    """The legend's text lines and characters, read from a greyscale chart."""
+
+    def __init__(self, image: Image.Image) -> None:
+        self._width, self._height = image.size
+        pixels = image.load()
+        assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
+        self._pixels = pixels
+        # Where the ink is, as bytes by row and by column, so finding lines and characters is a
+        # byte search rather than a loop over every pixel.
+        ink = image.point(lambda value: 255 if value < _INK else 0)
+        self._by_row = ink.tobytes()
+        self._by_column = ink.transpose(Image.Transpose.TRANSPOSE).tobytes()
+
+    def lines(self) -> list[tuple[int, int]]:
+        """Return the (top, bottom) rows of each line of text."""
+        width = self._width
+        rows = [y for y in range(self._height) if any(self._by_row[y * width : (y + 1) * width])]
+        lines: list[list[int]] = []
+        for y in rows:
+            if lines and y - lines[-1][-1] <= _MAX_LINE_GAP:
+                lines[-1].append(y)
+            else:
+                lines.append([y])
+        return [(line[0], line[-1]) for line in lines]
+
+    def runs(self, line: tuple[int, int]) -> list[_Run]:
+        """Return the (first, last) columns of each stretch of ink along a line."""
+        top, bottom = line
+        height = self._height
+        runs: list[_Run] = []
+        start: int | None = None
+        for x in range(self._width + 1):
+            ink = x < self._width and any(
+                self._by_column[x * height + top : x * height + bottom + 1]
+            )
+            if ink and start is None:
+                start = x
+            elif not ink and start is not None:
+                runs.append((start, x - 1))
+                start = None
+        return runs
+
+    def glyph(self, runs: Sequence[_Run], top: int) -> _Glyph:
+        """Return the pixels of one character, trimmed to its ink, from the line's top row."""
+        first = max(min(run[0] for run in runs) - 1, 0)
+        last = min(max(run[1] for run in runs) + 1, self._width - 1)
+        bottom = min(top + _GLYPH_ROWS, self._height)
+        columns = [
+            x
+            for x in range(first, last + 1)
+            if any(int(self._pixels[x, y]) < 255 for y in range(top, bottom))  # type: ignore[arg-type] # noqa: PLR2004 - white
+        ]
+        rows = tuple(
+            tuple(255 - int(self._pixels[x, y]) for x in range(columns[0], columns[-1] + 1))  # type: ignore[arg-type]
+            for y in range(top, bottom)
+        )
+        while rows and not any(rows[-1]):
+            rows = rows[:-1]
+        return rows
+
+
+@dataclass(slots=True)
+class _Column:
+    export: bool
+    origin: float
+    """The centre of the column's first character."""
+    pitch: float
+    """The width of one character."""
+    lines: list[str]
+
+
+def _centre(run: _Run) -> float:
+    return (run[0] + run[1]) / 2
+
+
+def _columns(legend: _Legend, heading: tuple[int, int], runs: list[_Run]) -> list[_Column]:
+    """Return the legend's columns from its heading line ("Import rate", "Export rate")."""
+    width = statistics.median(run[1] - run[0] + 1 for run in runs)
+    groups: list[list[_Run]] = [[runs[0]]]
+    for previous, run in pairwise(runs):
+        if run[0] - previous[1] > _COLUMN_GAP_WIDTHS * width:
+            groups.append([run])
+        else:
+            groups[-1].append(run)
+    columns: list[_Column] = []
+    for group in groups:
+        heading_char = _match_glyph(legend.glyph(group[:1], heading[0]))
+        pitch = (_centre(group[-1]) - _centre(group[0])) / (_HEADING_LENGTH - 1)
+        if heading_char not in _HEADINGS or pitch <= 0:
+            raise ChartReadError("The chart's legend headings can't be read")
+        columns.append(_Column(_HEADINGS[heading_char], _centre(group[0]), pitch, []))
+    return columns
+
+
+def _line_cells(runs: list[_Run], origin: float, pitch: float) -> dict[int, list[_Run]]:
+    """Group a column's runs of ink into character cells, refining the pitch along the line.
+
+    Some characters ("m", "r", "3") are drawn as more than one run, so runs are grouped by which
+    cell their centre falls in rather than taken one per character.
+    """
+    for _ in range(3):
+        cells = [round((_centre(run) - origin) / pitch) for run in runs]
+        if len(set(cells)) < 2:  # noqa: PLR2004 - two points make a line
+            break
+        mean_cell = statistics.fmean(cells)
+        mean_x = statistics.fmean(_centre(run) for run in runs)
+        spread = sum((cell - mean_cell) ** 2 for cell in cells)
+        fitted = (
+            sum(
+                (cell - mean_cell) * (_centre(run) - mean_x)
+                for cell, run in zip(cells, runs, strict=True)
+            )
+            / spread
+        )
+        if abs(fitted - pitch) > pitch / 10:
+            break
+        pitch = fitted
+    grouped: dict[int, list[_Run]] = {}
+    for run in runs:
+        grouped.setdefault(round((_centre(run) - origin) / pitch), []).append(run)
+    return grouped
+
+
+def _read_text(image: Image.Image) -> list[_Column]:
+    """Return the legend's text, line by line, for each column."""
+    legend = _Legend(image)
+    lines = legend.lines()
+    for index, line in enumerate(lines):
+        runs = legend.runs(line)
+        if not runs:
+            continue  # pragma: no cover - every line found has ink
+        try:
+            first = _match_glyph(legend.glyph(runs[:1], line[0]))
+        except ChartReadError:
+            continue
+        if first in _HEADINGS:
+            columns = _columns(legend, line, runs)
+            entry_lines = lines[index + 1 :]
+            break
+    else:
+        raise ChartReadError("The chart has no legend")
+
+    for top, bottom in entry_lines:
+        runs = legend.runs((top, bottom))
+        for position, column in enumerate(columns):
+            start = column.origin - column.pitch / 2
+            end = (
+                columns[position + 1].origin - column.pitch / 2
+                if position + 1 < len(columns)
+                else float("inf")
+            )
+            own = [run for run in runs if start <= _centre(run) < end]
+            if not own:
+                continue
+            cells = _line_cells(own, column.origin, column.pitch)
+            text = [" "] * (max(cells) + 1)
+            for cell, cell_runs in cells.items():
+                if cell >= 0:
+                    text[cell] = _match_glyph(legend.glyph(cell_runs, top))
+            column.lines.append("".join(text))
+    return columns
+
+
+def _minutes(hour: str, minute: str | None, meridiem: str) -> int:
+    return (int(hour) % 12 + (12 if meridiem == "pm" else 0)) * 60 + int(minute or 0)
+
+
+def _entries(lines: Sequence[str]) -> list[LegendEntry]:
+    """Parse a column's lines into windows, checking that they cover the day once."""
+    entries: list[LegendEntry] = []
+    for line in lines:
+        position = 0
+        for match in _ENTRY.finditer(line):
+            if line[position : match.start()].strip():
+                raise ChartReadError(f"The chart's legend has unexpected text: {line.strip()}")
+            groups = match.groups()
+            entries.append(LegendEntry(_minutes(*groups[0:3]), _minutes(*groups[3:6]), groups[6]))
+            position = match.end()
+        rest = line[position:].strip()
+        if not rest:
+            continue
+        if (clipped := _CLIPPED.fullmatch(rest)) is None:
+            raise ChartReadError(f"The chart's legend has unexpected text: {line.strip()}")
+        groups = clipped.groups()
+        entries.append(
+            LegendEntry(_minutes(*groups[0:3]), _minutes(*groups[3:6]), groups[6], clipped=True)
+        )
+
+    entries = [
+        entry if entry.end else LegendEntry(entry.start, MINUTES_PER_DAY, entry.text, entry.clipped)
+        for entry in entries
+    ]
+    entries.sort(key=lambda entry: entry.start)
+    if (
+        not entries
+        or entries[0].start != 0
+        or entries[-1].end != MINUTES_PER_DAY
+        or any(a.end != b.start for a, b in pairwise(entries))
+        or any(entry.start % SLOT_MINUTES or entry.end % SLOT_MINUTES for entry in entries)
+        or any(entry.end <= entry.start for entry in entries)
+    ):
+        raise ChartReadError("The chart's legend windows don't cover the day")
+    return entries
+
+
 def _is_import(pixel: tuple[int, int, int]) -> bool:
     return pixel[2] - pixel[0] > _HUE_MARGIN
 
@@ -136,294 +401,113 @@ def _is_export(pixel: tuple[int, int, int]) -> bool:
     return pixel[0] - pixel[2] > _HUE_MARGIN
 
 
-def _is_bar_pixel(pixel: Any) -> int:  # noqa: ANN401 - Pillow pixel access is untyped
-    return int(_is_import(pixel) or _is_export(pixel))
+def _bar_heights(image: Image.Image) -> list[tuple[int, int]] | None:
+    """Return each half-hour's import and export bar heights in pixels, or None if not found.
 
-
-def _bar_columns(image: Image.Image) -> list[tuple[int, int]]:
-    """Return the (first, last) x of each bar, found from a per-column profile of bar pixels."""
+    The bars are the tallest band of rows with blue or orange in it. The colour key above the
+    chart is a separate, thinner band.
+    """
     width, height = image.size
     pixels = image.load()
     assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
-    profile = [sum(_is_bar_pixel(pixels[x, y]) for y in range(height)) for x in range(width)]
-    threshold = max(profile, default=0) * _BAR_PROFILE_SHARE
-    if threshold <= 0:
-        return []
-    bars: list[tuple[int, int]] = []
-    start: int | None = None
-    for x, count in enumerate([*profile, 0]):
-        if count >= threshold and start is None:
-            start = x
-        elif count < threshold and start is not None:
-            bars.append((start, x - 1))
-            start = None
-    return bars
 
+    def coloured(x: int, y: int) -> bool:
+        pixel: tuple[int, int, int] = pixels[x, y]  # type: ignore[assignment]
+        return _is_import(pixel) or _is_export(pixel)
 
-def _longest_run(ys: Sequence[int]) -> tuple[int, int] | None:
-    """Return the (top, bottom) of the longest run of y values, bridging small gaps."""
-    best: tuple[int, int] | None = None
-    run_start: int | None = None
-    previous: int | None = None
-    for y in [*ys, None]:
-        if y is not None and previous is not None and y - previous <= _MAX_RUN_GAP + 1:
-            previous = y
-            continue
-        if (
-            run_start is not None
-            and previous is not None
-            and (best is None or previous - run_start > best[1] - best[0])
-        ):
-            best = (run_start, previous)
-        run_start = previous = y
-    if best is None or best[1] - best[0] + 1 < _MIN_RUN_LENGTH:
-        return None
-    return best
-
-
-def _measure_bar(
-    image: Image.Image, first: int, last: int, *, export: bool
-) -> tuple[float, tuple[int, int, int]] | None:
-    """Return the height and median colour of a bar's import or export part."""
-    pixels = image.load()
-    assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
-    centre = (first + last) // 2
-    columns = [x for x in (centre - 1, centre, centre + 1) if first <= x <= last]
-    test = _is_export if export else _is_import
-    hits: dict[int, tuple[int, int, int]] = {}
-    for y in range(image.size[1]):
-        for x in columns:
-            pixel: tuple[int, int, int] = pixels[x, y]  # type: ignore[assignment]
-            if test(pixel):
-                hits[y] = pixel
-                break
-    run = _longest_run(sorted(hits))
-    if run is None:
-        return None
-    top, bottom = run
-    colours = [hits[y] for y in range(top, bottom + 1) if y in hits]
-    colour = (
-        int(statistics.median(c[0] for c in colours)),
-        int(statistics.median(c[1] for c in colours)),
-        int(statistics.median(c[2] for c in colours)),
-    )
-    return float(bottom - top + 1), colour
-
-
-def _distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
-    return float(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)) ** 0.5)
-
-
-def _group_tiers(
-    bars: Sequence[tuple[float, tuple[int, int, int]] | None],
-) -> tuple[ChartTier, ...]:
-    """Group bars into tiers by shade and height, so one shade used for two prices stays apart."""
-    groups: list[tuple[tuple[int, int, int], list[float], set[int]]] = []
-    for slot, bar in enumerate(bars):
-        if bar is None:
-            continue
-        height, colour = bar
-        for reference, heights, slots in groups:
-            if (
-                _distance(reference, colour) <= _TIER_COLOUR_TOLERANCE
-                and abs(heights[0] - height) <= _TIER_HEIGHT_TOLERANCE
-            ):
-                heights.append(height)
-                slots.add(slot)
-                break
-        else:
-            groups.append((colour, [height], {slot}))
-    return tuple(
-        ChartTier(colour=colour, height=statistics.median(heights), slots=frozenset(slots))
-        for colour, heights, slots in groups
-    )
-
-
-def _is_axis_pixel(pixel: tuple[int, int, int]) -> bool:
-    """Return whether a pixel is grey (axis line or text), not background or a bar."""
-    return max(pixel) < _MAX_AXIS_BRIGHTNESS and max(pixel) - min(pixel) < _MAX_AXIS_SATURATION
-
-
-def _axis_line(image: Image.Image, before: int) -> tuple[int, int, int] | None:
-    """Return the x, top and bottom of the y-axis line, the nearest long grey line left of a bar."""
-    pixels = image.load()
-    assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
-    for x in range(before - 1, -1, -1):
-        ys = [y for y in range(image.size[1]) if _is_axis_pixel(pixels[x, y])]  # type: ignore[arg-type]
-        run = _longest_run(ys)
-        if run is not None and run[1] - run[0] + 1 >= _MIN_AXIS_LENGTH:
-            return x, *run
-    return None
-
-
-def _tick_spacing(image: Image.Image, first_bar: int) -> float | None:
-    """Return the pixels between the y-axis labels, or None if they can't be found.
-
-    Where the labels are doesn't say what they read, but their spacing is one tick step, which
-    `match_tiers` uses to choose between scales that fit the bars equally well.
-    """
-    axis = _axis_line(image, first_bar)
-    if axis is None:
-        return None
-    axis_x, top, bottom = axis
-    pixels = image.load()
-    assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
-    rows = [
-        y
-        for y in range(max(top - _LABEL_MARGIN, 0), min(bottom + _LABEL_MARGIN, image.size[1]))
-        if any(sum(pixels[x, y]) < _MAX_TEXT_BRIGHTNESS for x in range(axis_x - 1))  # type: ignore[arg-type]
-    ]
-    labels: list[list[int]] = []
+    rows = [y for y in range(height) if any(coloured(x, y) for x in range(0, width, 2))]
+    bands: list[list[int]] = []
     for y in rows:
-        if labels and y - labels[-1][-1] <= _MAX_LABEL_GAP:
-            labels[-1].append(y)
+        if bands and y - bands[-1][-1] <= _MAX_BAR_GAP + 1:
+            bands[-1].append(y)
         else:
-            labels.append([y])
-    if len(labels) < _MIN_TICKS:
+            bands.append([y])
+    if not bands:
         return None
-    centres = [(label[0] + label[-1]) / 2 for label in labels]
-    gaps = [below - above for above, below in pairwise(centres)]
-    spacing = statistics.median(gaps)
-    if any(abs(gap - spacing) > _TICK_SPACING_TOLERANCE for gap in gaps):
+    band = max(bands, key=len)
+    top, bottom = band[0], band[-1]
+    columns = [x for x in range(width) if any(coloured(x, y) for y in range(top, bottom + 1))]
+    bars: list[list[int]] = []
+    for x in columns:
+        if bars and x - bars[-1][-1] <= _MAX_BAR_GAP + 1:
+            bars[-1].append(x)
+        else:
+            bars.append([x])
+    if len(bars) != SLOTS_PER_DAY:
         return None
-    return float(spacing)
+    heights: list[tuple[int, int]] = []
+    for bar in bars:
+        x = bar[len(bar) // 2]
+        column: list[tuple[int, int, int]] = [
+            pixels[x, y]  # type: ignore[misc]
+            for y in range(top, bottom + 1)
+        ]
+        imports = [y for y, pixel in enumerate(column) if _is_import(pixel)]
+        exports = [y for y, pixel in enumerate(column) if _is_export(pixel)]
+        heights.append(
+            (
+                imports[-1] - imports[0] + 1 if imports else 0,
+                exports[-1] - exports[0] + 1 if exports else 0,
+            )
+        )
+    return heights
+
+
+def _estimate_clipped(
+    image: Image.Image, import_entries: list[LegendEntry], export_entries: list[LegendEntry]
+) -> tuple[list[LegendEntry], list[LegendEntry]]:
+    """Estimate clipped prices from their bars, scaled by the entries with a printed price."""
+    if not any(entry.clipped for entry in (*import_entries, *export_entries)):
+        return import_entries, export_entries
+    heights = _bar_heights(image.convert("RGB"))
+    if heights is None:
+        return import_entries, export_entries
+
+    def bar(entry: LegendEntry, side: int) -> float:
+        return statistics.median(heights[slot][side] for slot in entry.slots)
+
+    scales = [
+        bar(entry, side) / abs(price)
+        for side, entries in enumerate((import_entries, export_entries))
+        for entry in entries
+        if (price := entry.price) is not None and abs(price) >= _MIN_SCALE_PRICE
+    ]
+    if not scales:
+        return import_entries, export_entries
+    scale = statistics.median(scales)
+
+    def estimated(entries: list[LegendEntry], side: int) -> list[LegendEntry]:
+        sign = -1 if side else 1
+        return [
+            LegendEntry(
+                entry.start,
+                entry.end,
+                entry.text,
+                clipped=True,
+                estimate=sign * bar(entry, side) / scale,
+            )
+            if entry.clipped
+            else entry
+            for entry in entries
+        ]
+
+    return estimated(import_entries, 0), estimated(export_entries, 1)
 
 
 def read_chart(data: bytes) -> ChartReading:
-    """Read the import and export tiers from a timeframe chart PNG."""
+    """Read the import and export windows and prices from a timeframe chart PNG."""
     try:
         with Image.open(io.BytesIO(data)) as raw:
             image = raw.convert("RGB")
     except (UnidentifiedImageError, OSError) as err:
         raise ChartReadError(f"Timeframe chart is not a readable image: {err}") from err
 
-    columns = _bar_columns(image)
-    if len(columns) != SLOTS_PER_DAY:
-        raise ChartReadError(f"Expected {SLOTS_PER_DAY} bars, found {len(columns)}")
-
-    imports = [_measure_bar(image, first, last, export=False) for first, last in columns]
-    exports = [_measure_bar(image, first, last, export=True) for first, last in columns]
-    if any(bar is None for bar in imports):
-        raise ChartReadError("Some half-hours have no import bar")
-    if any(bar is not None for bar in exports) and any(bar is None for bar in exports):
-        raise ChartReadError("Some half-hours have no export bar")
-    return ChartReading(
-        import_tiers=_group_tiers(imports),
-        export_tiers=_group_tiers(exports),
-        tick_spacing=_tick_spacing(image, columns[0][0]),
-    )
-
-
-def _fit(
-    tiers: Sequence[ChartTier], candidates: Mapping[str, float], scale: float
-) -> tuple[float, dict[ChartTier, str]] | None:
-    """Assign each tier to the nearest bucket price at a given pixels-per-cent scale.
-
-    Returns the worst error and the assignment, or None if any tier is further than
-    `_FIT_PRICE_TOLERANCE` cents, or `_FIT_PIXEL_TOLERANCE` pixels, from every bucket.
-    """
-    assignment: dict[ChartTier, str] = {}
-    worst = 0.0
-    for tier in tiers:
-        price = tier.height / scale
-        bucket, bucket_price = min(candidates.items(), key=lambda item: abs(item[1] - price))
-        error = abs(bucket_price - price)
-        if error > _FIT_PRICE_TOLERANCE or error * scale > _FIT_PIXEL_TOLERANCE:
-            return None
-        worst = max(worst, error)
-        assignment[tier] = bucket
-    return worst, assignment
-
-
-def _anchor_scales(tiers: Sequence[ChartTier], candidates: Mapping[str, float]) -> list[float]:
-    """Return the pixels-per-cent scales that put the tallest tier on each bucket price."""
-    if not tiers:
-        return []
-    tallest = max(tier.height for tier in tiers)
-    return [tallest / price for price in sorted(set(candidates.values()))]
-
-
-def _usage_prices(bucket_prices: Mapping[str, float]) -> dict[str, float]:
-    return {bucket: abs(price) for bucket, price in bucket_prices.items() if price}
-
-
-def _is_nice_step(tick_spacing: float, scale: float) -> bool:
-    """Return whether a scale makes the axis step a value a chart would use, such as 5c."""
-    step = tick_spacing / scale
-    magnitude = 10 ** math.floor(math.log10(step))
-    return any(abs(step / magnitude - nice) <= nice * _NICE_STEP_TOLERANCE for nice in _NICE_STEPS)
-
-
-def _scale_fits(
-    tiers: Sequence[ChartTier],
-    candidates: Mapping[str, float],
-    other_tiers: Sequence[ChartTier],
-    other_candidates: Mapping[str, float],
-) -> list[tuple[float, tuple[float, dict[ChartTier, str]]]]:
-    """Return the scales that fit this side's tiers, and the other side's where it can be read."""
-    scales = _anchor_scales(tiers, candidates)
-    own = [(scale, fit) for scale in scales if (fit := _fit(tiers, candidates, scale)) is not None]
-    other_scales = _anchor_scales(other_tiers, other_candidates)
-    if not any(_fit(other_tiers, other_candidates, scale) for scale in other_scales):
-        # No other side, or one that can't be read at any scale: it can't confirm a scale.
-        return own
-    both = [
-        (scale, fit)
-        for scale in scales + other_scales
-        if _fit(other_tiers, other_candidates, scale) is not None
-        and (fit := _fit(tiers, candidates, scale)) is not None
-    ]
-    if own and not both:
-        raise ChartReadError("Import and export bars don't fit the prices at one scale")
-    return both
-
-
-def match_tiers(
-    tiers: Sequence[ChartTier],
-    bucket_prices: Mapping[str, float],
-    *,
-    other_tiers: Sequence[ChartTier] = (),
-    other_prices: Mapping[str, float] | None = None,
-    tick_spacing: float | None = None,
-) -> tuple[str, ...]:
-    """Return the charge bucket for each half-hour slot.
-
-    Bar height is proportional to the absolute price, but the pixels-per-cent scale differs
-    between charts. Each candidate bucket is tried as the anchor for the tallest tier; a scale
-    fits when every tier lands within `_FIT_PRICE_TOLERANCE` cents, and a few pixels, of a bucket
-    price. When several buckets share a price, the first one in `bucket_prices` order is used.
-
-    Import and export bars share one axis, so when the other side's tiers and prices are given
-    (`other_tiers` and `other_prices`), a scale must fit them too. That catches prices that are
-    wrong by the same amount everywhere, which one side alone can fit at a different scale. It
-    also settles charts with few tiers, which can fit more than one scale on their own (a single
-    tier fits every price). If the other side can't be read at any scale, it's left out rather
-    than letting it reject this side.
-
-    A chart with one price on each side can still fit two scales, when the plan's import and
-    export prices happen to be in about the same ratio. Then `tick_spacing`, the pixels between
-    the y-axis labels, settles it: only the right scale makes the axis step a round value such as
-    5c. If the slots still can't be settled, the chart is rejected rather than guessed.
-    """
-    if not tiers:
-        raise ChartReadError("Chart has no tiers to match")
-    candidates = _usage_prices(bucket_prices)
-    if not candidates:
-        raise ChartReadError("Plan has no usage prices to match against")
-
-    fits = _scale_fits(tiers, candidates, other_tiers, _usage_prices(other_prices or {}))
-    if not fits:
-        raise ChartReadError("Chart bar heights don't match the plan's prices")
-    if len({frozenset(fit[1].items()) for _, fit in fits}) > 1 and tick_spacing:
-        fits = [(scale, fit) for scale, fit in fits if _is_nice_step(tick_spacing, scale)]
-    if len({frozenset(fit[1].items()) for _, fit in fits}) != 1:
-        raise ChartReadError("Chart bar heights fit more than one set of the plan's prices")
-    best = min((fit for _, fit in fits), key=lambda fit: fit[0])
-
-    slots: list[str | None] = [None] * SLOTS_PER_DAY
-    for tier, bucket in best[1].items():
-        for slot in tier.slots:
-            slots[slot] = bucket
-    if any(bucket is None for bucket in slots):
-        raise ChartReadError("Some half-hours could not be matched to a price")
-    return tuple(bucket for bucket in slots if bucket is not None)
+    columns = _read_text(image.convert("L"))
+    import_lines = [line for column in columns if not column.export for line in column.lines]
+    export_lines = [line for column in columns if column.export for line in column.lines]
+    if not import_lines:
+        raise ChartReadError("The chart's legend has no import windows")
+    import_entries = _entries(import_lines)
+    export_entries = _entries(export_lines) if export_lines else []
+    import_entries, export_entries = _estimate_clipped(image, import_entries, export_entries)
+    return ChartReading(import_entries=tuple(import_entries), export_entries=tuple(export_entries))

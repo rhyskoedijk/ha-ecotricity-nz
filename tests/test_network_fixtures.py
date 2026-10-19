@@ -1,10 +1,9 @@
 """Checks every network's fixtures against each other.
 
 Each network's folder under tests/fixtures/networks holds a folder per price category, with that
-category's plan list and the timeframe charts for its plans, saved as Ecotricity publishes them.
-Adding a price category's folder is enough for these tests to cover it: every chart is read and
-matched against the prices worked out from that category's own plans, for the season and day type
-in the chart's file name.
+category's plan list and the timeframe charts worth testing, saved as Ecotricity publishes them.
+Every chart's legend is read and each of its prices explained by the plan's own rates, for the
+season in the chart's file name.
 """
 
 from __future__ import annotations
@@ -15,15 +14,25 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from custom_components.ecotricity_nz.api.models import RateUnit
 from custom_components.ecotricity_nz.api.parsers import parse_plan_list
-from custom_components.ecotricity_nz.api.timeframes import SLOTS_PER_DAY, match_tiers, read_chart
-from custom_components.ecotricity_nz.tariff import bucket_names, bucket_period, price_day
+from custom_components.ecotricity_nz.api.timeframes import (
+    MINUTES_PER_DAY,
+    SLOTS_PER_DAY,
+    shown_price,
+)
+from custom_components.ecotricity_nz.tariff import (
+    CONTROLLED_PREFIX,
+    EXPORT_PREFIX,
+    bucket_names,
+    bucket_period,
+    resolve_bucket,
+)
 from tests.conftest import (
     NETWORKS,
-    chart_file,
     chart_files,
-    chart_name,
-    chart_plan,
+    chart_reading,
+    explained_chart,
     load_json_fixture,
     load_plan_list,
     network_codes,
@@ -64,42 +73,22 @@ def test_price_category_folder(network: str, category: str) -> None:
         assert chart.name.startswith(f"{network}-{category}-")
 
 
-@pytest.mark.parametrize(("network", "category"), price_categories())
-def test_every_plan_has_charts(network: str, category: str) -> None:
-    # Each chart is saved for the first season that uses it, so every plan has a weekday and a
-    # weekend chart for its first season, or the chart tests below don't cover it.
-    for plan in _plans(network, category):
-        assert plan.seasons, f"{plan.code} has no season to read charts for"
-        first = min(season.start for season in plan.seasons)
-        for weekend in (False, True):
-            chart = chart_file(chart_name(plan, first, weekend=weekend))
-            assert chart.exists(), f"{chart.name} is missing"
-
-
 @pytest.mark.parametrize("chart", chart_files(), ids=lambda path: path.stem)
-def test_chart_matches_its_plan(chart: Path) -> None:
-    plan, day = chart_plan(chart)
-    pricing = price_day(plan, day)
-    reading = read_chart(chart.read_bytes())
-    assert reading.tick_spacing is not None
-
-    imports = match_tiers(
-        reading.import_tiers,
-        pricing.import_buckets,
-        other_tiers=reading.export_tiers,
-        other_prices=pricing.export_buckets,
-        tick_spacing=reading.tick_spacing,
-    )
-    assert len(imports) == SLOTS_PER_DAY
-    if reading.export_tiers:
-        exports = match_tiers(
-            reading.export_tiers,
-            pricing.export_buckets,
-            other_tiers=reading.import_tiers,
-            other_prices=pricing.import_buckets,
-            tick_spacing=reading.tick_spacing,
-        )
-        assert len(exports) == SLOTS_PER_DAY
+def test_chart_prices_match_its_plan(chart: Path) -> None:
+    # Every window on the legend is explained by one of the plan's supplier rates and one of its
+    # network rates (plus anytime rates and levies), rounded as the legend rounds them.
+    reading = chart_reading(chart)
+    sides = explained_chart(chart)
+    assert False in sides
+    for export, (_rates, slots) in sides.items():
+        entries = reading.export_entries if export else reading.import_entries
+        assert entries[0].start == 0
+        assert entries[-1].end == MINUTES_PER_DAY
+        assert len(slots) == SLOTS_PER_DAY
+        for entry in entries:
+            for slot in entry.slots:
+                shown = shown_price(slots[slot].price)
+                assert shown.startswith(entry.text) if entry.clipped else shown == entry.text
 
 
 @pytest.mark.parametrize(("network", "category"), price_categories())
@@ -109,13 +98,14 @@ def test_every_period_is_translated(network: str, category: str) -> None:
     sensors = json.loads(STRINGS.read_text(encoding="utf-8"))["entity"]["sensor"]
     for plan in _plans(network, category):
         names = bucket_names(plan)
-        for season in plan.seasons:
-            pricing = price_day(plan, season.start)
-            for key, buckets in (
-                ("current_import_period", pricing.import_buckets),
-                ("current_export_period", pricing.export_buckets),
-            ):
-                translated = sensors[key]["state"]
-                for bucket in buckets:
-                    period = bucket_period(bucket, names)
-                    assert period in translated, f"{plan.code}: {period} has no {key} state"
+        for rate in plan.rates:
+            bucket = resolve_bucket(rate)
+            if rate.unit is not RateUnit.PER_KWH or rate.is_levy:
+                continue
+            if bucket.startswith(CONTROLLED_PREFIX):
+                continue
+            direction = "export" if bucket.startswith(EXPORT_PREFIX) else "import"
+            period = bucket_period(bucket, names)
+            for party in ("", "supplier_", "network_"):
+                key = f"current_{party}{direction}_period"
+                assert period in sensors[key]["state"], f"{plan.code}: {period} has no {key} state"

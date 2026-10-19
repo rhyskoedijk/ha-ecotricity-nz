@@ -1,4 +1,4 @@
-"""Build a network's test fixtures from Ecotricity's onboarding site, without a real ICP.
+"""Save a network's plans and charts from Ecotricity's onboarding site, without a real ICP.
 
 The plan list service doesn't need an ICP, only a network and price category, so this never sends
 one. It saves one price category per network: the most common residential category in
@@ -8,34 +8,27 @@ whether they differ in shape (plans, seasons, charge codes, descriptions, units 
 or only in prices. A category that differs in shape deserves its own fixture; run the script
 again with --category for it.
 
-It then downloads the weekday and weekend timeframe charts of every plan, for every season,
-keeping one chart per distinct image (later seasons often reuse an earlier season's chart). A
-plan that publishes no seasons gets one spanning its rates, as the integration reads it.
+It then downloads the weekday and weekend timeframe charts of every plan, for every season. A plan
+that publishes no seasons gets one spanning its rates, as the integration reads it.
 
-With --all instead of a network, it builds every network that has no fixture folder yet, most
-residential ICPs first, each in its most common category. A network Ecotricity returns no plans
-for is skipped and listed at the end.
+Everything is saved to tests/fixtures/networks. Only charts that test a scenario no other chart
+does are worth keeping in git, so prune the new network's charts before committing.
 
 The onboarding site blocks an IP for about 24 hours after a burst of a few hundred requests, so
-every request waits --delay seconds, with a longer pause between networks. The script stops at the
-first connection error (such as a refused connection) without writing that network; networks
-already saved stay saved, so run it again later to carry on. A network takes roughly 30 to 80
-requests, about 5 to 15 minutes.
+every request waits --delay seconds. The script stops at the first connection error (such as a
+refused connection) without writing anything. A network takes roughly 30 to 80 requests, about 5
+to 15 minutes.
 
 Usage: uv run python scripts/build_ecotricity_network_price_plans.py NETWORK
        [--category CODE] [--compare N] [--delay SECONDS]
-       uv run python scripts/build_ecotricity_network_price_plans.py --all
-       [--compare N] [--delay SECONDS] [--network-delay SECONDS]
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -174,25 +167,20 @@ async def _charts(
         for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend):
             if not template:
                 continue
-            seen: set[str] = set()
             for season in sorted(plan.seasons, key=lambda season: season.start):
-                path = chart_path(template, season.start, season.end)
-                await pace.wait(path.rsplit("/", 1)[1])
-                image = await client.async_get_chart(path)
-                digest = hashlib.sha256(image).hexdigest()
-                if digest not in seen:
-                    seen.add(digest)
-                    charts[path.rsplit("/", 1)[1]] = image
+                name = chart_path(template, season.start, season.end).rsplit("/", 1)[1]
+                if name in charts:
+                    continue
+                await pace.wait(name)
+                charts[name] = await client.async_get_chart(
+                    chart_path(template, season.start, season.end)
+                )
     return charts
 
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    which = parser.add_mutually_exclusive_group(required=True)
-    which.add_argument("network", nargs="?", help="distributor code, such as VECT")
-    which.add_argument(
-        "--all", action="store_true", help="build every network without a fixture folder"
-    )
+    parser.add_argument("network", help="distributor code, such as VECT")
     parser.add_argument("--category", help="price category to save (default: the most common)")
     parser.add_argument(
         "--compare",
@@ -203,20 +191,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--delay", type=float, default=10, help="seconds between requests (default: 10)"
     )
-    parser.add_argument(
-        "--network-delay",
-        type=float,
-        default=60,
-        help="extra seconds to wait between networks with --all (default: 60)",
-    )
-    args = parser.parse_args()
-    if args.all and args.category:
-        parser.error("--category only works with a single network")
-    return args
-
-
-def _has_fixture(network: str) -> bool:
-    return any((NETWORKS / network).glob("*/plan_list.json"))
+    return parser.parse_args()
 
 
 async def _build(
@@ -249,60 +224,8 @@ async def _build(
     print(f"Saved {folder.relative_to(ROOT)}: {len(charts)} charts")
 
 
-def _duration(seconds: float) -> str:
-    hours, minutes = divmod(round(seconds / 60), 60)
-    return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
-
-
-async def _build_all(
-    client: OnboardingClient, pace: Paced, networks: dict[str, Any], args: argparse.Namespace
-) -> int:
-    """Build every network without fixtures, most residential ICPs first."""
-    todo = sorted(
-        (code for code in networks if not _has_fixture(code)),
-        key=lambda code: -sum(networks[code]["price_categories"].values()),
-    )
-    print(f"{len(todo)} networks to build: {', '.join(todo)}")
-    started = time.monotonic()
-    saved: list[str] = []
-    skipped: list[str] = []
-    for index, network in enumerate(todo, start=1):
-        if index > 1:
-            await asyncio.sleep(args.network_delay)
-        elapsed = time.monotonic() - started
-        done = index - 1
-        estimate = f", about {_duration(elapsed / done * (len(todo) - done))} left" if done else ""
-        details = networks[network]
-        print(
-            f"\n=== [{index}/{len(todo)}] {network} ({details['name']}, "
-            f"{sum(details['price_categories'].values()):,} residential ICPs), "
-            f"{_duration(elapsed)} elapsed{estimate}"
-        )
-        try:
-            await _build(client, pace, network, list(details["price_categories"]), args)
-            saved.append(network)
-        except PlanListError as err:
-            print(f"Skipped: {err}")
-            skipped.append(network)
-        except EcotricityError as err:
-            print(f"\nStopped at {network} after {pace.count} requests: {err}")
-            print("Its folder wasn't written. Run the same command later to carry on from it.")
-            _summary(saved, skipped, started)
-            return 1
-    _summary(saved, skipped, started)
-    return 0
-
-
-def _summary(saved: list[str], skipped: list[str], started: float) -> None:
-    print(f"\nSaved {len(saved)} networks in {_duration(time.monotonic() - started)}: ", end="")
-    print(", ".join(saved) or "none")
-    if skipped:
-        print(f"Skipped {len(skipped)} with no usable plan list: {', '.join(skipped)}")
-    print("Check them with: uv run pytest tests/test_network_fixtures.py")
-
-
 async def main() -> int:
-    """Build the fixture folder for one network, or for every network without one."""
+    """Build the fixture folder for one network."""
     # Print each line as it happens, even when the output goes to a file or pipe, so a long
     # paced run shows its progress and its end.
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
@@ -311,8 +234,6 @@ async def main() -> int:
     pace = Paced(args.delay)
     async with aiohttp.ClientSession() as session:
         client = OnboardingClient(session, user_agent=USER_AGENT)
-        if args.all:
-            return await _build_all(client, pace, networks, args)
         network = args.network.upper()
         if network not in networks:
             sys.exit(f"{network} isn't in {CATEGORIES.name}; refresh it first")

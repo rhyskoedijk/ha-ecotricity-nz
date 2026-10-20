@@ -55,14 +55,14 @@ To change or remove your portal login later, use <kbd>Reconfigure</kbd> on the i
 
 ## Sensor Entities
 
-All entities belong to a device named **ICP &lt;icp&gt;**, so entity IDs look like `sensor.icp_0000123456ab1c2_current_import_price`. Prices are in NZD/kWh and are broken down in their attributes into `supplier_rate`, `network_rate` and any levies such as `ea_levy`. Only the parts your plan has are shown.
+All entities belong to a device named **ICP &lt;icp&gt;**, so entity IDs look like `sensor.icp_0000123456ab1c2_current_import_price`. Prices are in NZD/kWh and are broken down in their attributes into `supplier_rate`, `network_rate` and any levies such as `ea_levy`. Only the parts your plan has are shown. Every price keeps its sign: a cost is positive and a credit is negative, so an export price you're paid for shows as a negative value, and any part of it that's a charge as a positive one.
 
 ### Pricing
 
 | Entity                                      | Description                                                                                 | Attributes                                           |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | Current import price                        | Import price for the current half-hour.                                                     | `period`, `supplier_rate`, `network_rate`, `ea_levy` |
-| Current export price                        | Export credit for the current half-hour. Only created if you export.                        | `period`, `supplier_rate`, `network_rate`            |
+| Current export price                        | Export price for the current half-hour. Only created if you export.                         | `period`, `supplier_rate`, `network_rate`            |
 | Current controlled price                    | Controlled-load price. Only created if your plan has one.                                   | `supplier_rate`, `network_rate`                      |
 | Daily charge                                | Total fixed charge per day, in NZD/d.                                                       | `supplier_rate`, `network_rate`, `metering_rate`     |
 | _Period_ import, export or controlled price | One sensor per period on your plan, for example **Peak import price**. Disabled by default. | `supplier_rate`, `network_rate`, `ea_levy`           |
@@ -148,6 +148,14 @@ Usage data is imported from the Ecotricity customer portal once a day. If an imp
 3. If you export, add **Ecotricity &lt;ICP&gt; exported** as your energy export sensor.
 
 Usage will appears a day or two after it happens, depending on when Ecotricity receives and processes your meter data.
+
+The Energy dashboard takes the price of exported energy as what you're paid, so it expects a credit as a positive value, the opposite of **Current export price**. To use it, create a template sensor (**Settings > Devices & services > Helpers > Template > Template sensor**) with the unit `NZD/kWh` and this state, then choose it as the export price:
+
+```jinja
+{{ -(states('sensor.icp_0000123456ab1c2_current_export_price') | float(0)) }}
+```
+
+Replace the entity ID with your own. **Current import price** can be used as the import price directly.
 
 ![Energy Dashboard](/docs/screenshots/screenshot.energy.dashboard.png)
 

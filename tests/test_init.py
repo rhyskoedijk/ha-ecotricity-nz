@@ -123,7 +123,7 @@ async def test_pricing_sensors(
     # Winter peak: 37.3476c + GST. Export: 13.74c anytime + 2c network peak, credited as
     # published because GST isn't added to export credits.
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.4295)
-    assert float(_state(hass, "current_export_price")) == pytest.approx(0.1574)
+    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.1574)
     assert float(_state(hass, "daily_charge")) == pytest.approx(1.7825)
 
     plan = hass.states.get(f"{PREFIX}_plan")
@@ -152,7 +152,7 @@ async def test_gst_option(
 
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.3735)
     # Export credits are paid as published either way.
-    assert float(_state(hass, "current_export_price")) == pytest.approx(0.1574)
+    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.1574)
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -944,6 +944,73 @@ async def test_pricing_is_fetched_weekly(
     assert mock_onboarding.async_get_chart.await_count == 2 * chart_calls
 
 
+@pytest.mark.parametrize(
+    ("supplier", "network", "price"),
+    [
+        # Ecotricity's credit outweighs the network's charge: a credit overall.
+        (-10.0, 2.0, -0.08),
+        # The network's charge outweighs Ecotricity's credit: a cost overall.
+        (-1.0, 2.0, 0.01),
+        # A credit too small to show, shown as 0 rather than -0.
+        (-0.001, 0.0, 0.0),
+    ],
+)
+async def test_export_price_keeps_its_sign(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+    supplier: float,
+    network: float,
+    price: float,
+) -> None:
+    # A credit is negative and a cost positive, in the state and in each part, with no GST.
+    freezer.move_to(WINTER_PEAK)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    rates = [
+        Rate(
+            id=f"900{index}",
+            description=description,
+            charge="CHARGE_24",
+            register_type="EG",
+            unit=RateUnit.PER_KWH,
+            raw_unit="cents/kWh",
+            price=cents,
+            is_network=is_network,
+        )
+        for index, (description, cents, is_network) in enumerate(
+            (("Export", supplier, False), ("Network export", network, True))
+        )
+    ]
+    # The plan's own export rates are swapped for these.
+    plan = replace(
+        plans.default,
+        retail_rates=(
+            *(rate for rate in plans.default.retail_rates if not rate.is_export),
+            rates[0],
+        ),
+        network_rates=(
+            *(rate for rate in plans.default.network_rates if not rate.is_export),
+            rates[1],
+        ),
+    )
+    mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
+    await _setup(hass, config_entry)
+
+    state = _state(hass, "current_export_price")
+    assert float(state) == pytest.approx(price)
+    assert state != "-0.0"
+    # Zero parts add nothing, so they're left out.
+    expected = {
+        key: pytest.approx(cents / 100, abs=1e-4)
+        for key, cents in (("supplier_rate", supplier), ("network_rate", network))
+        if cents
+    }
+    parts = _extra(hass, "current_export_price")
+    parts.pop("period")
+    assert parts == expected
+
+
 async def test_code_without_a_fixed_period_is_named_from_the_plan(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1141,12 +1208,12 @@ async def test_price_breakdown_attributes(
         float(_state(hass, "current_import_price")), abs=0.0002
     )
 
-    # Export credits are positive, like the sensor state, and have no GST added.
+    # Export credits are negative, like the sensor state, and have no GST added.
     export = _extra(hass, "current_export_price")
     assert export.pop("period") == "peak"
     assert export == {
-        "supplier_rate": pytest.approx(0.1374),
-        "network_rate": pytest.approx(0.02),
+        "supplier_rate": pytest.approx(-0.1374),
+        "network_rate": pytest.approx(-0.02),
     }
     assert sum(export.values()) == pytest.approx(float(_state(hass, "current_export_price")))
 
@@ -1352,7 +1419,7 @@ async def test_schedule_sensors(
     assert _state(hass, "next_export_period_change") == "2026-06-14T23:00:00+00:00"
     assert _extra(hass, "next_export_period_change") == {
         "period": "off_peak",
-        "price": pytest.approx(0.1374),
+        "price": pytest.approx(-0.1374),
     }
     assert _extra(hass, "current_import_period")["windows"] == [
         "00:00-07:00 off_peak",
@@ -1511,12 +1578,12 @@ async def test_import_and_export_periods_are_separate(
         "17:00-21:00 peak",
         "21:00-24:00 off_peak",
     ]
-    assert float(_state(hass, "current_export_price")) == pytest.approx(0.21)
+    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.21)
     # 11am NZDT, when export drops to the off-peak rate.
     assert _state(hass, "next_export_period_change") == "2026-10-14T22:00:00+00:00"
     assert _extra(hass, "next_export_period_change") == {
         "period": "off_peak",
-        "price": pytest.approx(0.16),
+        "price": pytest.approx(-0.16),
     }
 
 

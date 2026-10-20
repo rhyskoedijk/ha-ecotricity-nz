@@ -200,4 +200,4 @@ The config entry stores the ICP, and the portal account number and password if g
 
 Diagnostics redact the ICP, account number, password, address, meter serial numbers and portal indicator ID.
 
-Prices are kept in cents excluding GST throughout, and converted to NZD only when a sensor reports its state. GST (15%, unless the option is off) is added to import prices and daily charges. Export credits are shown as published: residential customers who aren't GST-registered are paid the rate without GST.
+Prices are kept in cents excluding GST throughout, and converted to NZD only when a sensor reports its state. GST (15%, unless the option is off) is added to import prices and daily charges. Export prices are shown as published: residential customers who aren't GST-registered are paid the rate without GST. Every price keeps its sign, so an export credit is negative and a cost positive, in sensor states and their breakdowns.

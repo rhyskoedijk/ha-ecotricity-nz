@@ -345,12 +345,13 @@ class _PricingEntity(EcotricityEntity[PricingCoordinator], SensorEntity):
     def _to_nzd(self, cents: float, *, export: bool = False) -> float:
         """Convert cents excluding GST to NZD.
 
-        GST is added to charges when the option is on. Export credits never have GST added:
-        residential customers who aren't GST-registered are paid the published rate, and the
-        credit is shown as a positive amount, matching how a bill presents it.
+        The sign is kept, so a cost is positive and a credit (most export rates) negative. GST is
+        added to import prices and daily charges when the option is on. Export prices never have
+        GST added: residential customers who aren't GST-registered are paid the published rate.
         """
         if export:
-            return round(abs(cents) / 100, 4)
+            # Adding 0.0 turns a zero credit's -0.0 into 0.0.
+            return round(cents / 100, 4) + 0.0
         include_gst = self.coordinator.config_entry.options.get(
             CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
         )
@@ -608,7 +609,7 @@ class CurrentPriceSensor(_HalfHourlyEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current price in NZD per kWh. Export is shown as a positive credit."""
+        """Return the current price in NZD per kWh. An export credit is negative."""
         slot = self._current_slot(export=self._export)
         return None if slot is None else self._to_nzd(slot.price, export=self._export)
 

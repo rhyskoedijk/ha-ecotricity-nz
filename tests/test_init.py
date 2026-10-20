@@ -1309,7 +1309,11 @@ async def test_time_of_use_chart_image(
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     await _setup(hass, config_entry)
-    entity_id = f"image.icp_{TEST_ICP.lower()}_time_of_use_chart"
+    entity_id = f"image.icp_{TEST_ICP.lower()}_current_time_of_use_chart"
+    # The unique ID is the one from before the image was renamed, so existing entities keep it.
+    entry = er.async_get(hass).async_get(entity_id)
+    assert entry is not None
+    assert entry.unique_id == f"{TEST_ICP}_time_of_use_chart"
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
     base = "https://onboarding.ecotricity.co.nz/timeframeimages_ecotricity/"
@@ -1345,7 +1349,7 @@ async def test_time_of_use_chart_image_without_a_season(
     # Monday 3 May 2027, after the last published season ends.
     freezer.move_to(datetime(2027, 5, 2, 21, 0, tzinfo=UTC))
     await _setup(hass, config_entry)
-    entity_id = f"image.icp_{TEST_ICP.lower()}_time_of_use_chart"
+    entity_id = f"image.icp_{TEST_ICP.lower()}_current_time_of_use_chart"
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
     assert image.image_url is None
@@ -1372,7 +1376,7 @@ async def test_time_of_use_chart_image_stays_on_the_onboarding_host(
         others=tuple(unrooted(plan) for plan in plans.others),
     )
     await _setup(hass, config_entry)
-    entity_id = f"image.icp_{TEST_ICP.lower()}_time_of_use_chart"
+    entity_id = f"image.icp_{TEST_ICP.lower()}_current_time_of_use_chart"
     image = hass.data[IMAGE_DATA_COMPONENT].get_entity(entity_id)
     assert image is not None
     assert image.image_url == (

@@ -12,7 +12,7 @@ This is a community integration and isn't affiliated with Ecotricity NZ. The Eco
 - **Time-of-use periods**: the current period, today's windows, and when the period or price next changes. Useful for automations and utility meter helpers. Where Ecotricity's and your network's TOU periods don't line up, they each get a sensor so you can track usage accurately.
 - **Every price on your plan**: a sensor for each period's price, plus the fixed daily charge. The fixed daily charge is broken down into supplier, network, and metering hire rates via sensor attributes.
 - **Pricing seasons**: the current season and when the next one starts, as prices and windows can change between them.
-- **Time-of-use chart**: Ecotricity's own chart for today, as an image.
+- **Current time-of-use chart**: Ecotricity's own chart for today, as an image.
 - **Usage history**: hourly import, export and carbon savings statistics, backfilled as far back as the Ecotricity portal data goes. This functionality requires your customer portal login.
 - **Controlled load**: prices for controlled-load supply such as ripple-controlled hot water, if your plan has them.
 - **ICP, smart meter, and regional network info**: sensors for your ICP number, smart meter serial number (with type and certification expiry attributes), regional network, and your connection's import and export line loss factors.
@@ -82,7 +82,7 @@ A period's price sensor shows that period's own price today, and has no value on
 | Next import period change      | When the import period or price next changes.                                                                          | `period`, `price`                                             |
 | Next export period change      | When the export period or price next changes.                                                                          | `period`, `price`                                             |
 | Next pricing season change     | When the pricing season next starts.                                                                                   |                                                               |
-| Time-of-use chart              | Image of Ecotricity's chart for today's day type and season.                                                           |                                                               |
+| Current time-of-use chart      | Image of Ecotricity's chart for today's day type and season.                                                           |                                                               |
 
 Each half-hour's price is one of Ecotricity's rates plus one of your network's rates. On most plans their periods line up, and there's one import period and one export period. On some they don't: on Vector, for example, Ecotricity's evening peak ends at 9pm but the network's winter peak runs to 10pm, so 9pm to 10pm costs Ecotricity's off-peak rate plus the network's peak rate. For those plans, **Current supplier import period** and **Current network import period** (or the export ones) show each side's own period, and **Current import period** shows the overall period: the one whose own price is nearest what you're paying. Today's windows split wherever the price changes, so `21:00-22:00 peak` shows up as its own window with its own price.
 

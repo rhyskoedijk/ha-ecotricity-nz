@@ -70,8 +70,8 @@
   },
   "entity": {
     "image": {
-      "time_of_use_chart": {
-        "name": "Time-of-use chart"
+      "current_time_of_use_chart": {
+        "name": "Current time-of-use chart"
       }
     },
     "sensor": {

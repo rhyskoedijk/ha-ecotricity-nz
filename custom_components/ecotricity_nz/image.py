@@ -57,7 +57,8 @@ class TimeOfUseChartImage(EcotricityEntity[PricingCoordinator], ImageEntity):
             self,
             coordinator,
             icp,
-            EntityDescription(key="time_of_use_chart", translation_key="time_of_use_chart"),
+            # The key keeps the unique ID from before the rename, so existing entities keep it.
+            EntityDescription(key="time_of_use_chart", translation_key="current_time_of_use_chart"),
         )
         ImageEntity.__init__(self, hass)
         self._local_tz = local_tz

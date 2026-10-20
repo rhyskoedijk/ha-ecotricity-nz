@@ -1,7 +1,7 @@
 {
   "entity": {
     "image": {
-      "time_of_use_chart": {
+      "current_time_of_use_chart": {
         "default": "mdi:chart-bar"
       }
     },

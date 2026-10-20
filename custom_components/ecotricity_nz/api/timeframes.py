@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date
 
+    from .models import Season
+
 SLOTS_PER_DAY = 48
 SLOT_MINUTES = 30
 MINUTES_PER_DAY = 24 * 60
@@ -129,6 +131,23 @@ def chart_path(
         )
     path = path.removesuffix(_NO_GST_SUFFIX).removesuffix(".png")
     return path + (".png" if include_gst else _NO_GST_SUFFIX)
+
+
+def season_chart_path(
+    template: str | None, season: Season | None, *, include_gst: bool = False
+) -> str:
+    """Return a plan's chart for a season. A template without season dates ignores the season.
+
+    Raises ChartReadError if the plan has no chart, or the chart needs a season and there's none
+    (Ecotricity may not have published it yet).
+    """
+    if not template:
+        raise ChartReadError("The plan has no timeframe chart")
+    if not needs_season(template):
+        return chart_path(template, None, None, include_gst=include_gst)
+    if season is None:
+        raise ChartReadError("No published season covers the day")
+    return chart_path(template, season.start, season.end, include_gst=include_gst)
 
 
 def shown_price(cents: float) -> str:

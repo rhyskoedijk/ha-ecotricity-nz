@@ -24,7 +24,7 @@ from custom_components.ecotricity_nz.api.parsers import (
     parse_plan_list,
     parse_plan_titles,
 )
-from custom_components.ecotricity_nz.api.timeframes import read_chart
+from custom_components.ecotricity_nz.api.timeframes import ChartReading, read_chart
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST,
     CONF_PLAN_ID,
@@ -33,13 +33,13 @@ from custom_components.ecotricity_nz.const import (
     PRICING_RETRY_INTERVAL,
     PRICING_RETRY_MAX_INTERVAL,
 )
-from custom_components.ecotricity_nz.coordinator import _first_day
 from custom_components.ecotricity_nz.store import (
     STORAGE_VERSION,
     PricingSnapshot,
     _snapshot,
     _snapshot_dict,
 )
+from custom_components.ecotricity_nz.tariff import season_charts
 from tests.conftest import (
     ANYTIME_PLAN,
     DEFAULT_NETWORK,
@@ -236,7 +236,7 @@ async def test_each_day_is_priced_once(
     calls = mock_onboarding.async_get_icp.await_count
 
     with patch.object(
-        coordinator_module, "_plan_slots", wraps=coordinator_module._plan_slots
+        coordinator_module, "plan_slots", wraps=coordinator_module.plan_slots
     ) as plan_slots:
         # Set up at 8:15am, so the next day's check runs then.
         await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
@@ -488,21 +488,14 @@ async def test_failed_refresh_action_doesnt_keep_backing_off(
     assert coordinator.update_interval == PRICING_CHECK_INTERVAL
 
 
-def test_outer_season_first_applies_when_the_season_inside_it_ends() -> None:
+def test_saved_charts_of_a_season_that_no_longer_applies_are_kept() -> None:
+    # A season covered by another for the rest of its days isn't priced, so its saved charts are
+    # kept rather than downloaded again.
     plan = find_plan_where(has_overlapping_seasons)
     inner = min(plan.seasons, key=lambda season: season.end - season.start)
     outer = max(plan.seasons, key=lambda season: season.end - season.start)
-    day = inner.start + timedelta(days=14)
-
-    assert _first_day(plan, inner, day) == day
-    assert _first_day(plan, outer, day) == inner.end + timedelta(days=1)
-
-
-def test_season_covered_by_another_for_the_rest_of_its_days_no_longer_applies() -> None:
-    plan = find_plan_where(has_overlapping_seasons)
-    inner = min(plan.seasons, key=lambda season: season.end - season.start)
-    outer = max(plan.seasons, key=lambda season: season.end - season.start)
-    # The inner season runs to the outer one's end, so the outer one doesn't apply again.
     plan = replace(plan, seasons=(outer, replace(inner, end=outer.end)))
+    charts = dict.fromkeys(season_charts(plan, outer), ChartReading((), ()))
 
-    assert _first_day(plan, outer, inner.start + timedelta(days=14)) is None
+    assert coordinator_module._explained(charts, plan, outer, inner.start + timedelta(days=14))
+    assert not coordinator_module._explained({}, plan, outer, inner.start + timedelta(days=14))

@@ -7,7 +7,7 @@ fixture tests check the same scenarios against real charts, wherever a network s
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -30,19 +30,24 @@ from custom_components.ecotricity_nz.tariff import (
     bucket_name,
     bucket_names,
     bucket_period,
+    chart_seasons,
     day_slots,
     day_windows,
     explain,
+    first_day,
     next_change,
     next_season_change,
     period_for_bucket,
     plan_alignment,
+    plan_slots,
     price_day,
     price_side,
     rate_periods,
     rates_alignment,
     resolve_bucket,
+    season_charts,
     season_for,
+    season_slots,
     side_rates,
 )
 from tests.conftest import (
@@ -165,6 +170,26 @@ def test_any_other_season_wins_over_standard_rates() -> None:
         covering = [other for other in plan.seasons if other.contains(season.start)]
         if len(covering) > 1:
             assert chosen.name.lower() != "standard rates"
+
+
+def test_outer_season_first_applies_when_the_season_inside_it_ends() -> None:
+    plan = find_plan_where(has_overlapping_seasons)
+    inner = min(plan.seasons, key=lambda season: season.end - season.start)
+    outer = max(plan.seasons, key=lambda season: season.end - season.start)
+    day = inner.start + timedelta(days=14)
+
+    assert first_day(plan, inner, day) == day
+    assert first_day(plan, outer, day) == inner.end + timedelta(days=1)
+
+
+def test_season_covered_by_another_for_the_rest_of_its_days_no_longer_applies() -> None:
+    plan = find_plan_where(has_overlapping_seasons)
+    inner = min(plan.seasons, key=lambda season: season.end - season.start)
+    outer = max(plan.seasons, key=lambda season: season.end - season.start)
+    # The inner season runs to the outer one's end, so the outer one doesn't apply again.
+    plan = replace(plan, seasons=(outer, replace(inner, end=outer.end)))
+
+    assert first_day(plan, outer, inner.start + timedelta(days=14)) is None
 
 
 def test_next_season_change_with_overlapping_seasons() -> None:
@@ -483,6 +508,166 @@ def test_one_network_rate_applies_all_day_when_the_chart_has_no_windows_for_it()
     slots = day_slots(_peak_only_network_export(), reading, reading, export=True)
 
     assert {slot.price for slot in slots.all} == {-21.0}
+
+
+SPRING_SEASON = Season("Seasonal Rates", date(2026, 10, 1), date(2026, 12, 31))
+SUMMER_SEASON = Season("Seasonal Rates", date(2027, 1, 1), date(2027, 3, 31))
+PEAK_ONLY_EXPORT_LEGEND = ChartReading(
+    import_entries=(),
+    export_entries=_entries((0, 17, "-16.00"), (17, 21, "-21.00"), (21, 24, "-16.00")),
+)
+
+
+def _peak_only_network_export_plan(*seasons: Season) -> Plan:
+    """A plan with `_peak_only_network_export`'s rates and a chart for each season."""
+    return replace(
+        _plan(
+            _supplier("CHARGE_24", -16.0, register_type="EG"),
+            _network("CHARGE_HIGH", -5.0, register_type="EG"),
+        ),
+        seasons=seasons,
+        timeframe_chart_weekday="/charts/X-SSSSSSSS-EEEEEEEE-WD.png",
+        timeframe_chart_weekend="/charts/X-SSSSSSSS-EEEEEEEE-WE.png",
+    )
+
+
+def _charts(plan: Plan, season: Season, reading: ChartReading) -> dict[str, ChartReading]:
+    return dict.fromkeys(season_charts(plan, season), reading)
+
+
+def test_season_charts_are_read_where_one_network_rate_may_apply_all_day() -> None:
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+    charts = _charts(plan, SPRING_SEASON, PEAK_ONLY_EXPORT_LEGEND)
+
+    slots, missing = season_slots(charts, plan, SPRING_SEASON, SPRING, export=True)
+
+    assert slots is not None
+    assert {slot.price for slot in slots.all} == {-16.0, -21.0}
+    assert missing is None
+
+
+def test_missing_charts_are_reported_where_one_network_rate_is_taken_to_apply_all_day() -> None:
+    # The charts might show the rate only applies in some hours, so the gap is reported.
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+
+    slots, missing = season_slots({}, plan, SPRING_SEASON, SPRING, export=True)
+
+    assert slots is not None
+    assert {slot.price for slot in slots.all} == {-21.0}
+    assert missing == "The plan's charts for the season couldn't be downloaded or read"
+
+    # The same until the season is published, which gives the charts their dates.
+    assert season_charts(plan, None) == []
+    slots, missing = season_slots({}, plan, None, SPRING, export=True)
+    assert slots is not None
+    assert missing == "No published season covers the day"
+
+
+def test_plan_without_charts_takes_one_network_rate_to_apply_all_day() -> None:
+    plan = replace(
+        _peak_only_network_export_plan(SPRING_SEASON),
+        timeframe_chart_weekday=None,
+        timeframe_chart_weekend=None,
+    )
+
+    slots, missing = season_slots({}, plan, SPRING_SEASON, SPRING, export=True)
+
+    assert slots is not None
+    assert {slot.price for slot in slots.all} == {-21.0}
+    assert missing is None
+
+
+def test_side_with_one_possible_price_needs_no_charts() -> None:
+    plan = replace(
+        _peak_only_network_export_plan(SPRING_SEASON),
+        network_rates=(),
+        retail_rates=(_supplier("CHARGE_24", -16.0, register_type="EG"),),
+    )
+
+    slots, missing = season_slots({}, plan, SPRING_SEASON, SPRING, export=True)
+
+    assert slots is not None
+    assert missing is None
+
+
+def test_side_that_needs_its_charts_is_rejected_without_them() -> None:
+    plan = replace(
+        _peak_only_network_export_plan(SPRING_SEASON),
+        network_rates=tuple(
+            _network(charge, price, register_type="EG")
+            for charge, price in (("CHARGE_HIGH", -5.0), ("CHARGE_LOW", -1.0))
+        ),
+    )
+
+    with pytest.raises(ChartReadError, match="couldn't be downloaded or read"):
+        season_slots({}, plan, SPRING_SEASON, SPRING, export=True)
+
+
+def test_later_season_whose_chart_isnt_explained_is_left_out() -> None:
+    plan = _peak_only_network_export_plan(SPRING_SEASON, SUMMER_SEASON)
+    unexplained = ChartReading(import_entries=(), export_entries=_entries((0, 24, "-99.00")))
+    charts = _charts(plan, SPRING_SEASON, PEAK_ONLY_EXPORT_LEGEND) | _charts(
+        plan, SUMMER_SEASON, unexplained
+    )
+
+    slots = plan_slots(charts, plan, SPRING)
+
+    assert slots.today[True] is not None
+    assert not slots.errors
+    assert slots.later[True] == []
+    assert len(slots.later_errors) == 1
+    assert "2027-01-01" in slots.later_errors[0]
+    assert "doesn't match the plan's rates" in slots.later_errors[0]
+
+
+def test_later_season_with_missing_charts_is_left_out() -> None:
+    # Taking the network rate to apply all day is only a fallback for today's prices, so a later
+    # season priced that way can't decide which periods the plan has.
+    plan = _peak_only_network_export_plan(SPRING_SEASON, SUMMER_SEASON)
+
+    slots = plan_slots(_charts(plan, SPRING_SEASON, PEAK_ONLY_EXPORT_LEGEND), plan, SPRING)
+
+    assert slots.later[True] == []
+    assert len(slots.later_errors) == 1
+    assert not slots.missing
+
+
+def test_todays_missing_charts_are_reported_separately_from_errors() -> None:
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+
+    slots = plan_slots({}, plan, SPRING)
+
+    assert slots.today[True] is not None
+    assert not slots.errors
+    assert slots.missing == (
+        "Export: The plan's charts for the season couldn't be downloaded or read",
+    )
+    assert slots.seasons(export=True) == [slots.today[True]]
+
+
+def test_next_season_for_charts_can_be_inside_todays() -> None:
+    # Outside the inner season, the next season to apply is the inner one, not the season after
+    # the outer one ends.
+    standard = Season("Standard Rates", date(2026, 4, 1), date(2027, 3, 31))
+    winter = Season("Seasonal Rates", date(2026, 6, 1), date(2026, 9, 30))
+    plan = replace(_peak_only_network_export_plan(), seasons=(standard, winter))
+
+    assert chart_seasons(plan, date(2026, 5, 15), upcoming=False) == [standard, winter]
+    assert chart_seasons(plan, date(2026, 7, 1), upcoming=False) == [winter, standard]
+    assert chart_seasons(plan, date(2026, 11, 1), upcoming=False) == [standard]
+    assert chart_seasons(plan, date(2026, 5, 15), upcoming=True) == [standard, winter]
+
+
+def test_plan_with_one_set_of_charts_has_no_seasons_for_them() -> None:
+    plan = replace(
+        _peak_only_network_export_plan(SPRING_SEASON),
+        timeframe_chart_weekday="/charts/X-WD.png",
+        timeframe_chart_weekend="/charts/X-WE.png",
+    )
+
+    assert chart_seasons(plan, SPRING, upcoming=False) == [None]
+    assert chart_seasons(plan, SPRING, upcoming=True) == [None]
+    assert season_charts(plan, None) == ["/charts/X-WD-NOGST.png", "/charts/X-WE-NOGST.png"]
 
 
 def test_fixture_charts_agree_where_one_network_rate_is_taken_to_apply_all_day() -> None:

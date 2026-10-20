@@ -44,12 +44,12 @@ from custom_components.ecotricity_nz.const import (
     CONF_PLAN_ID,
     DOMAIN,
 )
-from custom_components.ecotricity_nz.coordinator import _first_day
 from custom_components.ecotricity_nz.tariff import (
     ANYTIME,
     SideRates,
     Slot,
     explain,
+    first_day,
     period_for_bucket,
     season_for,
     side_rates,
@@ -198,7 +198,7 @@ def stored_charts(plan: Plan) -> list[tuple[date, Path]]:
     """
     charts = []
     for season in sorted(plan.seasons, key=lambda season: season.start):
-        day = _first_day(plan, season, season.start)
+        day = first_day(plan, season, season.start)
         for weekend in (False, True):
             chart = chart_file(season_chart_name(plan, season, weekend=weekend))
             if day is not None and chart.exists():

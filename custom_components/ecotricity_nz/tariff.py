@@ -32,10 +32,17 @@ from itertools import product
 from typing import TYPE_CHECKING
 
 from .api.models import RateUnit
-from .api.timeframes import SLOT_MINUTES, SLOTS_PER_DAY, ChartReadError, shown_price
+from .api.timeframes import (
+    SLOT_MINUTES,
+    SLOTS_PER_DAY,
+    ChartReadError,
+    needs_season,
+    season_chart_path,
+    shown_price,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from datetime import date, datetime, tzinfo
 
     from .api.models import Plan, Rate, Season
@@ -757,6 +764,180 @@ def next_season_change(plan: Plan, day: date) -> date | None:
         ),
         None,
     )
+
+
+def plan_needs_season(plan: Plan) -> bool:
+    """Return whether the plan's charts depend on the season."""
+    return any(
+        template and needs_season(template)
+        for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend)
+    )
+
+
+def chart_seasons(plan: Plan, day: date, *, upcoming: bool) -> list[Season | None]:
+    """Return the day's season and the next, or with `upcoming` every season not yet over.
+
+    The next season is the one that applies from `next_season_change`, which with overlapping
+    seasons can be one inside today's. A plan whose charts don't depend on the season has one set
+    of charts, for every day, given as the season None.
+    """
+    if not plan_needs_season(plan):
+        return [None]
+    season = season_for(plan, day)
+    if upcoming:
+        later = sorted(
+            (item for item in plan.seasons if item.end >= day and item != season),
+            key=lambda item: (item.start, item.end),
+        )
+        return [season, *later] if season else list(later)
+    change = next_season_change(plan, day)
+    following = season_for(plan, change) if change is not None else None
+    return [item for item in (season, following) if item is not None]
+
+
+def season_charts(plan: Plan, season: Season | None) -> list[str]:
+    """Return the paths of a season's weekday and weekend charts, leaving out any not published."""
+    paths: list[str] = []
+    for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend):
+        try:
+            path = season_chart_path(template, season)
+        except ChartReadError:
+            continue
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def first_day(plan: Plan, season: Season, day: date) -> date | None:
+    """Return the first day from `day` on that a season applies, or None if it no longer does.
+
+    An outer season, such as "Standard Rates" all year, doesn't apply while a season inside it
+    does, so its rates are those from when the inner one ends.
+    """
+    # Which season applies only changes when a season starts or the day after one ends.
+    candidates = {max(season.start, day)} | {
+        other.end + timedelta(days=1) for other in plan.seasons if other.end >= day
+    }
+    return next(
+        (
+            candidate
+            for candidate in sorted(candidates)
+            if candidate >= day
+            and season.contains(candidate)
+            and season_for(plan, candidate) == season
+        ),
+        None,
+    )
+
+
+def season_slots(
+    charts: Mapping[str, ChartReading],
+    plan: Plan,
+    season: Season | None,
+    day: date,
+    *,
+    export: bool,
+) -> tuple[DaySlots | None, str | None]:
+    """Return one side's half-hours for a season, and which of its charts were missing.
+
+    The half-hours are None when the plan has no rates for the side. A side whose one network
+    rate likely applies all day (see `SideRates.likely_flat`) is given that price when its charts
+    are missing, along with why they're missing, since the charts might show the rate only
+    applies in some hours. That's None when the charts were read, or the plan has none at all.
+
+    Raises ChartReadError if the side needs its charts and they're missing or can't be explained.
+    """
+    rates = side_rates(plan, day, export=export)
+    if rates.is_empty:
+        return None, None
+    if rates.flat() is not None:
+        return day_slots(rates, None, None, export=export), None
+    templates = (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend)
+    try:
+        paths = [season_chart_path(template, season) for template in templates]
+    except ChartReadError as err:
+        if rates.likely_flat() is None:
+            raise
+        return day_slots(rates, None, None, export=export), str(err) if all(templates) else None
+    weekday, weekend = (charts.get(path) for path in paths)
+    slots = day_slots(rates, weekday, weekend, export=export)
+    if weekday is None or weekend is None:
+        return slots, "The plan's charts for the season couldn't be downloaded or read"
+    return slots, None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanSlots:
+    """A plan's half-hours today and in every later season whose charts can be read.
+
+    Each is keyed by whether it's export.
+    """
+
+    today: dict[bool, DaySlots | None]
+    """None for a side with no rates, or whose charts can't be read."""
+    later: dict[bool, list[DaySlots]]
+    """Every later season's half-hours, leaving out seasons whose charts can't be read."""
+    errors: tuple[str, ...]
+    """Why today's charts couldn't be used."""
+    missing: tuple[str, ...]
+    """Today's sides given their one network rate all day because their charts are missing."""
+    later_errors: tuple[str, ...]
+    """Why a later season was left out."""
+
+    def seasons(self, *, export: bool) -> list[DaySlots]:
+        """Return today's half-hours, where there are any, and every later season's."""
+        today = self.today[export]
+        return [*([today] if today is not None else []), *self.later[export]]
+
+
+def plan_slots(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> PlanSlots:
+    """Return the plan's half-hours today and in every later season, from its read charts.
+
+    A later season whose charts can't be read, or are missing, is left out, so it can't stop
+    today's prices working.
+    """
+    season = season_for(plan, day)
+    # A plan whose charts don't depend on the season (a None season) has one chart, which shows
+    # today's prices, so there's no other season to explain.
+    upcoming = [
+        (item, start)
+        for item in chart_seasons(plan, day, upcoming=True)
+        if item is not None and item != season and (start := first_day(plan, item, day))
+    ]
+    today: dict[bool, DaySlots | None] = {}
+    later: dict[bool, list[DaySlots]] = {}
+    errors: list[str] = []
+    missing: list[str] = []
+    later_errors: list[str] = []
+    for export in (False, True):
+        side = "Export" if export else "Import"
+        try:
+            today[export], gap = season_slots(charts, plan, season, day, export=export)
+        except ChartReadError as err:
+            today[export], gap = None, None
+            errors.append(f"{side}: {err}")
+        if gap is not None:
+            missing.append(f"{side}: {gap}")
+        later[export] = []
+        for item, start in upcoming:
+            try:
+                slots, gap = season_slots(charts, plan, item, start, export=export)
+            except ChartReadError as err:
+                slots, gap = None, str(err)
+            if gap is not None:
+                later_errors.append(f"{side} from {start.isoformat()}: {gap}")
+            elif slots is not None:
+                later[export].append(slots)
+    return PlanSlots(today, later, tuple(errors), tuple(missing), tuple(later_errors))
+
+
+def side_alignment(
+    plan: Plan, day: date, seasons: Sequence[DaySlots], *, export: bool
+) -> Alignment:
+    """Return whose periods decide a side's price, from its rates if no season's charts are read."""
+    if seasons:
+        return plan_alignment(seasons)
+    return rates_alignment(side_rates(plan, day, export=export))
 
 
 def _change_key(slot: Slot, key: str = "bucket") -> tuple[str, float]:

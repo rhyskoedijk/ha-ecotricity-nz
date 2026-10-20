@@ -27,6 +27,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.ecotricity_nz import coordinator as coordinator_module
+from custom_components.ecotricity_nz import tariff as tariff_module
 from custom_components.ecotricity_nz.api import (
     AttestationError,
     AuthError,
@@ -179,12 +180,31 @@ async def test_flat_plan_needs_no_chart(
 ) -> None:
     # Low User outside winter: one import price all day, so no chart is needed.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    serve = mock_onboarding.async_get_chart.side_effect
     mock_onboarding.async_get_chart.side_effect = EcotricityConnectionError("down")
     await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
 
     assert _state(hass, "plan") == "Low ecoANYTIME"
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
-    assert config_entry.runtime_data.pricing.data.tou_error is None
+    coordinator = config_entry.runtime_data.pricing
+    assert coordinator.data.tou_error is None
+
+    # The network's one rate is taken to apply all day, which the chart might not agree with, so
+    # it's fetched again at the next day's check until the chart is read.
+    assert coordinator.data.missing_charts
+    calls = mock_onboarding.async_get_icp.await_count
+    freezer.tick(timedelta(days=1))
+    await coordinator.async_refresh()
+    assert mock_onboarding.async_get_icp.await_count == calls + 1
+
+    mock_onboarding.async_get_chart.side_effect = serve
+    freezer.tick(timedelta(days=1))
+    await coordinator.async_refresh()
+    assert not coordinator.data.missing_charts
+    calls = mock_onboarding.async_get_icp.await_count
+    freezer.tick(timedelta(days=1))
+    await coordinator.async_refresh()
+    assert mock_onboarding.async_get_icp.await_count == calls
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -413,6 +433,8 @@ async def test_price_sensors_are_kept_while_the_chart_cannot_be_read(
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entity_registry.async_get(kept.entity_id) is not None
+    # Its entity is still provided, rather than left in the registry as no longer provided.
+    assert hass.states.get(kept.entity_id) is not None
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -485,7 +507,7 @@ async def test_fixed_chart_plan_has_later_seasons_controlled_periods(
     )
     mock_onboarding.async_get_plans.return_value = PlanList(default=fixed_plan)
     with patch.object(
-        coordinator_module, "_season_slots", wraps=coordinator_module._season_slots
+        tariff_module, "season_slots", wraps=tariff_module.season_slots
     ) as season_slots:
         await _setup(hass, config_entry, {CONF_PLAN_ID: fixed_plan.id})
 
@@ -775,13 +797,24 @@ async def test_price_sensors_are_kept_while_a_later_seasons_chart_cannot_be_read
     shoulder = entity_registry.async_get_or_create(
         "sensor", DOMAIN, f"{TEST_ICP}_price_charge_3", config_entry=config_entry
     )
+    split = entity_registry.async_get_or_create(
+        "sensor", DOMAIN, f"{TEST_ICP}_current_supplier_import_period", config_entry=config_entry
+    )
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
 
     data = config_entry.runtime_data.pricing.data
     assert data.tou_error is None
     assert not data.periods.complete
+    # Both are still provided: the shoulder price has no value today, and the supplier period
+    # follows today's chart.
     assert entity_registry.async_get(shoulder.entity_id) is not None
+    shoulder_state = hass.states.get(shoulder.entity_id)
+    assert shoulder_state is not None
+    assert shoulder_state.state == "unknown"
+    split_state = hass.states.get(split.entity_id)
+    assert split_state is not None
+    assert split_state.state == _state(hass, "current_import_period")
 
     # Once every season left can be read, a period none of them has is removed as usual.
     mock_onboarding.async_get_plans.return_value = plans
@@ -790,6 +823,7 @@ async def test_price_sensors_are_kept_while_a_later_seasons_chart_cannot_be_read
 
     assert config_entry.runtime_data.pricing.data.periods.complete
     assert entity_registry.async_get(shoulder.entity_id) is None
+    assert entity_registry.async_get(split.entity_id) is None
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -840,6 +874,47 @@ async def test_later_seasons_charts_are_downloaded_once(
     await config_entry.runtime_data.pricing.async_refresh()
     assert mock_onboarding.async_get_icp.await_count == 2
     assert later_season_downloads() == 2
+
+
+async def test_later_seasons_chart_is_downloaded_again_until_its_prices_are_explained(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A later season's chart reads, but its prices don't match the plan's rates (it was drawn
+    # before the rates were published, say), so it's downloaded again at each fetch.
+    freezer.move_to(WINTER_PEAK)
+    mock_onboarding.async_get_plans.return_value = _with_new_season(
+        mock_onboarding.async_get_plans.return_value
+    )
+    serve = mock_onboarding.async_get_chart.side_effect
+    unexplained = ChartReading(
+        import_entries=(LegendEntry(0, 1440, "99.99"),),
+        export_entries=(LegendEntry(0, 1440, "-13.74"),),
+    )
+
+    async def chart(path: str) -> bytes:
+        return NEW_SEASON_CHART if "-20270401-" in path else serve(path)
+
+    def read(data: bytes) -> ChartReading:
+        return unexplained if data == NEW_SEASON_CHART else read_chart(data)
+
+    def later_season_downloads() -> int:
+        return sum(
+            "-20270401-" in call.args[0] for call in mock_onboarding.async_get_chart.call_args_list
+        )
+
+    mock_onboarding.async_get_chart.side_effect = chart
+    with patch.object(coordinator_module, "read_chart", side_effect=read):
+        await _setup(hass, config_entry)
+        coordinator = config_entry.runtime_data.pricing
+        assert not coordinator.data.periods.complete
+        assert later_season_downloads() == 2
+
+        freezer.tick(PRICING_FETCH_INTERVAL)
+        await coordinator.async_refresh()
+        assert later_season_downloads() == 4
 
 
 async def test_pricing_is_fetched_weekly(

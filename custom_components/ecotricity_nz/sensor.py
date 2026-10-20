@@ -36,7 +36,6 @@ from .tariff import (
     Slot,
     TouPeriod,
     bucket_name,
-    bucket_names,
     bucket_period,
     day_windows,
     next_change,
@@ -245,36 +244,41 @@ async def async_setup_entry(
     # plan and its seasons, which Ecotricity can change at any time. Add sensors for any period,
     # or split side, that appears after setup, and remove those the plan no longer has (after
     # choosing another plan, say), so only what the plan has shows.
-    known: set[str] = set()
-    price_prefix = f"{icp}_{_PRICE_KEY_PREFIX}"
-    split_ids = {f"{icp}_{key}" for key in _SPLIT_PERIOD_KEYS.values()}
+    sync = partial(_sync_plan_sensors, entity_registry, entry, async_add_entities, tz, known=set())
+    sync()
+    entry.async_on_unload(pricing.async_add_listener(sync))
 
-    @callback
-    def _sync_plan_sensors() -> None:
-        wanted = _plan_sensors(pricing, icp, tz)
-        new = [create() for unique_id, create in wanted.items() if unique_id not in known]
-        # The periods aren't fully known until every season's charts can be read, so keep every
-        # sensor until then.
-        keep_all = pricing.data.tou_error is not None or not pricing.data.periods.complete
-        if not keep_all:
-            known.clear()
-        known.update(wanted)
-        if new:
-            async_add_entities(new)
-        if keep_all:
-            return
 
-        for registry_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
-            unique_id = registry_entry.unique_id
-            if (
-                registry_entry.domain == SENSOR_DOMAIN
-                and (unique_id.startswith(price_prefix) or unique_id in split_ids)
-                and unique_id not in wanted
-            ):
-                entity_registry.async_remove(registry_entry.entity_id)
+@callback
+def _sync_plan_sensors(
+    entity_registry: er.EntityRegistry,
+    entry: EcotricityConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    tz: tzinfo,
+    *,
+    known: set[str],
+) -> None:
+    """Add the sensors the plan's periods call for, and remove those it no longer has.
 
-    _sync_plan_sensors()
-    entry.async_on_unload(pricing.async_add_listener(_sync_plan_sensors))
+    `known` holds the unique IDs of the sensors already added.
+    """
+    pricing = entry.runtime_data.pricing
+    wanted = _plan_sensors(pricing, pricing.icp, tz)
+    registered = _registered_plan_sensors(entity_registry, entry, pricing, pricing.icp, tz)
+    # The periods aren't fully known until every season's charts can be read, so keep every
+    # sensor until then, including those from before a restart.
+    keep_all = pricing.data.tou_error is not None or not pricing.data.periods.complete
+    if keep_all:
+        wanted = registered | wanted
+    if new := [create() for unique_id, create in wanted.items() if unique_id not in known]:
+        async_add_entities(new)
+    known.update(wanted)
+    if keep_all:
+        return
+    known.intersection_update(wanted)
+    for unique_id in registered.keys() - wanted.keys():
+        if entity_id := entity_registry.async_get_entity_id(SENSOR_DOMAIN, DOMAIN, unique_id):
+            entity_registry.async_remove(entity_id)
 
 
 def _plan_sensors(
@@ -297,12 +301,42 @@ def _plan_sensors(
     return wanted
 
 
+def _registered_plan_sensors(
+    entity_registry: er.EntityRegistry,
+    entry: EcotricityConfigEntry,
+    pricing: PricingCoordinator,
+    icp: str,
+    tz: tzinfo,
+) -> dict[str, Callable[[], SensorEntity]]:
+    """Return how to create each plan sensor already in the entity registry, by unique ID.
+
+    These are the price sensors (by the `{icp}_price_` prefix) and split period sensors.
+    """
+    price_prefix = f"{icp}_{_PRICE_KEY_PREFIX}"
+    split = {f"{icp}_{key}": side for side, key in _SPLIT_PERIOD_KEYS.items()}
+    sensors: dict[str, Callable[[], SensorEntity]] = {}
+    for registry_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        unique_id = registry_entry.unique_id
+        if registry_entry.domain != SENSOR_DOMAIN:
+            continue
+        if unique_id.startswith(price_prefix):
+            # Bucket codes are upper case, so the unique ID's slug gives the bucket back.
+            bucket = unique_id.removeprefix(price_prefix).upper()
+            sensors[unique_id] = partial(BucketPriceSensor, pricing, icp, bucket)
+        elif unique_id in split:
+            export, party = split[unique_id]
+            sensors[unique_id] = partial(
+                CurrentPeriodSensor, pricing, icp, tz, export=export, party=party
+            )
+    return sensors
+
+
 class _PricingEntity(EcotricityEntity[PricingCoordinator], SensorEntity):
     """Shared helpers for pricing sensors."""
 
     def _period(self, bucket: str) -> str:
         """Return a bucket's period: anytime, peak, off_peak, or a key from the plan's name."""
-        return bucket_period(bucket, bucket_names(self.coordinator.data.plan))
+        return bucket_period(bucket, self.coordinator.data.names)
 
     def _side(self, *, export: bool) -> SidePricing | None:
         pricing = self.coordinator.data.pricing
@@ -415,8 +449,7 @@ class BucketPriceSensor(_PricingEntity):
             self._attr_translation_placeholders = self._name_placeholders()
 
     def _name_placeholders(self) -> dict[str, str]:
-        names = bucket_names(self.coordinator.data.plan)
-        return {"name": bucket_name(self._bucket, names)}
+        return {"name": bucket_name(self._bucket, self.coordinator.data.names)}
 
     @callback
     def _handle_coordinator_update(self) -> None:

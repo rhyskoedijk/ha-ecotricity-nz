@@ -218,6 +218,15 @@ def test_unexpected_text_rejected() -> None:
         read_chart(_edited(_chart(), stray))
 
 
+def test_unreadable_legend_heading_rejected() -> None:
+    # Only the export column's first letter is left, which gives no character width.
+    def erase_heading(image: Image.Image) -> None:
+        ImageDraw.Draw(image).rectangle((482, 528, image.width, 546), fill="white")
+
+    with pytest.raises(ChartReadError, match="headings can't be read"):
+        read_chart(_edited(_chart(), erase_heading))
+
+
 def test_legend_without_import_windows_rejected() -> None:
     # Only the headings are left.
     def erase_windows(image: Image.Image) -> None:

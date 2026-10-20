@@ -67,7 +67,7 @@ Any one of these works:
 
 ## Live smoke test
 
-`scripts/api_client_smoke_test.py` runs the real API clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings.
+`scripts/api_client_smoke_test.py` runs the real API clients against the live sites and prints a summary: ICP details, plans, today's prices, the time-of-use windows read from the charts, and with a login, the last day of readings. It masks the ICP but prints prices and readings. Like the integration, it downloads the charts of every published season that hasn't ended (two per season), since whose periods decide the price is worked out across seasons, and prints any chart it can't read or explain.
 
 Create a `.env` file in the repository root (it's git-ignored):
 
@@ -94,6 +94,7 @@ Build fixtures from the captures without personal data:
 
 - the ICP becomes `0000123456AB1C2`
 - keep public network codes and names real so tests identify the network being covered; do not mask them in plan codes or chart paths
+- keep price categories real too, including in the test ICP's `icp.json`: the Electricity Authority publishes them, and they identify no one
 - replace personal identifiers and other customer-specific details with obviously fake values
 - the address, region, meter serial, account number, contract number, registry audit numbers and portal IDs get obviously fake values
 

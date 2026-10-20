@@ -359,6 +359,25 @@ def test_equal_network_rates_prefer_the_supplier_period() -> None:
     assert all(slot.network == slot.supplier for slot in slots)
 
 
+def test_price_fitting_combinations_with_different_exact_prices_is_rejected() -> None:
+    # Ecotricity's peak with the network's off-peak, and the other way round, come to 30.548c and
+    # 30.552c, which both print as 30.55. Which periods apply can't be told, so it isn't guessed.
+    rates = side_rates(
+        _plan(
+            _supplier("CHARGE_HIGH", 25.0),
+            _supplier("CHARGE_LOW", 20.0),
+            _network("CHARGE_HIGH", 10.552),
+            _network("CHARGE_LOW", 5.548),
+        ),
+        SPRING,
+        export=False,
+    )
+    assert shown_price(25.0 + 5.548) == shown_price(20.0 + 10.552) == "30.55"
+
+    with pytest.raises(ChartReadError, match="more than one"):
+        explain(_entries((0, 12, "25.55"), (12, 24, "30.55")), rates)
+
+
 @pytest.mark.parametrize(
     ("text", "estimate", "price"),
     [
@@ -406,7 +425,7 @@ def test_unsettled_clipped_price_is_rejected(estimate: float | None) -> None:
         LegendEntry(720, MINUTES_PER_DAY, "-3", clipped=True, estimate=estimate),
     )
 
-    with pytest.raises(ChartReadError):
+    with pytest.raises(ChartReadError, match="more than one"):
         explain(entries, rates)
 
 

@@ -406,34 +406,48 @@ def _slot(candidate: _Candidate) -> Slot:
 
 
 def _matches(entry: LegendEntry, candidates: Sequence[_Candidate]) -> list[_Candidate]:
-    """Return the combinations whose price the legend entry shows."""
+    """Return the combinations whose price the legend entry shows, all with the same price.
+
+    Raises ChartReadError if the entry fits combinations with different prices that it can't
+    tell apart, such as 30.551c and 30.554c, which both print as 30.55.
+    """
     if not entry.clipped:
-        return [combo for combo in candidates if shown_price(combo.price) == entry.text]
+        matching = [combo for combo in candidates if shown_price(combo.price) == entry.text]
+        if len({_price_key(combo.price) for combo in matching}) > 1:
+            raise _ambiguous(entry)
+        return matching
     matching = [combo for combo in candidates if shown_price(combo.price).startswith(entry.text)]
-    prices = sorted({round(combo.price, 2) for combo in matching})
+    prices = sorted({_price_key(combo.price) for combo in matching})
     if len(prices) <= 1:
         return matching
     if entry.estimate is None:
-        return []
+        raise _ambiguous(entry)
     # The digits that fit fit more than one price, so the bar's height settles it, as long as
     # it's clearly nearer one of them.
     estimate = entry.estimate
     nearest = min(prices, key=lambda price: abs(price - estimate))
     others = [price for price in prices if price != nearest]
     if any(abs(price - estimate) < 2 * abs(nearest - estimate) for price in others):
-        return []
-    return [combo for combo in matching if round(combo.price, 2) == nearest]
+        raise _ambiguous(entry)
+    return [combo for combo in matching if _price_key(combo.price) == nearest]
+
+
+def _ambiguous(entry: LegendEntry) -> ChartReadError:
+    return ChartReadError(
+        f"The chart's price {entry.text}c from {entry.start // 60:02d}:{entry.start % 60:02d} "
+        "fits more than one of the plan's prices"
+    )
 
 
 def explain(entries: Sequence[LegendEntry], rates: SideRates) -> tuple[Slot, ...]:
     """Return every half-hour's price and rates from a chart's legend entries for one side.
 
-    Raises ChartReadError if a price can't be explained by the plan's rates, or a clipped price
-    can't be settled.
+    Raises ChartReadError if a price can't be explained by the plan's rates, or fits more than one
+    of the plan's prices (including a clipped price its bar can't settle).
 
-    When several combinations give the same price (two network periods at the same rate, say),
-    the one where Ecotricity's and the network's periods line up is preferred, then one that
-    carries on from the half-hour before.
+    When several combinations give exactly the same price (two network periods at the same rate,
+    say), the one where Ecotricity's and the network's periods line up is preferred, then one
+    that carries on from the half-hour before.
     """
     candidates = rates.candidates()
     slots: list[Slot] = []

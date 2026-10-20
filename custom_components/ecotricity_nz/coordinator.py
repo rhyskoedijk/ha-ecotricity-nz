@@ -108,6 +108,8 @@ class PlanPeriods:
     """The network's period buckets on the sides that are split."""
     import_alignment: Alignment = Alignment.SUPPLIER
     export_alignment: Alignment = Alignment.SUPPLIER
+    complete: bool = True
+    """False when a later season's charts couldn't be read, so its periods may be missing."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,7 +415,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         """Work out a day's prices and windows from saved pricing. Makes no requests."""
         plan = self._select_plan(snapshot.plans)
         season = season_for(plan, day)
-        today, seasons, errors = _plan_slots(snapshot, plan, day)
+        today, seasons, errors, complete = _plan_slots(snapshot, plan, day)
         alignments = (
             _alignment(plan, day, seasons, export=False),
             _alignment(plan, day, seasons, export=True),
@@ -429,7 +431,9 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             day=day,
             season=season,
             pricing=pricing,
-            periods=_plan_periods(plan, day, seasons, pricing, alignments),
+            periods=replace(
+                _plan_periods(plan, day, seasons, pricing, alignments), complete=complete
+            ),
             fetched_at=snapshot.fetched_at,
             tou_error=tou_error,
         )
@@ -523,15 +527,16 @@ def _season_slots(
 
 def _plan_slots(
     snapshot: PricingSnapshot, plan: Plan, day: date
-) -> tuple[dict[bool, DaySlots | None], dict[bool, list[DaySlots]], list[str]]:
-    """Return today's half-hours, every readable season's half-hours, and today's errors.
+) -> tuple[dict[bool, DaySlots | None], dict[bool, list[DaySlots]], list[str], bool]:
+    """Return today's and every readable season's half-hours, today's errors, and if all were read.
 
-    Each is keyed by whether it's export. An upcoming season whose charts can't be read yet is
-    left out, so it can't stop today's prices working.
+    The half-hours are keyed by whether they're export. An upcoming season whose charts can't be
+    read yet is left out, so it can't stop today's prices working, and the last value is False.
     """
     today: dict[bool, DaySlots | None] = {}
     seasons: dict[bool, list[DaySlots]] = {}
     errors: list[str] = []
+    complete = True
     upcoming = [
         item for item in _seasons(plan, day, upcoming=True) if item != season_for(plan, day)
     ]
@@ -548,10 +553,11 @@ def _plan_slots(
                 slots = _season_slots(snapshot, plan, item, start, export=export)
             except ChartReadError as err:
                 LOGGER.debug("Leaving out a season whose charts can't be read: %s", err)
+                complete = False
                 continue
             if slots is not None:
                 seasons[export].append(slots)
-    return today, seasons, errors
+    return today, seasons, errors, complete
 
 
 def _alignment(

@@ -236,8 +236,9 @@ async def async_setup_entry(
     def _sync_plan_sensors() -> None:
         wanted = _plan_sensors(pricing, icp, tz)
         new = [create() for unique_id, create in wanted.items() if unique_id not in known]
-        # The periods aren't fully known until the charts can be read, so keep every sensor.
-        keep_all = pricing.data.tou_error is not None
+        # The periods aren't fully known until every season's charts can be read, so keep every
+        # sensor until then.
+        keep_all = pricing.data.tou_error is not None or not pricing.data.periods.complete
         if not keep_all:
             known.clear()
         known.update(wanted)

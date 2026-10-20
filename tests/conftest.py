@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Generator, Iterable
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from functools import cache
 from pathlib import Path
@@ -17,6 +18,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.ecotricity_nz.api import (
     EcotricityConnectionError,
     Plan,
+    PlanList,
     PortalIndicator,
     Rate,
     RateUnit,
@@ -27,7 +29,12 @@ from custom_components.ecotricity_nz.api.parsers import (
     parse_plan_titles,
     parse_values,
 )
-from custom_components.ecotricity_nz.api.timeframes import ChartReading, read_chart, shown_price
+from custom_components.ecotricity_nz.api.timeframes import (
+    ChartReading,
+    needs_season,
+    read_chart,
+    shown_price,
+)
 from custom_components.ecotricity_nz.const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
@@ -328,6 +335,30 @@ def _chart_bytes(path: str) -> bytes:
     return chart.read_bytes()
 
 
+def _captured_seasons(plans: PlanList) -> PlanList:
+    """Return the plans with only the seasons whose weekday chart is in the fixtures.
+
+    Ecotricity publishes a chart for every season it lists, but only charts that test something
+    are kept. Leaving out the rest keeps the mock site as consistent as the real one, so a season
+    whose chart can't be read is only ever one a test sets up.
+    """
+
+    @cache
+    def captured(plan: Plan) -> Plan:
+        if not plan.timeframe_chart_weekday or not needs_season(plan.timeframe_chart_weekday):
+            return plan
+        seasons = tuple(
+            season for season in plan.seasons if chart_file(chart_name(plan, season.start)).exists()
+        )
+        return replace(plan, seasons=seasons)
+
+    return PlanList(
+        default=captured(plans.default),
+        alternative=captured(plans.alternative) if plans.alternative else None,
+        others=tuple(captured(plan) for plan in plans.others),
+    )
+
+
 @pytest.fixture
 def mock_onboarding() -> Generator[MagicMock]:
     """Patch the onboarding client everywhere it's created."""
@@ -336,7 +367,9 @@ def mock_onboarding() -> Generator[MagicMock]:
         return_value=parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
     )
     client.async_get_plans = AsyncMock(
-        return_value=parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
+        return_value=_captured_seasons(
+            parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
+        )
     )
     client.async_get_chart = AsyncMock(side_effect=_chart_bytes)
     client.async_get_plan_titles = AsyncMock(

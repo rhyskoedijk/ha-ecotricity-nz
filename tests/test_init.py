@@ -701,6 +701,48 @@ async def test_prices_the_plan_no_longer_has_are_removed(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+async def test_price_sensors_are_kept_while_a_later_seasons_chart_cannot_be_read(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Today's chart reads, but a later season's doesn't, so a period only that season has isn't
+    # known yet. Its sensor is kept rather than removed.
+    freezer.move_to(WINTER_PEAK)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    mock_onboarding.async_get_plans.return_value = _with_new_season(plans)
+    serve = mock_onboarding.async_get_chart.side_effect
+
+    def chart(path: str) -> bytes:
+        if "-20270401-" in path:
+            raise EcotricityConnectionError("down")
+        return serve(path)
+
+    mock_onboarding.async_get_chart.side_effect = chart
+    config_entry.add_to_hass(hass)
+    shoulder = entity_registry.async_get_or_create(
+        "sensor", DOMAIN, f"{TEST_ICP}_price_charge_3", config_entry=config_entry
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    data = config_entry.runtime_data.pricing.data
+    assert data.tou_error is None
+    assert not data.periods.complete
+    assert entity_registry.async_get(shoulder.entity_id) is not None
+
+    # Once every season left can be read, a period none of them has is removed as usual.
+    mock_onboarding.async_get_plans.return_value = plans
+    await config_entry.runtime_data.pricing.async_fetch_now()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert config_entry.runtime_data.pricing.data.periods.complete
+    assert entity_registry.async_get(shoulder.entity_id) is None
+
+
+@pytest.mark.usefixtures("mock_onboarding")
 async def test_stale_price_sensors_are_removed_at_setup(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1433,9 +1475,8 @@ async def test_controlled_period_from_a_later_season_has_its_sensor(
     # A controlled night rate that only starts next season. Controlled load needs no chart, so
     # its sensor is there from now, with no value until the rate applies.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
-    plans: PlanList = mock_onboarding.async_get_plans.return_value
-    low_user = plans.find(plan_id(ANYTIME_PLAN))
-    assert low_user is not None
+    # Every published season, including those whose charts the fixtures leave out.
+    low_user = find_plan(ANYTIME_PLAN)
     later = next(season for season in low_user.seasons if season.start > date(2026, 10, 15))
     night = Rate(
         id="c1",

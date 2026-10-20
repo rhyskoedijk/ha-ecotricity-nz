@@ -34,7 +34,7 @@ Some sensors have changed in ways that can affect automations, templates and das
 - Fix the wrong season being used on plans with overlapping seasons, such as Scanpower's "Standard Rates" for the whole year and "Seasonal Rates" from June to September. The seasonal one now applies in its months, as on Ecotricity's website.
 - Fix the **Current export period** sensor showing a raw value on networks whose plans have an "Export Shoulder Peak" rate, such as Northpower and Top Energy. That period is now shown as "Shoulder peak".
 
-## v0.3.0 (2026-10-15)
+## 0.3.0 (2026-10-15)
 
 Pricing only worked properly for networks shaped like Wellington Electricity's. This release fixes pricing on Orion and other similar networks that have extra network-defined charge buckets such as "weekend" and "super off-peak" (#9).
 
@@ -46,7 +46,7 @@ Pricing only worked properly for networks shaped like Wellington Electricity's. 
 - The **Current import period** and **Current export period** sensors only list the periods your plan uses as options, so "shoulder" is no longer an option on plans without a shoulder price.
 - Price sensors for prices your plan no longer has, such as after switching to a different plan, are now removed instead of being left behind as no longer provided.
 
-## v0.2.0 (2026-10-13)
+## 0.2.0 (2026-10-13)
 
 - Pricing is saved and keeps working through restarts and internet outages, including into the next pricing season (once Ecotricity has published it). Ecotricity's pricing data is now fetched weekly, on the 1st of each month and at the end of each season, instead of twice a day. If it can't be reached, retries slow down from hourly to every 8 hours until it eventually succeeds again.
 - New **Last pricing update** sensor shows when pricing data was last fetched.
@@ -54,15 +54,15 @@ Pricing only worked properly for networks shaped like Wellington Electricity's. 
 - When the daily usage import finds nothing new, the portal is checked again every 3 hours until the data for the day becomes available.
 - The first import of your usage history is now faster, as it asks the portal for 31 days at a time instead of only seven.
 
-## v0.1.2 (2026-10-13)
+## 0.1.2 (2026-10-13)
 
 - HACS now lists the integration as New Zealand only, and the repository passes all HACS validation checks.
 
-## v0.1.1 (2026-10-13)
+## 0.1.1 (2026-10-13)
 
 - New **Refresh data** action (`ecotricity_nz.refresh`) fetches the latest pricing and usage immediately.
 
-## v0.1.0 (2026-10-13)
+## 0.1.0 (2026-10-13)
 
 Initial release.
 

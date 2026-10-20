@@ -22,8 +22,7 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="${TAG#v}"
-          jq --arg v "$version" '.version = $v' custom_components/ecotricity_nz/manifest.json > manifest.tmp
+          jq --arg v "$TAG" '.version = $v' custom_components/ecotricity_nz/manifest.json > manifest.tmp
           mv manifest.tmp custom_components/ecotricity_nz/manifest.json
 
       - name: Build the zip

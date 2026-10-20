@@ -177,6 +177,9 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._store = store
         self._snapshot: PricingSnapshot | None = None
         self._loaded = False
+        # The last day priced, so a check that prices it twice (to decide whether to fetch, then
+        # for the entities) only works it out once.
+        self._priced: tuple[PricingSnapshot, date, PricingData] | None = None
         self._fetch_requested = False
         self._fetch_error: str | None = None
         self._fetch_failures = 0
@@ -414,6 +417,12 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
     def _price_day(self, snapshot: PricingSnapshot, day: date) -> PricingData:
         """Work out a day's prices and windows from saved pricing. Makes no requests."""
         plan = self._select_plan(snapshot.plans)
+        if self._priced is not None:
+            priced_snapshot, priced_day, data = self._priced
+            if priced_snapshot is snapshot and priced_day == day and data.plan is plan:
+                if data.tou_error is None:
+                    self._clear_issue(ISSUE_TOU_CHART)
+                return data
         season = season_for(plan, day)
         today, seasons, errors, complete = _plan_slots(snapshot, plan, day)
         alignments = (
@@ -424,7 +433,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         tou_error = "; ".join(errors) or None
         if tou_error is None:
             self._clear_issue(ISSUE_TOU_CHART)
-        return PricingData(
+        data = PricingData(
             icp=snapshot.icp,
             plans=snapshot.plans,
             plan=plan,
@@ -437,6 +446,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             fetched_at=snapshot.fetched_at,
             tou_error=tou_error,
         )
+        self._priced = (snapshot, day, data)
+        return data
 
     def _raise_issue(self, issue_id: str, placeholders: dict[str, str] | None = None) -> None:
         ir.async_create_issue(

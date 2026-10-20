@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
@@ -17,6 +17,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
+from custom_components.ecotricity_nz import coordinator as coordinator_module
 from custom_components.ecotricity_nz.api import EcotricityConnectionError
 from custom_components.ecotricity_nz.api.parsers import (
     parse_icp,
@@ -219,6 +220,30 @@ async def test_unreadable_windows_are_fetched_again_next_day(
     await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
     assert mock_onboarding.async_get_chart.await_count > calls
     assert _state(hass, "current_import_price") != "unavailable"
+
+
+async def test_each_day_is_priced_once(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Midnight prices the new day, and the day's check prices it again to decide whether to
+    # fetch, then for the entities. Every season's charts are explained each time, so it's only
+    # worked out once while the saved pricing stays the same.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    calls = mock_onboarding.async_get_icp.await_count
+
+    with patch.object(
+        coordinator_module, "_plan_slots", wraps=coordinator_module._plan_slots
+    ) as plan_slots:
+        # Set up at 8:15am, so the next day's check runs then.
+        await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
+
+    assert mock_onboarding.async_get_icp.await_count == calls
+    assert config_entry.runtime_data.pricing.data.day == date(2026, 6, 16)
+    assert plan_slots.call_count == 1
 
 
 async def test_choosing_another_plan_fetches(

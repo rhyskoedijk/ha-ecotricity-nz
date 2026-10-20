@@ -2,15 +2,13 @@
 
 ## Unreleased
 
-## v0.4.0 (2026-10-21)
-
 Time-of-use pricing only worked on a handful of networks; on most, it was either unavailable or inaccurate. This release reads the exact prices printed under Ecotricity's time-of-use charts instead of working them out from the height of the bars, and has been checked against every chart Ecotricity publishes on every network as of October 2026.
 
 Some sensors have changed in ways that can affect automations, templates and dashboards, so please read the breaking changes before updating. These changes lay the groundwork for recreating Ecotricity's bills more accurately, which will continue in the next release.
 
 ### Breaking changes
 
-- **Export prices are now negative when they are a credit.** Every price now keeps its sign exactly as Ecotricity publishes it, so a credit is negative and a cost is positive. This applies to every sensor and attribute that shows an export price. If you use these sensors in automations, templates or the Energy dashboard, you'll need to flip the sign to keep the old behaviour; the README's [Using it with the Energy dashboard](README.md#using-it-with-the-energy-dashboard) section shows how.
+- **Export prices are now negative when they are a credit.** Every price now keeps its sign exactly as Ecotricity publishes it, so a credit is negative and a cost is positive. This applies to every sensor and attribute that shows an export price. If you use these sensors in automations, templates or the Energy dashboard, you'll need to flip the sign to keep the old behaviour.
 - **Line loss factors have moved to their own sensors.** The **Network** sensor no longer has the `loss_factor_consumption` and `loss_factor_generation` attributes. They're now the **Network import loss factor** and **Network export loss factor** sensors.
 - **A period's price sensor has no value on days its period doesn't apply.** Sensors such as **Peak import price** used to show another period's price on days when their own period didn't apply. They now show unknown, and the `charged_as` attribute has been removed.
 - **Next period change now also changes when the price does.** **Next import period change** and **Next export period change** now also change when the price changes within a period, and today's `windows` attribute starts a new window wherever the price changes, so one period can appear in more than one window in a day. This only happens where Ecotricity's and your network's periods don't line up exactly, which is the case on some networks but not all.

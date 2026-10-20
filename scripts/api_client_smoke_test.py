@@ -19,6 +19,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -26,7 +27,7 @@ import aiohttp
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from custom_components.ecotricity_nz.api import OnboardingClient, PortalClient
-from custom_components.ecotricity_nz.api.timeframes import chart_path, read_chart
+from custom_components.ecotricity_nz.api.timeframes import chart_path, needs_season, read_chart
 from custom_components.ecotricity_nz.tariff import (
     day_slots,
     day_windows,
@@ -35,6 +36,9 @@ from custom_components.ecotricity_nz.tariff import (
     season_for,
     side_rates,
 )
+
+if TYPE_CHECKING:
+    from custom_components.ecotricity_nz.api.models import Season
 
 NZ = ZoneInfo("Pacific/Auckland")
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -53,6 +57,15 @@ def _load_env() -> None:
 
 def _mask(text: str) -> str:
     return text[:4] + "*" * (len(text) - 6) + text[-2:] if len(text) > 6 else "***"  # noqa: PLR2004 - shortest value worth partly masking
+
+
+def _chart_path(template: str | None, season: Season | None) -> str | None:
+    """Return the chart to read for a season, as the integration does, or None if there's none."""
+    if not template:
+        return None
+    if not needs_season(template):
+        return chart_path(template, None, None)
+    return chart_path(template, season.start, season.end) if season else None
 
 
 async def main() -> int:
@@ -107,27 +120,25 @@ async def main() -> int:
         season = season_for(plan, today)
         charts = []
         for template in (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend):
-            path = chart_path(template, season.start, season.end) if season and template else None
+            path = _chart_path(template, season)
             charts.append(read_chart(await onboarding.async_get_chart(path)) if path else None)
         sides = []
         for export in (False, True):
             rates = side_rates(plan, today, export=export)
             sides.append(None if rates.is_empty else day_slots(rates, *charts, export=export))
-        pricing = price_day(
-            plan,
-            today,
-            sides[0],
-            sides[1],
-            (
-                plan_alignment([s for s in sides[:1] if s]),
-                plan_alignment([s for s in sides[1:] if s]),
-            ),
+        alignments = (
+            plan_alignment([s for s in sides[:1] if s]),
+            plan_alignment([s for s in sides[1:] if s]),
         )
+        pricing = price_day(plan, today, sides[0], sides[1], alignments)
         print(f"Plan {plan.name} ({plan.description}), today (cents excl GST):")
-        for label, side in (("import", pricing.import_side), ("export", pricing.export_side)):
+        for label, side, alignment in (
+            ("import", pricing.import_side, alignments[0]),
+            ("export", pricing.export_side, alignments[1]),
+        ):
             if side is None:
                 continue
-            print(f"  {label} periods ({side.alignment.value}): {side.buckets}")
+            print(f"  {label} periods ({alignment.value}): {side.buckets}")
             for day_type, slots in (
                 ("weekday", side.slots.weekday),
                 ("weekend", side.slots.weekend),

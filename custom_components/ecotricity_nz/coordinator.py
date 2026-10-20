@@ -493,6 +493,31 @@ def _seasons(plan: Plan, day: date, *, upcoming: bool) -> list[Season | None]:
     return seasons
 
 
+def _first_day(plan: Plan, season: Season | None, day: date) -> date | None:
+    """Return the first day from `day` on that a season applies, or None if it no longer does.
+
+    An outer season, such as "Standard Rates" all year, doesn't apply while a season inside it
+    does, so its rates are those from when the inner one ends. A plan whose charts don't depend
+    on the season gives None as its season, which applies every day.
+    """
+    if season is None:
+        return day
+    # Which season applies only changes when a season starts or the day after one ends.
+    candidates = {max(season.start, day)} | {
+        other.end + timedelta(days=1) for other in plan.seasons if other.end >= day
+    }
+    return next(
+        (
+            candidate
+            for candidate in sorted(candidates)
+            if candidate >= day
+            and season.contains(candidate)
+            and season_for(plan, candidate) == season
+        ),
+        None,
+    )
+
+
 def _chart_paths(plan: Plan, day: date, *, upcoming: bool) -> list[str]:
     """Return the chart paths for the seasons from `_seasons`, where published."""
     paths: list[str] = []
@@ -548,7 +573,8 @@ def _plan_slots(
             errors.append(f"{'Export' if export else 'Import'}: {err}")
         seasons[export] = [slots for slots in (today[export],) if slots is not None]
         for item in upcoming:
-            start = max(item.start, day) if item else day
+            if (start := _first_day(plan, item, day)) is None:
+                continue
             try:
                 slots = _season_slots(snapshot, plan, item, start, export=export)
             except ChartReadError as err:
@@ -584,8 +610,8 @@ def _plan_periods(
     """
     buckets: set[str] = set(pricing.rate_buckets)
     for item in _seasons(plan, day, upcoming=True):
-        start = max(item.start, day) if item else day
-        buckets.update(controlled_prices(plan, start)[0])
+        if (start := _first_day(plan, item, day)) is not None:
+            buckets.update(controlled_prices(plan, start)[0])
     supplier: set[str] = set()
     network: set[str] = set()
     for export, alignment in ((False, alignments[0]), (True, alignments[1])):

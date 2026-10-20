@@ -79,6 +79,7 @@ from tests.conftest import (
     find_plan,
     find_plan_where,
     has_extra_network_buckets,
+    has_overlapping_seasons,
     import_rates,
     load_network_fixture,
     plan_id,
@@ -1496,6 +1497,41 @@ async def test_controlled_period_from_a_later_season_has_its_sensor(
     await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
 
     assert _state(hass, "current_controlled_price") == "unknown"
+    assert await _enabled_price(hass, config_entry, entity_registry, "cn_charge_low") == "unknown"
+
+
+async def test_outer_season_is_priced_from_when_it_applies_again(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Inside a season that sits within a longer one, such as "Seasonal Rates" within "Standard
+    # Rates", the longer one next applies when the inner one ends. A controlled rate that only
+    # starts then is part of the plan, so it has its sensor from now.
+    plan = find_plan_where(has_overlapping_seasons)
+    inner = min(plan.seasons, key=lambda season: season.end - season.start)
+    outer = max(plan.seasons, key=lambda season: season.end - season.start)
+    freezer.move_to(datetime.combine(inner.start + timedelta(days=14), time(), UTC))
+    night = Rate(
+        id="c1",
+        description="Controlled night",
+        charge="CHARGE_LOW",
+        register_type="CN",
+        unit=RateUnit.PER_KWH,
+        raw_unit="cents/kWh",
+        price=9.0,
+        is_network=False,
+        valid_start=inner.end + timedelta(days=1),
+        valid_end=outer.end,
+    )
+    mock_onboarding.async_get_plans.return_value = PlanList(
+        default=replace(plan, retail_rates=(*plan.retail_rates, night))
+    )
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan.id})
+
+    assert config_entry.runtime_data.pricing.data.season == inner
     assert await _enabled_price(hass, config_entry, entity_registry, "cn_charge_low") == "unknown"
 
 

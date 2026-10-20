@@ -32,6 +32,7 @@ from custom_components.ecotricity_nz.const import (
     PRICING_RETRY_INTERVAL,
     PRICING_RETRY_MAX_INTERVAL,
 )
+from custom_components.ecotricity_nz.coordinator import _first_day
 from custom_components.ecotricity_nz.store import (
     STORAGE_VERSION,
     PricingSnapshot,
@@ -49,6 +50,8 @@ from tests.conftest import (
     chart_file,
     chart_name,
     find_plan,
+    find_plan_where,
+    has_overlapping_seasons,
     load_json_fixture,
     load_network_fixture,
     load_plan_list,
@@ -458,3 +461,25 @@ async def test_failed_refresh_action_doesnt_keep_backing_off(
     assert coordinator.update_interval == PRICING_RETRY_INTERVAL
     await coordinator.async_refresh()
     assert coordinator.update_interval == PRICING_CHECK_INTERVAL
+
+
+def test_outer_season_first_applies_when_the_season_inside_it_ends() -> None:
+    plan = find_plan_where(has_overlapping_seasons)
+    inner = min(plan.seasons, key=lambda season: season.end - season.start)
+    outer = max(plan.seasons, key=lambda season: season.end - season.start)
+    day = inner.start + timedelta(days=14)
+
+    assert _first_day(plan, inner, day) == day
+    assert _first_day(plan, outer, day) == inner.end + timedelta(days=1)
+    # A plan whose charts don't depend on the season has one set of charts for every day.
+    assert _first_day(plan, None, day) == day
+
+
+def test_season_covered_by_another_for_the_rest_of_its_days_no_longer_applies() -> None:
+    plan = find_plan_where(has_overlapping_seasons)
+    inner = min(plan.seasons, key=lambda season: season.end - season.start)
+    outer = max(plan.seasons, key=lambda season: season.end - season.start)
+    # The inner season runs to the outer one's end, so the outer one doesn't apply again.
+    plan = replace(plan, seasons=(outer, replace(inner, end=outer.end)))
+
+    assert _first_day(plan, outer, inner.start + timedelta(days=14)) is None

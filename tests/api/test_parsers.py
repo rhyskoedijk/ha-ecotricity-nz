@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -12,6 +13,7 @@ from custom_components.ecotricity_nz.api import (
     EcotricityResponseError,
     IcpNotFoundError,
     RateUnit,
+    Season,
 )
 from custom_components.ecotricity_nz.api.parsers import (
     localise_wall_time,
@@ -22,6 +24,7 @@ from custom_components.ecotricity_nz.api.parsers import (
     parse_values,
     portal_wall_time,
 )
+from custom_components.ecotricity_nz.tariff import season_for
 from tests.conftest import (
     ANYTIME_PLAN,
     DEFAULT_NETWORK,
@@ -120,21 +123,46 @@ def test_find_plans() -> None:
     assert plans.find("missing") is None
 
 
-def test_plan_without_seasons_spans_its_rates() -> None:
-    # A plan whose rates apply all year can publish no seasons. It still needs one, to fill in its
-    # chart dates, so it gets one spanning its dated rates.
+def _all_year_plan_list() -> tuple[Any, list[dict[str, Any]]]:
+    """Return the default plan list with no seasons, and its plan's dated rates in one year."""
     raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
     default = raw["content"][0]["default"]
     default["seasons"] = []
     dated = [rate for rate in default["network_rates"] if rate["valid_start"] and rate["valid_end"]]
     for rate in dated:
         rate["season"] = "All-Year Rates"
+        rate["valid_start"], rate["valid_end"] = "2026-04-01", "2027-03-31"
+    return raw, dated
+
+
+def test_plan_without_seasons_spans_its_rates() -> None:
+    # A plan whose rates apply all year can publish no seasons. It still needs one, to fill in its
+    # chart dates, so it gets one spanning its dated rates.
+    raw, _dated = _all_year_plan_list()
 
     (season,) = parse_plan_list(raw).default.seasons
 
-    assert season.name == "All-Year Rates"
-    assert season.start == date.fromisoformat(min(rate["valid_start"] for rate in dated))
-    assert season.end == date.fromisoformat(max(rate["valid_end"] for rate in dated))
+    assert season == Season(name="All-Year Rates", start=date(2026, 4, 1), end=date(2027, 3, 31))
+
+
+def test_plan_without_seasons_publishing_next_years_rates_has_a_season_for_each_year() -> None:
+    # Next year's rates can be published before this year ends. A season spanning both years would
+    # give a chart URL that doesn't exist, so each year keeps its own.
+    raw, dated = _all_year_plan_list()
+    next_year = [
+        {**rate, "id": f"{rate['id']}-next", "valid_start": "2027-04-01", "valid_end": "2028-03-31"}
+        for rate in dated
+    ]
+    raw["content"][0]["default"]["network_rates"].extend(next_year)
+
+    plan = parse_plan_list(raw).default
+
+    assert plan.seasons == (
+        Season(name="All-Year Rates", start=date(2026, 4, 1), end=date(2027, 3, 31)),
+        Season(name="All-Year Rates", start=date(2027, 4, 1), end=date(2028, 3, 31)),
+    )
+    assert season_for(plan, date(2027, 3, 31)) == plan.seasons[0]
+    assert season_for(plan, date(2027, 4, 1)) == plan.seasons[1]
 
 
 def test_plan_without_seasons_or_dated_rates_has_no_season() -> None:

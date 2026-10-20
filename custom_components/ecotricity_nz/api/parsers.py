@@ -182,22 +182,22 @@ def _parse_rate(raw: dict[str, Any], *, network: bool) -> Rate:
 
 
 def _rates_season(rates: tuple[Rate, ...]) -> tuple[Season, ...]:
-    """Return one season spanning the plan's dated rates, for a plan that publishes no seasons.
+    """Return a season for each date range of the plan's rates, for a plan that publishes none.
 
     Plans whose rates are the same all year can come with an empty season list. The web app then
     shows every rate and fills the chart URL with the pricing year's dates, which the rates carry
-    as their validity dates.
+    as their validity dates. Next year's rates can be published before this year's end, so each
+    range is its own season rather than one spanning both, whose chart wouldn't exist.
     """
-    dated = [rate for rate in rates if rate.valid_start and rate.valid_end]
-    if not dated:
-        return ()
-    names = {rate.season for rate in dated if rate.season}
-    return (
-        Season(
-            name=names.pop() if len(names) == 1 else "",
-            start=min(rate.valid_start for rate in dated if rate.valid_start),
-            end=max(rate.valid_end for rate in dated if rate.valid_end),
-        ),
+    names: dict[tuple[date, date], set[str]] = {}
+    for rate in rates:
+        if rate.valid_start and rate.valid_end:
+            group = names.setdefault((rate.valid_start, rate.valid_end), set())
+            if rate.season:
+                group.add(rate.season)
+    return tuple(
+        Season(name=group.pop() if len(group) == 1 else "", start=start, end=end)
+        for (start, end), group in sorted(names.items())
     )
 
 

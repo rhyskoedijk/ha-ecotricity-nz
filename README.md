@@ -101,19 +101,19 @@ These sensors are only enabled if you have supplied your Ecotricity customer acc
 
 These describe your electricity connection and integration settings. They're listed under **Diagnostic** on the device page.
 
-| Entity                         | Description                                                                | Attributes                              |
-| ------------------------------ | -------------------------------------------------------------------------- | --------------------------------------- |
-| ICP                            | Your ICP number.                                                           |                                         |
-| Network                        | Your network lines company.                                                | `code`                                  |
-| Network import loss factor     | Your connection's line loss factor for import, such as 1.045.              |                                         |
-| Network export loss factor     | Your connection's line loss factor for export. Only created if you export. |                                         |
-| Pricing category               | Your network pricing category, such as "Residential Time of Use".          | `code`                                  |
-| Meter                          | Your meter serial number.                                                  | `type`, `smart`, `certification_expiry` |
-| Plan                           | Your current Ecotricity plan.                                              | `internal_name`, `code`                 |
-| Pricing season                 | The current pricing season and its dates.                                  | `start`, `end`, `published`             |
-| Registered generation capacity | The solar or other generation your network has approved, in kW.            |                                         |
-| Last meter data update         | When Ecotricity's portal last received new readings from your meter.       |                                         |
-| Last pricing update            | When this integration last fetched pricing from Ecotricity's website.      |                                         |
+| Entity                         | Description                                                                                                                                                                                | Attributes                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
+| ICP                            | Your ICP number.                                                                                                                                                                           |                                         |
+| Network                        | Your network lines company.                                                                                                                                                                | `code`                                  |
+| Network import loss factor     | Your connection's line loss factor for import, such as 1.045.                                                                                                                              |                                         |
+| Network export loss factor     | Your connection's line loss factor for export. Only created if you export.                                                                                                                 |                                         |
+| Pricing category               | Your network pricing category, such as "Residential Time of Use".                                                                                                                          | `code`                                  |
+| Meter                          | Your meter serial number.                                                                                                                                                                  | `type`, `smart`, `certification_expiry` |
+| Plan                           | Your current Ecotricity plan.                                                                                                                                                              | `internal_name`, `code`                 |
+| Pricing season                 | The current pricing season and its dates.                                                                                                                                                  | `start`, `end`, `published`             |
+| Registered generation capacity | The solar or other generation your network has approved, in kW. Only created when the network has recorded a capacity; some record zero even for connections with generation (e.g. solar). |                                         |
+| Last meter data update         | When Ecotricity's portal last received new readings from your meter.                                                                                                                       |                                         |
+| Last pricing update            | When this integration last fetched pricing from Ecotricity's website.                                                                                                                      |                                         |
 
 ## Statistic Entities
 

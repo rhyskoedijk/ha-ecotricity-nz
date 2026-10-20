@@ -14,6 +14,7 @@ Time-of-use pricing only worked on networks whose charts could be read from the 
 - Fix time-of-use hours never being read on networks whose plans have the same rates all year, such as Unison, Alpine, Horizon, Waipa, Network Waitaki, Centralines and Buller. Ecotricity publishes no pricing seasons for these plans, so their charts were never downloaded: the current price sensors stayed unavailable and a repair issue was raised. The plan's rate dates now stand in for the season, as Ecotricity's website does, and each pricing year keeps its own charts when next year's rates are published early.
 - Fix the wrong season being used on plans with overlapping seasons, such as Scanpower's "Standard Rates" for the whole year and "Seasonal Rates" from June to September. The seasonal one now applies in its months, as on Ecotricity's website.
 - Fix the **Current export period** sensor showing a raw value on networks whose plans have an "Export Shoulder Peak" rate, such as Northpower and Top Energy. That period is now shown as "Shoulder peak".
+- The **Registered generation capacity** sensor is no longer created when the network has recorded no capacity, or zero. Some networks record zero even for connections with generation (e.g. solar), so the value wasn't reliable; an existing sensor with no capacity is removed.
 - The charts of every published season are now downloaded, so the sensors for a plan's periods don't come and go with the seasons. Pricing saved by earlier versions is fetched again once after updating.
 
 ## v0.3.0 (2026-10-15)

@@ -84,6 +84,7 @@ See `docs/architecture.md` for diagrams and `docs/api.md` for the services.
 ## Gotchas
 
 - Nothing about pricing is fixed. Network codes, price categories, plan codes, charge codes, seasons and time-of-use windows vary by network and change over time. Never hard-code or assume values from the fixtures.
+- The ICP's registered generation capacity (`IcpDetails.generation_capacity_kw`) is often zero or missing even for ICPs with generation (e.g. solar), so its sensor is only created when it's above zero. Never use it to decide whether an ICP exports; use `IcpDetails.has_export` (an `EG` register) and the plan's export rates.
 - The user chooses their plan during setup (stored as the plan `id` in the options). Neither site reliably says which plan an ICP is on, so don't add automatic plan detection without new, verified evidence.
 - Seasons can overlap ("Standard Rates" all year with "Seasonal Rates" inside it). `season_for` prefers any season covering the day that isn't "Standard Rates", as Ecotricity's site does; always use it rather than the first matching season. An outer season only applies again once the inner one ends, so an upcoming season's rates are those of the first day it applies (`_first_day` in `coordinator.py`), not today's.
 - Bills charge Ecotricity's energy rates on usage times the ICP's loss factor, but chart prices leave losses out. The integration shows the factors as sensors and doesn't apply them to prices.

@@ -21,7 +21,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST, GST_FACTOR
+from .const import CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST, DOMAIN, GST_FACTOR
 from .coordinator import ConsumptionCoordinator, PricingCoordinator
 from .entity import EcotricityEntity
 from .statistics import CARBON, EXPORT, IMPORT, statistic_id
@@ -68,6 +68,7 @@ class PricingSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[PricingData], StateType | date | datetime]
     attrs_fn: Callable[[PricingData], dict[str, Any]] | None = None
+    exists_fn: Callable[[PricingData], bool] = lambda _: True
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -167,6 +168,9 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.KILO_WATT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.icp.generation_capacity_kw,
+        # Some networks record zero even for ICPs with generation, so a missing or zero capacity
+        # says nothing about export and the sensor is left out.
+        exists_fn=lambda data: bool(data.icp.generation_capacity_kw),
     ),
 )
 
@@ -186,6 +190,21 @@ _SPLIT_PERIOD_KEYS = {
 }
 
 
+def _pricing_sensors(
+    entity_registry: er.EntityRegistry, pricing: PricingCoordinator, icp: str
+) -> list[SensorEntity]:
+    """Return the pricing sensors whose value exists, removing any left from an earlier setup."""
+    entities: list[SensorEntity] = []
+    for description in PRICING_SENSORS:
+        if description.exists_fn(pricing.data):
+            entities.append(PricingSensor(pricing, icp, description))
+        elif entity_id := entity_registry.async_get_entity_id(
+            SENSOR_DOMAIN, DOMAIN, f"{icp}_{description.key}"
+        ):
+            entity_registry.async_remove(entity_id)
+    return entities
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: EcotricityConfigEntry,
@@ -196,9 +215,8 @@ async def async_setup_entry(
     pricing = runtime.pricing
     icp = pricing.icp
     tz = runtime.local_tz
-    entities: list[SensorEntity] = [
-        PricingSensor(pricing, icp, description) for description in PRICING_SENSORS
-    ]
+    entity_registry = er.async_get(hass)
+    entities: list[SensorEntity] = _pricing_sensors(entity_registry, pricing, icp)
     entities += [
         DailyChargeSensor(pricing, icp),
         CurrentPriceSensor(pricing, icp, tz, export=False),
@@ -228,7 +246,6 @@ async def async_setup_entry(
     # or split side, that appears after setup, and remove those the plan no longer has (after
     # choosing another plan, say), so only what the plan has shows.
     known: set[str] = set()
-    entity_registry = er.async_get(hass)
     price_prefix = f"{icp}_{_PRICE_KEY_PREFIX}"
     split_ids = {f"{icp}_{key}" for key in _SPLIT_PERIOD_KEYS.values()}
 

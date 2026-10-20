@@ -1217,8 +1217,47 @@ async def test_registry_details(
         "smart": True,
         "certification_expiry": date(2030, 6, 1),
     }
-    assert float(_state(hass, "registered_generation_capacity")) == 0
     assert hass.states.get(f"{PREFIX}_meter_certification_expiry") is None
+
+
+@pytest.mark.parametrize("capacity", [None, 0.0])
+async def test_generation_capacity_sensor_left_out_when_not_recorded(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+    capacity: float | None,
+) -> None:
+    # Some networks record zero even for ICPs with generation, so the sensor is left out rather than
+    # shown, and one left from an earlier setup is removed.
+    freezer.move_to(WINTER_PEAK)
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(icp, generation_capacity_kw=capacity)
+    config_entry.add_to_hass(hass)
+    stale = entity_registry.async_get_or_create(
+        "sensor", DOMAIN, f"{TEST_ICP}_registered_generation_capacity", config_entry=config_entry
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entity_registry.async_get(stale.entity_id) is None
+    assert hass.states.get(f"{PREFIX}_registered_generation_capacity") is None
+    assert hass.states.get(f"{PREFIX}_icp") is not None
+
+
+async def test_generation_capacity_sensor_shows_recorded_capacity(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(icp, generation_capacity_kw=5.5)
+    await _setup(hass, config_entry)
+
+    assert float(_state(hass, "registered_generation_capacity")) == 5.5
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -1402,14 +1441,17 @@ async def test_import_and_export_periods_are_separate(
     }
 
 
-@pytest.mark.usefixtures("mock_onboarding", "mock_portal")
+@pytest.mark.usefixtures("mock_portal")
 async def test_entity_categories(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
     entity_registry: er.EntityRegistry,
     freezer: FrozenDateTimeFactory,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(icp, generation_capacity_kw=5.5)
     await _setup(hass, portal_config_entry)
 
     diagnostic = {

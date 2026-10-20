@@ -8,6 +8,7 @@ from datetime import date
 import pytest
 from PIL import Image, ImageDraw
 
+from custom_components.ecotricity_nz.api import timeframes
 from custom_components.ecotricity_nz.api.glyphs import GLYPHS
 from custom_components.ecotricity_nz.api.timeframes import (
     MINUTES_PER_DAY,
@@ -135,6 +136,23 @@ def test_clipped_price_without_bars_has_no_estimate() -> None:
 
     reading = read_chart(_edited(chart.read_bytes(), remove_bars))
     assert all(entry.estimate is None for entry in reading.export_entries if entry.clipped)
+
+
+def test_clipped_price_with_unmeasured_bars_has_no_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pale or patterned bars can leave no coloured pixels in the column measured. They give no
+    # scale to estimate from, which must not stop the rest of the chart being read.
+    chart = find_chart_where(has_clipped_price)
+    monkeypatch.setattr(
+        timeframes, "_bar_heights", lambda _image: [(0, 0)] * (MINUTES_PER_DAY // 30)
+    )
+
+    reading = read_chart(chart.read_bytes())
+
+    entries = (*reading.import_entries, *reading.export_entries)
+    assert any(entry.clipped for entry in entries)
+    assert all(entry.estimate is None for entry in entries)
 
 
 @pytest.mark.parametrize(

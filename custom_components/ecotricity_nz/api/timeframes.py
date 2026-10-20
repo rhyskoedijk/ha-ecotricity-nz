@@ -466,11 +466,15 @@ def _estimate_clipped(
     def bar(entry: LegendEntry, side: int) -> float:
         return statistics.median(heights[slot][side] for slot in entry.slots)
 
+    # A bar with no coloured pixels in the column sampled (pale or patterned bars) wasn't
+    # measured, so it gives neither the scale nor an estimate.
     scales = [
-        bar(entry, side) / abs(price)
+        height / abs(price)
         for side, entries in enumerate((import_entries, export_entries))
         for entry in entries
-        if (price := entry.price) is not None and abs(price) >= _MIN_SCALE_PRICE
+        if (price := entry.price) is not None
+        and abs(price) >= _MIN_SCALE_PRICE
+        and (height := bar(entry, side))
     ]
     if not scales:
         return import_entries, export_entries
@@ -484,7 +488,7 @@ def _estimate_clipped(
                 entry.end,
                 entry.text,
                 clipped=True,
-                estimate=sign * bar(entry, side) / scale,
+                estimate=sign * height / scale if (height := bar(entry, side)) else None,
             )
             if entry.clipped
             else entry

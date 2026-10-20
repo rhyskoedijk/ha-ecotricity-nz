@@ -31,10 +31,8 @@ from custom_components.ecotricity_nz.api.timeframes import read_chart
 from custom_components.ecotricity_nz.tariff import (
     chart_seasons,
     day_windows,
-    plan_slots,
-    price_day,
+    price_plan_day,
     season_charts,
-    side_alignment,
 )
 
 if TYPE_CHECKING:
@@ -76,14 +74,10 @@ async def _async_read_charts(
 
 def _print_pricing(plan: Plan, today: date, charts: dict[str, ChartReading]) -> None:
     """Print today's periods, windows and daily charge, as the integration works them out."""
-    slots = plan_slots(charts, plan, today)
-    for error in (*slots.errors, *slots.later_errors):
+    priced = price_plan_day(charts, plan, today)
+    slots, alignments, pricing = priced.slots, priced.alignments, priced.pricing
+    for error in (*slots.errors, *slots.missing, *slots.later_errors):
         print(f"Charts: {error}")
-    alignments = (
-        side_alignment(plan, today, slots.seasons(export=False), export=False),
-        side_alignment(plan, today, slots.seasons(export=True), export=True),
-    )
-    pricing = price_day(plan, today, slots.today[False], slots.today[True], alignments)
     print(f"Plan {plan.name} ({plan.description}), today (cents excl GST):")
     for label, side, alignment in (
         ("import", pricing.import_side, alignments[0]),

@@ -39,7 +39,7 @@ from custom_components.ecotricity_nz.store import (
     _snapshot,
     _snapshot_dict,
 )
-from custom_components.ecotricity_nz.tariff import season_charts
+from custom_components.ecotricity_nz.tariff import season_charts, season_explained
 from tests.conftest import (
     ANYTIME_PLAN,
     DEFAULT_NETWORK,
@@ -236,14 +236,14 @@ async def test_each_day_is_priced_once(
     calls = mock_onboarding.async_get_icp.await_count
 
     with patch.object(
-        coordinator_module, "plan_slots", wraps=coordinator_module.plan_slots
-    ) as plan_slots:
+        coordinator_module, "price_plan_day", wraps=coordinator_module.price_plan_day
+    ) as price_plan_day:
         # Set up at 8:15am, so the next day's check runs then.
         await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
 
     assert mock_onboarding.async_get_icp.await_count == calls
     assert config_entry.runtime_data.pricing.data.day == date(2026, 6, 16)
-    assert plan_slots.call_count == 1
+    assert price_plan_day.call_count == 1
 
 
 async def test_choosing_another_plan_fetches(
@@ -497,5 +497,5 @@ def test_saved_charts_of_a_season_that_no_longer_applies_are_kept() -> None:
     plan = replace(plan, seasons=(outer, replace(inner, end=outer.end)))
     charts = dict.fromkeys(season_charts(plan, outer), ChartReading((), ()))
 
-    assert coordinator_module._explained(charts, plan, outer, inner.start + timedelta(days=14))
-    assert not coordinator_module._explained({}, plan, outer, inner.start + timedelta(days=14))
+    assert season_explained(charts, plan, outer, inner.start + timedelta(days=14))
+    assert not season_explained({}, plan, outer, inner.start + timedelta(days=14))

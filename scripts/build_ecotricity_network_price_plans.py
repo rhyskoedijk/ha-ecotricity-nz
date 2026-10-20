@@ -9,7 +9,7 @@ or only in prices. A category that differs in shape deserves its own fixture; ru
 again with --category for it.
 
 It then downloads the weekday and weekend timeframe charts of every plan, for every season. A plan
-that publishes no seasons gets one spanning its rates, as the integration reads it.
+that publishes no seasons gets one for each date range of its rates, as the integration reads it.
 
 Everything is saved to tests/fixtures/networks. Only charts that test a scenario no other chart
 does are worth keeping in git, so prune the new network's charts before committing.

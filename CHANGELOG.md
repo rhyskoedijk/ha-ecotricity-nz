@@ -12,7 +12,7 @@ Some sensors have changed in ways that can affect automations, templates and das
 - **Line loss factors have moved to their own sensors.** The **Network** sensor no longer has the `loss_factor_consumption` and `loss_factor_generation` attributes. They're now the **Network import loss factor** and **Network export loss factor** sensors.
 - **A period's price sensor has no value on days its period doesn't apply.** Sensors such as **Peak import price** used to show another period's price on days when their own period didn't apply. They now show unknown, and the `charged_as` attribute has been removed.
 - **Next period change now also changes when the price does.** **Next import period change** and **Next export period change** now also change when the price changes within a period, and today's `windows` attribute starts a new window wherever the price changes, so one period can appear in more than one window in a day. This only happens where Ecotricity's and your network's periods don't line up exactly, which is the case on some networks but not all.
-- **Registered generation capacity is no longer created when none is recorded.** Some networks record a capacity of zero even for connections with solar or other generation, so the value couldn't be relied on. If your ICP has no generation capacity above zero on record, the sensor isn't created, and an existing one is removed.
+- **Registered generation capacity is no longer created when none is recorded.** Some networks record a capacity of zero even for connections with solar or other generation, so the value couldn't be relied on. If your ICP has no generation capacity above zero on record, the sensor isn't created. An existing one shows as no longer provided and can be deleted from the device page.
 
 ### New features
 
@@ -23,7 +23,8 @@ Some sensors have changed in ways that can affect automations, templates and das
 
 - Time-of-use prices are now read from the price list printed under Ecotricity's charts, instead of from the height of the bars, so every half-hour's price is exact.
 - The charts of every published season are now downloaded, so sensors for your plan's periods don't come and go with the seasons.
-- If a chart can't be downloaded for import or export where your network has only one rate, such as on an anytime plan, prices carry on with that rate all day and the chart is tried again daily.
+- If a chart can't be downloaded, or shows prices that don't match your plan's rates, for import or export where your network has only one rate, such as on an anytime plan, prices carry on with that rate all day and the chart is tried again daily for up to three days.
+- Pricing saved by earlier versions can't be read by this one, so it's fetched again once after updating.
 - The **Time-of-use chart** image is now called **Current time-of-use chart**, as it switches between the weekday and weekend charts and changes with the season. Its entity ID stays the same, so existing automations are unaffected.
 
 ### Bug fixes

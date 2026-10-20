@@ -36,6 +36,8 @@ async def test_diagnostics_redact_personal_data(
 
     assert diagnostics["pricing"]["plan"]["description"] == "Low User"
     assert diagnostics["pricing"]["pricing"]["import_side"]["slots"] is not None
+    assert diagnostics["pricing"]["missing_charts"] == []
+    assert diagnostics["pricing"]["later_errors"] == []
     periods = diagnostics["pricing"]["periods"]
     assert periods["import_alignment"] == "network"
     # Sets are written as lists, not as their repr.

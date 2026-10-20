@@ -838,12 +838,12 @@ def season_slots(
     *,
     export: bool,
 ) -> tuple[DaySlots | None, str | None]:
-    """Return one side's half-hours for a season, and which of its charts were missing.
+    """Return one side's half-hours for a season, and why its charts couldn't be used.
 
     The half-hours are None when the plan has no rates for the side. A side whose one network
     rate likely applies all day (see `SideRates.likely_flat`) is given that price when its charts
-    are missing, along with why they're missing, since the charts might show the rate only
-    applies in some hours. That's None when the charts were read, or the plan has none at all.
+    are missing or don't match its rates, along with why, since the charts might show the rate
+    only applies in some hours. That's None when the charts were read, or the plan has none at all.
 
     Raises ChartReadError if the side needs its charts and they're missing or can't be explained.
     """
@@ -860,7 +860,14 @@ def season_slots(
             raise
         return day_slots(rates, None, None, export=export), str(err) if all(templates) else None
     weekday, weekend = (charts.get(path) for path in paths)
-    slots = day_slots(rates, weekday, weekend, export=export)
+    try:
+        slots = day_slots(rates, weekday, weekend, export=export)
+    except ChartReadError as err:
+        # An anytime plan's price needs no chart, so one that doesn't match its rates (drawn
+        # before a rate change, say) can't stop it working.
+        if (likely := rates.likely_flat()) is None:
+            raise
+        return _all_day(likely), str(err)
     if weekday is None or weekend is None:
         return slots, "The plan's charts for the season couldn't be downloaded or read"
     return slots, None
@@ -880,7 +887,8 @@ class PlanSlots:
     errors: tuple[str, ...]
     """Why today's charts couldn't be used."""
     missing: tuple[str, ...]
-    """Today's sides given their one network rate all day because their charts are missing."""
+    """Today's sides given their one network rate all day because their charts are missing, or
+    don't match the plan's rates."""
     later_errors: tuple[str, ...]
     """Why a later season was left out."""
 
@@ -938,6 +946,52 @@ def side_alignment(
     if seasons:
         return plan_alignment(seasons)
     return rates_alignment(side_rates(plan, day, export=export))
+
+
+def season_explained(
+    charts: Mapping[str, ChartReading], plan: Plan, season: Season | None, day: date
+) -> bool:
+    """Return whether a season's charts are all there and the plan's rates explain them.
+
+    A season that no longer applies from `day` on doesn't need its charts, so counts as explained.
+    """
+    if any(path not in charts for path in season_charts(plan, season)):
+        return False
+    start = day if season is None else first_day(plan, season, day)
+    if start is None:
+        return True
+    try:
+        return all(
+            season_slots(charts, plan, season, start, export=export)[1] is None
+            for export in (False, True)
+        )
+    except ChartReadError:
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class PlanDay:
+    """A plan's half-hours, whose periods decide each side's price, and its prices on a day."""
+
+    slots: PlanSlots
+    alignments: tuple[Alignment, Alignment]
+    """Import's and export's."""
+    pricing: DayPricing
+
+
+def price_plan_day(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> PlanDay:
+    """Return a day's prices from the plan's read charts, as the integration works them out.
+
+    Whose periods decide each side's price is worked out across every season with readable
+    charts, so it doesn't change with the season.
+    """
+    slots = plan_slots(charts, plan, day)
+    alignments = (
+        side_alignment(plan, day, slots.seasons(export=False), export=False),
+        side_alignment(plan, day, slots.seasons(export=True), export=True),
+    )
+    pricing = price_day(plan, day, slots.today[False], slots.today[True], alignments)
+    return PlanDay(slots, alignments, pricing)
 
 
 def _change_key(slot: Slot, key: str = "bucket") -> tuple[str, float]:

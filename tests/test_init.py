@@ -27,6 +27,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.ecotricity_nz import coordinator as coordinator_module
+from custom_components.ecotricity_nz import sensor as sensor_module
 from custom_components.ecotricity_nz import tariff as tariff_module
 from custom_components.ecotricity_nz.api import (
     AttestationError,
@@ -54,14 +55,17 @@ from custom_components.ecotricity_nz.const import (
     FAILURE_ISSUE_THRESHOLD,
     GST_FACTOR,
     PRICING_FETCH_INTERVAL,
+    PRICING_MISSING_CHART_RETRIES,
     PRICING_RETRY_INTERVAL,
     RETRY_AFTER_FAILURE,
 )
+from custom_components.ecotricity_nz.sensor import BucketPriceSensor
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
 from custom_components.ecotricity_nz.tariff import (
     day_slots,
     plan_alignment,
     price_side,
+    resolve_bucket,
     side_rates,
 )
 from tests.conftest import (
@@ -205,6 +209,37 @@ async def test_flat_plan_needs_no_chart(
     freezer.tick(timedelta(days=1))
     await coordinator.async_refresh()
     assert mock_onboarding.async_get_icp.await_count == calls
+
+
+async def test_flat_plan_keeps_its_price_when_its_chart_doesnt_match(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The chart shows a price the rates don't give (drawn before a rate change, say). The plan's
+    # one price needs no chart, so it carries on, and the chart is fetched again daily for a few
+    # fetches in a row, then only at the usual times.
+    freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    stale = ChartReading(import_entries=(LegendEntry(0, 1440, "99.99"),), export_entries=())
+    with patch.object(coordinator_module, "read_chart", return_value=stale):
+        await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
+        coordinator = config_entry.runtime_data.pricing
+
+        assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
+        assert coordinator.data.tou_error is None
+        assert any("doesn't match" in error for error in coordinator.data.missing_charts)
+
+        # Setup's fetch was the first in a row.
+        fetched: list[bool] = []
+        for _ in range(PRICING_MISSING_CHART_RETRIES + 1):
+            calls = mock_onboarding.async_get_icp.await_count
+            freezer.tick(timedelta(days=1))
+            await coordinator.async_refresh()
+            fetched.append(mock_onboarding.async_get_icp.await_count > calls)
+
+    assert fetched == [True] * (PRICING_MISSING_CHART_RETRIES - 1) + [False, False]
+    assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -826,6 +861,64 @@ async def test_price_sensors_are_kept_while_a_later_seasons_chart_cannot_be_read
     assert entity_registry.async_get(split.entity_id) is None
 
 
+async def test_kept_price_sensors_get_their_buckets_back_from_the_plan(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A rate with no charge code is bucketed by its description, which its sensor's unique ID
+    # can't give back, so a sensor kept from before a restart gets its bucket from the plan.
+    freezer.move_to(WINTER_PEAK)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    plan = plans.find(plan_id(TIME_OF_USE_PLAN))
+    assert plan is not None
+
+    def uncoded(description: str, register_type: str | None) -> Rate:
+        return Rate(
+            id=description,
+            description=description,
+            charge=None,
+            register_type=register_type,
+            unit=RateUnit.PER_KWH,
+            raw_unit="cents/kWh",
+            price=10.0,
+            is_network=False,
+            valid_start=date(2030, 1, 1),
+            valid_end=date(2030, 12, 31),
+        )
+
+    extra = (uncoded("Shoulder Usage", None), uncoded("Export Super Off Peak", "EG"))
+    updated = replace(plan, retail_rates=(*plan.retail_rates, *extra))
+    mock_onboarding.async_get_plans.return_value = PlanList(
+        default=updated if plans.default is plan else plans.default,
+        alternative=updated if plans.alternative is plan else plans.alternative,
+        others=tuple(updated if other is plan else other for other in plans.others),
+    )
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan.id})
+    for rate in extra:
+        entity_registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"{TEST_ICP}_price_{sensor_module._slug(resolve_bucket(rate))}",
+            config_entry=config_entry,
+        )
+
+    pricing = config_entry.runtime_data.pricing
+    registered = sensor_module._registered_plan_sensors(
+        entity_registry, config_entry, pricing, pricing.icp, NZ
+    )
+
+    buckets = {
+        create.args[2]  # type: ignore[attr-defined]
+        for create in registered.values()
+        if create.func is BucketPriceSensor  # type: ignore[attr-defined]
+    }
+    assert {resolve_bucket(rate) for rate in extra} <= buckets
+    assert buckets <= pricing.data.periods.buckets | {resolve_bucket(rate) for rate in extra}
+
+
 @pytest.mark.usefixtures("mock_onboarding")
 async def test_stale_price_sensors_are_removed_at_setup(
     hass: HomeAssistant,
@@ -1372,20 +1465,43 @@ async def test_generation_capacity_sensor_left_out_when_not_recorded(
     capacity: float | None,
 ) -> None:
     # Some networks record zero even for ICPs with generation, so the sensor is left out rather than
-    # shown, and one left from an earlier setup is removed.
+    # shown. One from an earlier setup stays in the registry, keeping the user's settings for it,
+    # since the capacity might only be missing from one fetch.
     freezer.move_to(WINTER_PEAK)
     icp = mock_onboarding.async_get_icp.return_value
     mock_onboarding.async_get_icp.return_value = replace(icp, generation_capacity_kw=capacity)
     config_entry.add_to_hass(hass)
-    stale = entity_registry.async_get_or_create(
+    existing = entity_registry.async_get_or_create(
         "sensor", DOMAIN, f"{TEST_ICP}_registered_generation_capacity", config_entry=config_entry
     )
+    entity_registry.async_update_entity(existing.entity_id, area_id="garage")
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert entity_registry.async_get(stale.entity_id) is None
-    assert hass.states.get(f"{PREFIX}_registered_generation_capacity") is None
+    kept = entity_registry.async_get(existing.entity_id)
+    assert kept is not None
+    assert kept.area_id == "garage"
+    assert hass.states.get(existing.entity_id) is None
     assert hass.states.get(f"{PREFIX}_icp") is not None
+
+
+async def test_generation_capacity_sensor_added_once_recorded(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(icp, generation_capacity_kw=0.0)
+    await _setup(hass, config_entry)
+    assert hass.states.get(f"{PREFIX}_registered_generation_capacity") is None
+
+    mock_onboarding.async_get_icp.return_value = replace(icp, generation_capacity_kw=5.5)
+    assert await config_entry.runtime_data.pricing.async_fetch_now()
+    await hass.async_block_till_done()
+
+    assert float(_state(hass, "registered_generation_capacity")) == 5.5
 
 
 async def test_generation_capacity_sensor_shows_recorded_capacity(
@@ -2020,6 +2136,41 @@ async def test_periods_that_dont_line_up_get_their_own_sensors(
         await hass.async_block_till_done(wait_background_tasks=True)
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, supplier) is None
     assert entity_registry.async_get_entity_id("sensor", DOMAIN, network) is None
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_next_period_change_follows_the_price_within_a_period(
+    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    # Ecotricity's peak starts at 7am but the network's at 9am. From 7am the price is Ecotricity's
+    # peak at the network's off-peak rate, which is still nearest off-peak overall, so the
+    # period stays the same while the price changes.
+    freezer.move_to(datetime(2026, 6, 15, 6, 15, tzinfo=NZ))
+    plan = find_plan(TIME_OF_USE_PLAN)
+    day = date(2026, 6, 15)
+    high, low = "CHARGE_HIGH", "CHARGE_LOW"
+    mixed = _import_legend(
+        plan, day, (0, 7, low, low), (7, 9, high, low), (9, 11, high, high), (11, 24, low, low)
+    )
+
+    def read(data: bytes) -> ChartReading:
+        return replace(read_chart(data), import_entries=mixed)
+
+    with patch.object(coordinator_module, "read_chart", side_effect=read):
+        await _setup(hass, config_entry)
+
+    rates = side_rates(plan, day, export=False)
+    price = next(
+        combo.price
+        for combo in rates.candidates()
+        if (combo.supplier, combo.network) == (high, low)
+    )
+    assert _state(hass, "current_import_period") == "off_peak"
+    assert _state(hass, "next_import_period_change") == "2026-06-14T19:00:00+00:00"
+    assert _extra(hass, "next_import_period_change") == {
+        "period": "off_peak",
+        "price": pytest.approx(price * GST_FACTOR / 100, abs=0.0001),
+    }
 
 
 def _drop_import_reading(mock_portal: MagicMock, missing: datetime) -> list[bool]:

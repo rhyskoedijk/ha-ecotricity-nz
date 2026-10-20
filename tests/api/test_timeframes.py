@@ -156,6 +156,41 @@ def test_clipped_price_with_unmeasured_bars_has_no_estimate(
 
 
 @pytest.mark.parametrize(
+    ("text", "export", "sign"),
+    [
+        # The printed digits give the sign: an export price can be a cost, and an import price
+        # a credit.
+        ("2", True, 1),
+        ("-2", False, -1),
+        ("-2", True, -1),
+        # With none printed, the column's usual sign.
+        ("", True, -1),
+        ("", False, 1),
+    ],
+)
+def test_clipped_price_estimate_keeps_the_sign_it_was_printed_with(
+    monkeypatch: pytest.MonkeyPatch, text: str, *, export: bool, sign: int
+) -> None:
+    # Bars are drawn by size, so every bar here is 10 pixels per cent.
+    half_day = MINUTES_PER_DAY // 2
+    slots = MINUTES_PER_DAY // 30
+    monkeypatch.setattr(
+        timeframes,
+        "_bar_heights",
+        lambda _image: [(200, 100)] * (slots // 2) + [(25, 25)] * (slots // 2),
+    )
+    imports = [LegendEntry(0, half_day, "20.00")]
+    exports = [LegendEntry(0, half_day, "-10.00")]
+    clipped = LegendEntry(half_day, MINUTES_PER_DAY, text, clipped=True)
+    (imports if not export else exports).append(clipped)
+
+    imports, exports = timeframes._estimate_clipped(Image.new("RGB", (1, 1)), imports, exports)
+
+    estimate = (exports if export else imports)[-1].estimate
+    assert estimate == pytest.approx(sign * 2.5)
+
+
+@pytest.mark.parametrize(
     ("cents", "shown"),
     [
         # Rounded with GST to the cent, then converted back: 30.5532c shows as 30.56c, not 30.55c.

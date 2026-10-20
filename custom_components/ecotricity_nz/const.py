@@ -33,6 +33,10 @@ PRICING_RETRY_INTERVAL: Final = timedelta(hours=1)
 PRICING_RETRY_MAX_INTERVAL: Final = timedelta(hours=8)
 # Pricing is fetched again at least this often, and at the other times in coordinator.py.
 PRICING_FETCH_INTERVAL: Final = timedelta(days=7)
+# A chart missing, or not matching the rates, where the network's one rate is taken to apply all
+# day is fetched again daily, but only this many fetches in a row, then only at the other times.
+# Prices still work meanwhile, so it isn't worth a daily request indefinitely.
+PRICING_MISSING_CHART_RETRIES: Final = 3
 CONSUMPTION_UPDATE_INTERVAL: Final = timedelta(hours=24)
 # When a daily import finds nothing new, the portal is checked again this soon (one cheap request)
 # instead of waiting another day.

@@ -56,6 +56,8 @@ async def async_get_config_entry_diagnostics(
                 "pricing": asdict(pricing.pricing),
                 "periods": _lists(asdict(pricing.periods)),
                 "tou_error": pricing.tou_error,
+                "missing_charts": list(pricing.missing_charts),
+                "later_errors": list(pricing.later_errors),
             },
             "consumption": asdict(consumption) if consumption else None,
             "consumption_last_update_success": (

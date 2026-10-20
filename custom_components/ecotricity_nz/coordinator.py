@@ -29,7 +29,7 @@ from .api import (
     PortalIndicator,
     Season,
 )
-from .api.timeframes import ChartReadError, ChartReading, read_chart
+from .api.timeframes import ChartReading, read_chart
 from .const import (
     BACKFILL_PAUSE_SECONDS,
     CONF_ICP,
@@ -46,6 +46,7 @@ from .const import (
     LOGGER,
     PRICING_CHECK_INTERVAL,
     PRICING_FETCH_INTERVAL,
+    PRICING_MISSING_CHART_RETRIES,
     PRICING_RETRY_INTERVAL,
     PRICING_RETRY_MAX_INTERVAL,
     RETRY_AFTER_FAILURE,
@@ -64,23 +65,21 @@ from .store import PricingSnapshot, PricingStore
 from .tariff import (
     Alignment,
     DayPricing,
-    PlanSlots,
+    PlanDay,
     bucket_names,
     chart_seasons,
     controlled_prices,
     first_day,
     plan_needs_season,
-    plan_slots,
-    price_day,
+    price_plan_day,
     price_side,
     season_charts,
+    season_explained,
     season_for,
-    season_slots,
-    side_alignment,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     from homeassistant.core import HomeAssistant
 
@@ -133,7 +132,10 @@ class PricingData:
     """When the pricing was last fetched from Ecotricity."""
     tou_error: str | None = None
     missing_charts: tuple[str, ...] = ()
-    """Sides given their one network rate all day because their charts are missing."""
+    """Sides given their one network rate all day because their charts are missing, or don't
+    match the plan's rates."""
+    later_errors: tuple[str, ...] = ()
+    """Why a later season's charts couldn't be used, so its periods may be missing."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +195,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._fetch_failures = 0
         self._attestation_failures = 0
         self._chart_failures = 0
+        self._missing_chart_fetches = 0
         self._unsub_midnight: CALLBACK_TYPE | None = None
 
     @property
@@ -273,6 +276,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                 )
                 if self._chart_failures >= FAILURE_ISSUE_THRESHOLD:
                     self._raise_issue(ISSUE_TOU_CHART, {"plan": data.plan.description})
+            self._count_missing_charts(data)
             return data
         if self._snapshot is None:  # pragma: no cover - a fetch is always due without one
             raise UpdateFailed(translation_domain=DOMAIN, translation_key="update_failed")
@@ -306,10 +310,33 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         tomorrow = day + timedelta(days=1)
         if plan_needs_season(plan) and (season is None or season_for(plan, tomorrow) is None):
             return "next season not published yet"
-        data = self._price_day(snapshot, day)
-        if data.tou_error is not None or data.missing_charts:
+        return self._chart_reason(self._price_day(snapshot, day))
+
+    def _chart_reason(self, data: PricingData) -> str | None:
+        """Return why the charts should be fetched again, or None if they'll do."""
+        if data.tou_error is not None:
             return "time-of-use windows unavailable"
+        if data.missing_charts and self._missing_chart_fetches < PRICING_MISSING_CHART_RETRIES:
+            return "charts missing"
         return None
+
+    def _count_missing_charts(self, data: PricingData) -> None:
+        """Count fetches in a row that left charts missing, which stop daily fetches at a limit.
+
+        No repair issue is raised, since prices still work: the network's one rate is taken to
+        apply all day.
+        """
+        if not data.missing_charts:
+            self._missing_chart_fetches = 0
+            return
+        self._missing_chart_fetches += 1
+        if self._missing_chart_fetches == PRICING_MISSING_CHART_RETRIES:
+            LOGGER.warning(
+                "The charts for %s are still missing or don't match its rates, so its network "
+                "rate is taken to apply all day until the next scheduled fetch: %s",
+                data.plan.code,
+                "; ".join(data.missing_charts),
+            )
 
     async def _async_fetch(self, now: datetime, day: date) -> PricingSnapshot | None:
         """Fetch everything, save it and return it, or return None to carry on with the saved copy.
@@ -403,7 +430,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         charts: dict[str, ChartReading] = {}
         for season in chart_seasons(plan, day, upcoming=True):
             paths = [path for path in season_charts(plan, season) if path not in charts]
-            if not refresh.intersection(paths) and _explained(saved, plan, season, day):
+            if not refresh.intersection(paths) and season_explained(saved, plan, season, day):
                 charts.update((path, saved[path]) for path in paths)
                 continue
             for path in paths:
@@ -439,16 +466,14 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                     self._clear_issue(ISSUE_TOU_CHART)
                 return data
         season = season_for(plan, day)
-        slots = plan_slots(snapshot.charts, plan, day)
+        priced = price_plan_day(snapshot.charts, plan, day)
+        slots = priced.slots
         for error in slots.missing:
-            LOGGER.debug("Taking one network rate to apply all day without its chart: %s", error)
+            LOGGER.debug(
+                "Taking one network rate to apply all day, as its chart can't be used: %s", error
+            )
         for error in slots.later_errors:
             LOGGER.debug("Leaving out a season whose charts can't be read: %s", error)
-        alignments = (
-            side_alignment(plan, day, slots.seasons(export=False), export=False),
-            side_alignment(plan, day, slots.seasons(export=True), export=True),
-        )
-        pricing = price_day(plan, day, slots.today[False], slots.today[True], alignments)
         tou_error = "; ".join(slots.errors) or None
         if tou_error is None:
             self._clear_issue(ISSUE_TOU_CHART)
@@ -458,12 +483,13 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             plan=plan,
             day=day,
             season=season,
-            pricing=pricing,
-            periods=_plan_periods(plan, day, slots, pricing, alignments),
+            pricing=priced.pricing,
+            periods=_plan_periods(plan, day, priced),
             names=bucket_names(plan),
             fetched_at=snapshot.fetched_at,
             tou_error=tou_error,
             missing_charts=slots.missing,
+            later_errors=slots.later_errors,
         )
         self._priced = (snapshot, day, data)
         return data
@@ -483,40 +509,14 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         ir.async_delete_issue(self.hass, DOMAIN, f"{issue_id}_{self.config_entry.entry_id}")
 
 
-def _explained(
-    charts: Mapping[str, ChartReading], plan: Plan, season: Season | None, day: date
-) -> bool:
-    """Return whether a season's saved charts are all there and the plan's rates explain them.
-
-    With every chart there, none is missing, so `season_slots` has nothing to report.
-    """
-    if any(path not in charts for path in season_charts(plan, season)):
-        return False
-    start = day if season is None else first_day(plan, season, day)
-    if start is None:
-        # The season no longer applies, so its charts aren't needed.
-        return True
-    try:
-        for export in (False, True):
-            season_slots(charts, plan, season, start, export=export)
-    except ChartReadError:
-        return False
-    return True
-
-
-def _plan_periods(
-    plan: Plan,
-    day: date,
-    slots: PlanSlots,
-    pricing: DayPricing,
-    alignments: tuple[Alignment, Alignment],
-) -> PlanPeriods:
+def _plan_periods(plan: Plan, day: date, priced: PlanDay) -> PlanPeriods:
     """Return the periods the plan uses today or in any later season with readable charts.
 
     Controlled load needs no charts, so its periods come from every later season's rates. A side
     whose charts can't be read today has the periods its rates give (`rate_buckets`), so its
     sensors stay.
     """
+    slots, alignments, pricing = priced.slots, priced.alignments, priced.pricing
     buckets: set[str] = set(pricing.rate_buckets)
     for side in (pricing.import_side, pricing.export_side):
         if side is not None:

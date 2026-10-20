@@ -499,15 +499,23 @@ def _estimate_clipped(
         return import_entries, export_entries
     scale = statistics.median(scales)
 
+    def sign(entry: LegendEntry, side: int) -> int:
+        # The printed digits give the sign where they start with one, since an export price can
+        # be a cost and an import price a credit. Otherwise it's the column's usual sign.
+        if entry.text:
+            return -1 if entry.text.startswith("-") else 1
+        return -1 if side else 1
+
     def estimated(entries: list[LegendEntry], side: int) -> list[LegendEntry]:
-        sign = -1 if side else 1
         return [
             LegendEntry(
                 entry.start,
                 entry.end,
                 entry.text,
                 clipped=True,
-                estimate=sign * height / scale if (height := bar(entry, side)) else None,
+                estimate=sign(entry, side) * height / scale
+                if (height := bar(entry, side))
+                else None,
             )
             if entry.clipped
             else entry

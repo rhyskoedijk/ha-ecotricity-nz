@@ -41,6 +41,7 @@ from .tariff import (
     next_change,
     next_season_change,
     period_for_bucket,
+    resolve_bucket,
 )
 
 if TYPE_CHECKING:
@@ -189,18 +190,17 @@ _SPLIT_PERIOD_KEYS = {
 }
 
 
-def _pricing_sensors(
-    entity_registry: er.EntityRegistry, pricing: PricingCoordinator, icp: str
-) -> list[SensorEntity]:
-    """Return the pricing sensors whose value exists, removing any left from an earlier setup."""
+def _pricing_sensors(pricing: PricingCoordinator, icp: str, added: set[str]) -> list[SensorEntity]:
+    """Return the pricing sensors whose value exists now and that aren't in `added` yet.
+
+    One whose value doesn't exist is left out but never removed from the entity registry, so a
+    value missing from one fetch doesn't lose the user's settings for it.
+    """
     entities: list[SensorEntity] = []
     for description in PRICING_SENSORS:
-        if description.exists_fn(pricing.data):
+        if description.key not in added and description.exists_fn(pricing.data):
             entities.append(PricingSensor(pricing, icp, description))
-        elif entity_id := entity_registry.async_get_entity_id(
-            SENSOR_DOMAIN, DOMAIN, f"{icp}_{description.key}"
-        ):
-            entity_registry.async_remove(entity_id)
+            added.add(description.key)
     return entities
 
 
@@ -215,7 +215,8 @@ async def async_setup_entry(
     icp = pricing.icp
     tz = runtime.local_tz
     entity_registry = er.async_get(hass)
-    entities: list[SensorEntity] = _pricing_sensors(entity_registry, pricing, icp)
+    added: set[str] = set()
+    entities: list[SensorEntity] = _pricing_sensors(pricing, icp, added)
     entities += [
         DailyChargeSensor(pricing, icp),
         CurrentPriceSensor(pricing, icp, tz, export=False),
@@ -247,6 +248,14 @@ async def async_setup_entry(
     sync = partial(_sync_plan_sensors, entity_registry, entry, async_add_entities, tz, known=set())
     sync()
     entry.async_on_unload(pricing.async_add_listener(sync))
+
+    @callback
+    def _add_new_pricing_sensors() -> None:
+        # A value that appears after setup, such as a newly recorded generation capacity.
+        if new := _pricing_sensors(pricing, icp, added):
+            async_add_entities(new)
+
+    entry.async_on_unload(pricing.async_add_listener(_add_new_pricing_sensors))
 
 
 @callback
@@ -310,9 +319,13 @@ def _registered_plan_sensors(
 ) -> dict[str, Callable[[], SensorEntity]]:
     """Return how to create each plan sensor already in the entity registry, by unique ID.
 
-    These are the price sensors (by the `{icp}_price_` prefix) and split period sensors.
+    These are the price sensors (by the `{icp}_price_` prefix) and split period sensors. A price
+    sensor's bucket comes from the plan's rates whose bucket gives its unique ID, since a bucket
+    named from a rate's description (see `resolve_bucket`) can't be worked out from its slug.
     """
     price_prefix = f"{icp}_{_PRICE_KEY_PREFIX}"
+    buckets = {resolve_bucket(rate) for rate in pricing.data.plan.rates if not rate.is_levy}
+    plan_buckets = {_slug(bucket): bucket for bucket in buckets}
     split = {f"{icp}_{key}": side for side, key in _SPLIT_PERIOD_KEYS.items()}
     sensors: dict[str, Callable[[], SensorEntity]] = {}
     for registry_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
@@ -320,8 +333,9 @@ def _registered_plan_sensors(
         if registry_entry.domain != SENSOR_DOMAIN:
             continue
         if unique_id.startswith(price_prefix):
-            # Bucket codes are upper case, so the unique ID's slug gives the bucket back.
-            bucket = unique_id.removeprefix(price_prefix).upper()
+            slug = unique_id.removeprefix(price_prefix)
+            # A bucket with no rate of its own (anytime, say) is a charge code, so upper case.
+            bucket = plan_buckets.get(slug, slug.upper())
             sensors[unique_id] = partial(BucketPriceSensor, pricing, icp, bucket)
         elif unique_id in split:
             export, party = split[unique_id]

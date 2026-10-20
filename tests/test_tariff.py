@@ -46,6 +46,7 @@ from custom_components.ecotricity_nz.tariff import (
     rates_alignment,
     resolve_bucket,
     season_charts,
+    season_explained,
     season_for,
     season_slots,
     side_rates,
@@ -561,6 +562,34 @@ def test_missing_charts_are_reported_where_one_network_rate_is_taken_to_apply_al
     slots, missing = season_slots({}, plan, None, SPRING, export=True)
     assert slots is not None
     assert missing == "No published season covers the day"
+
+
+def test_one_network_rate_applies_all_day_when_the_chart_doesnt_match() -> None:
+    # The side's one price may need no chart, so a chart showing other prices (drawn before a
+    # rate change, say) is reported rather than rejecting the side.
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+    unmatched = ChartReading(import_entries=(), export_entries=_entries((0, 24, "-99.00")))
+    charts = _charts(plan, SPRING_SEASON, unmatched)
+
+    slots, missing = season_slots(charts, plan, SPRING_SEASON, SPRING, export=True)
+
+    assert slots is not None
+    assert {slot.price for slot in slots.all} == {-21.0}
+    assert missing is not None
+    assert "doesn't match the plan's rates" in missing
+
+
+def test_season_is_explained_only_when_its_charts_match_the_rates() -> None:
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+    unmatched = ChartReading(import_entries=(), export_entries=_entries((0, 24, "-99.00")))
+
+    assert season_explained(
+        _charts(plan, SPRING_SEASON, PEAK_ONLY_EXPORT_LEGEND), plan, SPRING_SEASON, SPRING
+    )
+    assert not season_explained(
+        _charts(plan, SPRING_SEASON, unmatched), plan, SPRING_SEASON, SPRING
+    )
+    assert not season_explained({}, plan, SPRING_SEASON, SPRING)
 
 
 def test_plan_without_charts_takes_one_network_rate_to_apply_all_day() -> None:

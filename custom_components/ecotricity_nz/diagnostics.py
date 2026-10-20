@@ -54,7 +54,7 @@ async def async_get_config_entry_diagnostics(
                 "day": pricing.day,
                 "season": asdict(pricing.season) if pricing.season else None,
                 "pricing": asdict(pricing.pricing),
-                "periods": asdict(pricing.periods),
+                "periods": _lists(asdict(pricing.periods)),
                 "tou_error": pricing.tou_error,
             },
             "consumption": asdict(consumption) if consumption else None,
@@ -67,9 +67,15 @@ async def async_get_config_entry_diagnostics(
 
 
 def _lists(value: Any) -> Any:  # noqa: ANN401 - walks arbitrary dataclass output
-    """Turn tuples into lists, because async_redact_data only looks inside lists."""
+    """Turn tuples and sets into lists.
+
+    async_redact_data only looks inside lists, and Home Assistant's JSON encoder writes a set as
+    its repr, so sets become sorted lists.
+    """
     if isinstance(value, dict):
         return {key: _lists(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return [_lists(item) for item in value]
+    if isinstance(value, set | frozenset):
+        return [_lists(item) for item in sorted(value, key=str)]
     return value

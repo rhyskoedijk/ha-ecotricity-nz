@@ -36,7 +36,12 @@ async def test_diagnostics_redact_personal_data(
 
     assert diagnostics["pricing"]["plan"]["description"] == "Low User"
     assert diagnostics["pricing"]["pricing"]["import_side"]["slots"] is not None
-    assert diagnostics["pricing"]["periods"]["import_alignment"] == "network"
+    periods = diagnostics["pricing"]["periods"]
+    assert periods["import_alignment"] == "network"
+    # Sets are written as lists, not as their repr.
+    assert periods["buckets"] == sorted(
+        portal_config_entry.runtime_data.pricing.data.periods.buckets
+    )
     # Registry details are kept; only the identifying fields inside them are redacted.
     details = diagnostics["pricing"]["icp_details"]
     assert details["network_code"] == DEFAULT_NETWORK

@@ -360,6 +360,7 @@ def _fixture_snapshot() -> PricingSnapshot:
         plan_titles=titles,
         charts={"/chart.png": read_chart(chart.read_bytes())},
         charts_plan_id=plan_id(TIME_OF_USE_PLAN),
+        missing_chart_fetches=2,
     )
 
 
@@ -414,6 +415,13 @@ async def test_saved_file_leaves_out_unused_personal_details(
     assert TEST_ICP in saved
     for serial in icp.meter_serial_numbers:
         assert serial in saved
+
+
+def test_snapshot_saved_before_missing_charts_were_counted_starts_counting_again() -> None:
+    saved = json.loads(json.dumps(_snapshot_dict(_fixture_snapshot())))
+    del saved["missing_chart_fetches"]
+
+    assert _snapshot(saved).missing_chart_fetches == 0
 
 
 def test_snapshot_needs_a_time_zone() -> None:

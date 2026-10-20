@@ -57,6 +57,9 @@ class PricingSnapshot:
     """Chart readings by chart path."""
     charts_plan_id: str | None = None
     """The plan the charts were downloaded for."""
+    missing_chart_fetches: int = 0
+    """How many fetches in a row, up to and including this one, left charts missing (see
+    `PricingData.missing_charts`)."""
 
 
 class PricingStore:
@@ -101,6 +104,7 @@ def _snapshot_dict(snapshot: PricingSnapshot) -> dict[str, Any]:
         "plan_titles": dict(snapshot.plan_titles),
         "charts": {path: _chart_dict(chart) for path, chart in snapshot.charts.items()},
         "charts_plan_id": snapshot.charts_plan_id,
+        "missing_chart_fetches": snapshot.missing_chart_fetches,
     }
 
 
@@ -120,6 +124,8 @@ def _snapshot(raw: dict[str, Any]) -> PricingSnapshot:
         plan_titles={str(key): str(value) for key, value in raw["plan_titles"].items()},
         charts={str(path): _chart(chart) for path, chart in raw["charts"].items()},
         charts_plan_id=raw["charts_plan_id"],
+        # Files saved before the count was kept don't have it.
+        missing_chart_fetches=int(raw.get("missing_chart_fetches", 0)),
     )
 
 

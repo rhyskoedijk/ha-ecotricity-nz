@@ -190,18 +190,38 @@ _SPLIT_PERIOD_KEYS = {
 }
 
 
-def _pricing_sensors(pricing: PricingCoordinator, icp: str, added: set[str]) -> list[SensorEntity]:
-    """Return the pricing sensors whose value exists now and that aren't in `added` yet.
+def _pricing_sensors(
+    pricing: PricingCoordinator, icp: str, tz: tzinfo
+) -> dict[str, Callable[[], SensorEntity]]:
+    """Return how to create each pricing sensor that isn't a plan sensor, by key.
 
-    One whose value doesn't exist is left out but never removed from the entity registry, so a
-    value missing from one fetch doesn't lose the user's settings for it.
+    Sensors for a value the ICP or plan doesn't have (generation capacity, export or controlled
+    load) are left out until it does.
     """
-    entities: list[SensorEntity] = []
-    for description in PRICING_SENSORS:
-        if description.key not in added and description.exists_fn(pricing.data):
-            entities.append(PricingSensor(pricing, icp, description))
-            added.add(description.key)
-    return entities
+    data = pricing.data
+    sensors: dict[str, Callable[[], SensorEntity]] = {
+        description.key: partial(PricingSensor, pricing, icp, description)
+        for description in PRICING_SENSORS
+        if description.exists_fn(data)
+    }
+    sensors["daily_charge"] = partial(DailyChargeSensor, pricing, icp)
+    has_export = data.icp.has_export or data.pricing.has_export
+    for export in (False, True) if has_export else (False,):
+        direction = "export" if export else "import"
+        sensors[f"current_{direction}_price"] = partial(
+            CurrentPriceSensor, pricing, icp, tz, export=export
+        )
+        sensors[f"current_{direction}_period"] = partial(
+            CurrentPeriodSensor, pricing, icp, tz, export=export
+        )
+        sensors[f"next_{direction}_period_change"] = partial(
+            NextPeriodChangeSensor, pricing, icp, tz, export=export
+        )
+    if has_export:
+        sensors[EXPORT_LOSS_FACTOR.key] = partial(PricingSensor, pricing, icp, EXPORT_LOSS_FACTOR)
+    if any(bucket.startswith(CONTROLLED_PREFIX) for bucket in data.periods.buckets):
+        sensors["current_controlled_price"] = partial(ControlledPriceSensor, pricing, icp)
+    return sensors
 
 
 async def async_setup_entry(
@@ -215,47 +235,33 @@ async def async_setup_entry(
     icp = pricing.icp
     tz = runtime.local_tz
     entity_registry = er.async_get(hass)
-    added: set[str] = set()
-    entities: list[SensorEntity] = _pricing_sensors(pricing, icp, added)
-    entities += [
-        DailyChargeSensor(pricing, icp),
-        CurrentPriceSensor(pricing, icp, tz, export=False),
-        CurrentPeriodSensor(pricing, icp, tz, export=False),
-        NextPeriodChangeSensor(pricing, icp, tz, export=False),
-    ]
-    if pricing.data.icp.has_export or pricing.data.pricing.has_export:
-        entities += [
-            PricingSensor(pricing, icp, EXPORT_LOSS_FACTOR),
-            CurrentPriceSensor(pricing, icp, tz, export=True),
-            CurrentPeriodSensor(pricing, icp, tz, export=True),
-            NextPeriodChangeSensor(pricing, icp, tz, export=True),
-        ]
-
-    if any(bucket.startswith(CONTROLLED_PREFIX) for bucket in pricing.data.periods.buckets):
-        entities.append(ControlledPriceSensor(pricing, icp))
-
     if runtime.consumption is not None:
-        entities += [
+        async_add_entities(
             ConsumptionSensor(runtime.consumption, icp, description)
             for description in CONSUMPTION_SENSORS
-        ]
-    async_add_entities(entities)
+        )
 
     # Which periods a plan has, and whether Ecotricity's and the network's line up, depend on the
     # plan and its seasons, which Ecotricity can change at any time. Add sensors for any period,
     # or split side, that appears after setup, and remove those the plan no longer has (after
-    # choosing another plan, say), so only what the plan has shows.
-    sync = partial(_sync_plan_sensors, entity_registry, entry, async_add_entities, tz, known=set())
-    sync()
-    entry.async_on_unload(pricing.async_add_listener(sync))
+    # choosing another plan, say), so only what the plan has shows. Other pricing sensors whose
+    # value appears after setup (a newly recorded generation capacity, say) are added too, but
+    # never removed, so a value missing from one fetch doesn't lose the user's settings for it.
+    added: set[str] = set()
+    sync_plan = partial(
+        _sync_plan_sensors, entity_registry, entry, async_add_entities, tz, known=set()
+    )
 
     @callback
-    def _add_new_pricing_sensors() -> None:
-        # A value that appears after setup, such as a newly recorded generation capacity.
-        if new := _pricing_sensors(pricing, icp, added):
+    def sync() -> None:
+        wanted = _pricing_sensors(pricing, icp, tz)
+        if new := [create() for key, create in wanted.items() if key not in added]:
             async_add_entities(new)
+        added.update(wanted)
+        sync_plan()
 
-    entry.async_on_unload(pricing.async_add_listener(_add_new_pricing_sensors))
+    sync()
+    entry.async_on_unload(pricing.async_add_listener(sync))
 
 
 @callback

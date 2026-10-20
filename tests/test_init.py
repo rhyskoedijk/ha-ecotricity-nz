@@ -59,6 +59,7 @@ from custom_components.ecotricity_nz.const import (
     PRICING_RETRY_INTERVAL,
     RETRY_AFTER_FAILURE,
 )
+from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.sensor import BucketPriceSensor
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
 from custom_components.ecotricity_nz.tariff import (
@@ -218,8 +219,8 @@ async def test_flat_plan_keeps_its_price_when_its_chart_doesnt_match(
     freezer: FrozenDateTimeFactory,
 ) -> None:
     # The chart shows a price the rates don't give (drawn before a rate change, say). The plan's
-    # one price needs no chart, so it carries on, and the chart is fetched again daily for a few
-    # fetches in a row, then only at the usual times.
+    # one price needs no chart, so it carries on, and the chart is fetched again daily a few
+    # times, then only at the usual times.
     freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
     stale = ChartReading(import_entries=(LegendEntry(0, 1440, "99.99"),), export_entries=())
     with patch.object(coordinator_module, "read_chart", return_value=stale):
@@ -230,15 +231,81 @@ async def test_flat_plan_keeps_its_price_when_its_chart_doesnt_match(
         assert coordinator.data.tou_error is None
         assert any("doesn't match" in error for error in coordinator.data.missing_charts)
 
-        # Setup's fetch was the first in a row.
-        fetched: list[bool] = []
-        for _ in range(PRICING_MISSING_CHART_RETRIES + 1):
-            calls = mock_onboarding.async_get_icp.await_count
-            freezer.tick(timedelta(days=1))
-            await coordinator.async_refresh()
-            fetched.append(mock_onboarding.async_get_icp.await_count > calls)
+        fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=4)
 
-    assert fetched == [True] * (PRICING_MISSING_CHART_RETRIES - 1) + [False, False]
+    assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
+    assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
+
+
+async def _daily_fetches(
+    hass: HomeAssistant,
+    coordinator: PricingCoordinator,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+    *,
+    days: int,
+) -> list[bool]:
+    """Return whether each of the next days' checks fetched pricing."""
+    fetched: list[bool] = []
+    for _ in range(days):
+        calls = mock_onboarding.async_get_icp.await_count
+        freezer.tick(timedelta(days=1))
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        fetched.append(mock_onboarding.async_get_icp.await_count > calls)
+    return fetched
+
+
+async def test_missing_chart_retries_carry_on_after_a_restart(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The count of daily retries is saved, so restarting doesn't give the chart more of them.
+    freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    mock_onboarding.async_get_chart.side_effect = EcotricityConnectionError("down")
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
+    coordinator = config_entry.runtime_data.pricing
+    fetched = await _daily_fetches(
+        hass, coordinator, mock_onboarding, freezer, days=PRICING_MISSING_CHART_RETRIES - 1
+    )
+    assert all(fetched)
+
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = config_entry.runtime_data.pricing
+    fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=3)
+
+    assert fetched == [True, False, False]
+
+
+async def test_missing_chart_retries_start_again_once_the_chart_has_been_read(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    serve = mock_onboarding.async_get_chart.side_effect
+    mock_onboarding.async_get_chart.side_effect = EcotricityConnectionError("down")
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
+    coordinator = config_entry.runtime_data.pricing
+    days = PRICING_MISSING_CHART_RETRIES + 1
+    fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=days)
+    assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
+
+    # The chart reads at the next refresh. Later, a new chart shows a price the rates don't give.
+    mock_onboarding.async_get_chart.side_effect = serve
+    assert await coordinator.async_fetch_now()
+    assert not coordinator.data.missing_charts
+    stale = ChartReading(import_entries=(LegendEntry(0, 1440, "99.99"),), export_entries=())
+    with patch.object(coordinator_module, "read_chart", return_value=stale):
+        assert await coordinator.async_fetch_now()
+        assert coordinator.data.missing_charts
+        fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=days)
+
+    assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.2825)
 
 
@@ -1502,6 +1569,52 @@ async def test_generation_capacity_sensor_added_once_recorded(
     await hass.async_block_till_done()
 
     assert float(_state(hass, "registered_generation_capacity")) == 5.5
+
+
+def _without_export(plan: Plan) -> Plan:
+    return replace(
+        plan,
+        retail_rates=tuple(rate for rate in plan.retail_rates if not rate.is_export),
+        network_rates=tuple(rate for rate in plan.network_rates if not rate.is_export),
+    )
+
+
+async def test_export_sensors_added_once_the_icp_can_export(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Without an export register or export rates there's nothing to show. Once the ICP gains a
+    # register (solar installed, say), the export sensors appear without a reload.
+    freezer.move_to(WINTER_PEAK)
+    icp = mock_onboarding.async_get_icp.return_value
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    mock_onboarding.async_get_icp.return_value = replace(
+        icp, channels=tuple(channel for channel in icp.channels if channel.register_code != "EG")
+    )
+    mock_onboarding.async_get_plans.return_value = replace(
+        plans,
+        default=_without_export(plans.default),
+        alternative=_without_export(plans.alternative) if plans.alternative else None,
+        others=tuple(_without_export(plan) for plan in plans.others),
+    )
+    await _setup(hass, config_entry)
+    export_sensors = (
+        "current_export_price",
+        "current_export_period",
+        "next_export_period_change",
+        "network_export_loss_factor",
+    )
+    for key in export_sensors:
+        assert hass.states.get(f"{PREFIX}_{key}") is None, key
+
+    mock_onboarding.async_get_icp.return_value = icp
+    assert await config_entry.runtime_data.pricing.async_fetch_now()
+    await hass.async_block_till_done()
+
+    for key in export_sensors:
+        assert hass.states.get(f"{PREFIX}_{key}") is not None, key
 
 
 async def test_generation_capacity_sensor_shows_recorded_capacity(

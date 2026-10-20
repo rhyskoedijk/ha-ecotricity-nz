@@ -488,22 +488,17 @@ def day_slots(
 ) -> DaySlots:
     """Return one side's half-hours for a weekday and a weekend day.
 
-    A side with one possible price all day needs no chart. One whose network rates likely apply
-    all day (see `SideRates.likely_flat`) is read from its charts where there are any, and
-    otherwise given that one price. Raises ChartReadError if the charts are needed but missing,
-    or can't be explained.
+    A side with one possible price all day needs no chart. Raises ChartReadError if the charts
+    are needed but missing, or can't be explained. `season_slots` decides when a side whose one
+    network rate likely applies all day can do without them.
     """
     if (flat := rates.flat()) is not None:
         return _all_day(flat)
     if weekday is None or weekend is None:
-        if (likely := rates.likely_flat()) is not None:
-            return _all_day(likely)
         raise ChartReadError("The plan's charts for the season couldn't be downloaded or read")
     weekday_entries = weekday.export_entries if export else weekday.import_entries
     weekend_entries = weekend.export_entries if export else weekend.import_entries
     if not (weekday_entries and weekend_entries):
-        if (likely := rates.likely_flat()) is not None:
-            return _all_day(likely)
         raise ChartReadError(f"The chart has no {'export' if export else 'import'} windows")
     return DaySlots(
         weekday=explain(weekday_entries, rates), weekend=explain(weekend_entries, rates)
@@ -842,35 +837,62 @@ def season_slots(
 
     The half-hours are None when the plan has no rates for the side. A side whose one network
     rate likely applies all day (see `SideRates.likely_flat`) is given that price when its charts
-    are missing or don't match its rates, along with why, since the charts might show the rate
-    only applies in some hours. That's None when the charts were read, or the plan has none at all.
+    are missing, have no windows for it, or don't match its rates, along with why, since the
+    charts might show the rate only applies in some hours. A chart that shows the price varying
+    through the day, with some of its prices the rates give, proves the rate doesn't apply all
+    day, so it's still rejected. The reason is None when the charts were read, or the plan has
+    none at all.
 
     Raises ChartReadError if the side needs its charts and they're missing or can't be explained.
     """
     rates = side_rates(plan, day, export=export)
     if rates.is_empty:
         return None, None
-    if rates.flat() is not None:
-        return day_slots(rates, None, None, export=export), None
+    if (flat := rates.flat()) is not None:
+        return _all_day(flat), None
+    likely = rates.likely_flat()
     templates = (plan.timeframe_chart_weekday, plan.timeframe_chart_weekend)
     try:
         paths = [season_chart_path(template, season) for template in templates]
     except ChartReadError as err:
-        if rates.likely_flat() is None:
+        if likely is None:
             raise
-        return day_slots(rates, None, None, export=export), str(err) if all(templates) else None
-    weekday, weekend = (charts.get(path) for path in paths)
+        return _all_day(likely), str(err) if all(templates) else None
+    readings = [charts.get(path) for path in paths]
     try:
-        slots = day_slots(rates, weekday, weekend, export=export)
+        return day_slots(rates, *readings, export=export), None
     except ChartReadError as err:
-        # An anytime plan's price needs no chart, so one that doesn't match its rates (drawn
-        # before a rate change, say) can't stop it working.
-        if (likely := rates.likely_flat()) is None:
+        entries = [
+            entry
+            for reading in readings
+            if reading is not None
+            for entry in (reading.export_entries if export else reading.import_entries)
+        ]
+        if likely is None or _shows_varying_price(entries, rates):
             raise
+        # An anytime plan's price needs no chart, so one that's missing or doesn't match its
+        # rates (drawn before a rate change, say) can't stop it working.
         return _all_day(likely), str(err)
-    if weekday is None or weekend is None:
-        return slots, "The plan's charts for the season couldn't be downloaded or read"
-    return slots, None
+
+
+def _shows_varying_price(entries: Sequence[LegendEntry], rates: SideRates) -> bool:
+    """Return whether a chart shows more than one price, some of which the rates give.
+
+    That proves a side's one network rate doesn't apply all day. A chart with one price, or
+    none the rates give, may just be out of date.
+    """
+    if len({entry.text for entry in entries}) <= 1:
+        return False
+    candidates = rates.candidates()
+
+    def fits(entry: LegendEntry) -> bool:
+        try:
+            return bool(_matches(entry, candidates))
+        except ChartReadError:
+            # It fits more than one price.
+            return True
+
+    return any(entry.text and fits(entry) for entry in entries)
 
 
 @dataclass(frozen=True, slots=True)
@@ -887,8 +909,8 @@ class PlanSlots:
     errors: tuple[str, ...]
     """Why today's charts couldn't be used."""
     missing: tuple[str, ...]
-    """Today's sides given their one network rate all day because their charts are missing, or
-    don't match the plan's rates."""
+    """Sides, today or in a later season, given their one network rate all day because their
+    charts are missing, or don't match the plan's rates."""
     later_errors: tuple[str, ...]
     """Why a later season was left out."""
 
@@ -902,7 +924,9 @@ def plan_slots(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> Pla
     """Return the plan's half-hours today and in every later season, from its read charts.
 
     A later season whose charts can't be read, or are missing, is left out, so it can't stop
-    today's prices working.
+    today's prices working. One priced from a side's one network rate, as `season_slots` does
+    without its charts, is kept and reported in `missing` like today's, so the plan's periods are
+    still complete.
     """
     season = season_for(plan, day)
     # A plan whose charts don't depend on the season (a None season) has one chart, which shows
@@ -931,10 +955,11 @@ def plan_slots(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> Pla
             try:
                 slots, gap = season_slots(charts, plan, item, start, export=export)
             except ChartReadError as err:
-                slots, gap = None, str(err)
+                later_errors.append(f"{side} from {start.isoformat()}: {err}")
+                continue
             if gap is not None:
-                later_errors.append(f"{side} from {start.isoformat()}: {gap}")
-            elif slots is not None:
+                missing.append(f"{side} from {start.isoformat()}: {gap}")
+            if slots is not None:
                 later[export].append(slots)
     return PlanSlots(today, later, tuple(errors), tuple(missing), tuple(later_errors))
 

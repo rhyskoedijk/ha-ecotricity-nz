@@ -132,8 +132,8 @@ class PricingData:
     """When the pricing was last fetched from Ecotricity."""
     tou_error: str | None = None
     missing_charts: tuple[str, ...] = ()
-    """Sides given their one network rate all day because their charts are missing, or don't
-    match the plan's rates."""
+    """Sides, today or in a later season, given their one network rate all day because their
+    charts are missing, or don't match the plan's rates."""
     later_errors: tuple[str, ...] = ()
     """Why a later season's charts couldn't be used, so its periods may be missing."""
 
@@ -195,7 +195,6 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._fetch_failures = 0
         self._attestation_failures = 0
         self._chart_failures = 0
-        self._missing_chart_fetches = 0
         self._unsub_midnight: CALLBACK_TYPE | None = None
 
     @property
@@ -276,7 +275,13 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                 )
                 if self._chart_failures >= FAILURE_ISSUE_THRESHOLD:
                     self._raise_issue(ISSUE_TOU_CHART, {"plan": data.plan.description})
-            self._count_missing_charts(data)
+            if fetched.missing_chart_fetches == PRICING_MISSING_CHART_RETRIES + 1:
+                LOGGER.warning(
+                    "The charts for %s are still missing or don't match its rates, so its "
+                    "network rate is taken to apply all day until the next scheduled fetch: %s",
+                    data.plan.code,
+                    "; ".join(data.missing_charts),
+                )
             return data
         if self._snapshot is None:  # pragma: no cover - a fetch is always due without one
             raise UpdateFailed(translation_domain=DOMAIN, translation_key="update_failed")
@@ -310,33 +315,18 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         tomorrow = day + timedelta(days=1)
         if plan_needs_season(plan) and (season is None or season_for(plan, tomorrow) is None):
             return "next season not published yet"
-        return self._chart_reason(self._price_day(snapshot, day))
+        return self._chart_reason(snapshot, day)
 
-    def _chart_reason(self, data: PricingData) -> str | None:
+    def _chart_reason(self, snapshot: PricingSnapshot, day: date) -> str | None:
         """Return why the charts should be fetched again, or None if they'll do."""
+        data = self._price_day(snapshot, day)
         if data.tou_error is not None:
             return "time-of-use windows unavailable"
-        if data.missing_charts and self._missing_chart_fetches < PRICING_MISSING_CHART_RETRIES:
+        # Prices still work while charts are missing, so they're only retried daily for a while,
+        # and no repair issue is raised. The count is saved, so a restart doesn't reset it.
+        if data.missing_charts and snapshot.missing_chart_fetches <= PRICING_MISSING_CHART_RETRIES:
             return "charts missing"
         return None
-
-    def _count_missing_charts(self, data: PricingData) -> None:
-        """Count fetches in a row that left charts missing, which stop daily fetches at a limit.
-
-        No repair issue is raised, since prices still work: the network's one rate is taken to
-        apply all day.
-        """
-        if not data.missing_charts:
-            self._missing_chart_fetches = 0
-            return
-        self._missing_chart_fetches += 1
-        if self._missing_chart_fetches == PRICING_MISSING_CHART_RETRIES:
-            LOGGER.warning(
-                "The charts for %s are still missing or don't match its rates, so its network "
-                "rate is taken to apply all day until the next scheduled fetch: %s",
-                data.plan.code,
-                "; ".join(data.missing_charts),
-            )
 
     async def _async_fetch(self, now: datetime, day: date) -> PricingSnapshot | None:
         """Fetch everything, save it and return it, or return None to carry on with the saved copy.
@@ -370,6 +360,16 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             charts=await self._async_charts(plan, day),
             charts_plan_id=plan.id,
         )
+        data = self._price_day(snapshot, day)
+        if data.missing_charts:
+            # Counted per plan, so choosing another starts again.
+            saved = self._snapshot
+            previous = (
+                saved.missing_chart_fetches if saved and saved.charts_plan_id == plan.id else 0
+            )
+            snapshot = replace(snapshot, missing_chart_fetches=previous + 1)
+            # The count doesn't change the prices, so they needn't be worked out again.
+            self._priced = (snapshot, day, data)
         self._snapshot = snapshot
         self._reset_backoff()
         await self._store.async_save(snapshot)

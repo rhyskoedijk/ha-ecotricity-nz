@@ -498,19 +498,6 @@ def test_network_rate_for_some_hours_is_read_from_the_chart() -> None:
     assert {slot.price for slot in slots.weekend} == {-16.0, -21.0}
 
 
-def test_one_network_rate_applies_all_day_without_a_chart() -> None:
-    slots = day_slots(_peak_only_network_export(), None, None, export=True)
-
-    assert {slot.price for slot in slots.all} == {-21.0}
-
-
-def test_one_network_rate_applies_all_day_when_the_chart_has_no_windows_for_it() -> None:
-    reading = ChartReading(import_entries=_entries((0, 24, "20.00")), export_entries=())
-    slots = day_slots(_peak_only_network_export(), reading, reading, export=True)
-
-    assert {slot.price for slot in slots.all} == {-21.0}
-
-
 SPRING_SEASON = Season("Seasonal Rates", date(2026, 10, 1), date(2026, 12, 31))
 SUMMER_SEASON = Season("Seasonal Rates", date(2027, 1, 1), date(2027, 3, 31))
 PEAK_ONLY_EXPORT_LEGEND = ChartReading(
@@ -564,19 +551,77 @@ def test_missing_charts_are_reported_where_one_network_rate_is_taken_to_apply_al
     assert missing == "No published season covers the day"
 
 
-def test_one_network_rate_applies_all_day_when_the_chart_doesnt_match() -> None:
-    # The side's one price may need no chart, so a chart showing other prices (drawn before a
-    # rate change, say) is reported rather than rejecting the side.
+def test_one_network_rate_applies_all_day_when_the_chart_has_no_windows_for_it() -> None:
     plan = _peak_only_network_export_plan(SPRING_SEASON)
-    unmatched = ChartReading(import_entries=(), export_entries=_entries((0, 24, "-99.00")))
-    charts = _charts(plan, SPRING_SEASON, unmatched)
+    reading = ChartReading(import_entries=_entries((0, 24, "20.00")), export_entries=())
 
-    slots, missing = season_slots(charts, plan, SPRING_SEASON, SPRING, export=True)
+    slots, missing = season_slots(
+        _charts(plan, SPRING_SEASON, reading), plan, SPRING_SEASON, SPRING, export=True
+    )
+
+    assert slots is not None
+    assert {slot.price for slot in slots.all} == {-21.0}
+    assert missing == "The chart has no export windows"
+
+
+def _anytime_plan(*seasons: Season) -> Plan:
+    """An anytime plan: one Ecotricity rate, and the network's off-peak rate, which applies all
+    day."""
+    return replace(
+        _plan(_supplier("CHARGE_24", 25.0), _network("CHARGE_LOW", 5.0)),
+        seasons=seasons,
+        timeframe_chart_weekday="/charts/X-SSSSSSSS-EEEEEEEE-WD.png",
+        timeframe_chart_weekend="/charts/X-SSSSSSSS-EEEEEEEE-WE.png",
+    )
+
+
+def test_one_network_rate_applies_all_day_when_a_chart_with_one_price_doesnt_match() -> None:
+    # The side's one price may need no chart, so a chart showing another price all day (drawn
+    # before a rate change, say) is reported rather than rejecting the side.
+    plan = _anytime_plan(SPRING_SEASON)
+    stale = ChartReading(import_entries=_entries((0, 24, "99.00")), export_entries=())
+
+    slots, missing = season_slots(
+        _charts(plan, SPRING_SEASON, stale), plan, SPRING_SEASON, SPRING, export=False
+    )
+
+    assert slots is not None
+    assert {slot.price for slot in slots.all} == {30.0}
+    assert missing is not None
+    assert "doesn't match the plan's rates" in missing
+
+
+def test_one_network_rate_applies_all_day_when_none_of_the_charts_prices_match() -> None:
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+    stale = ChartReading(
+        import_entries=(), export_entries=_entries((0, 17, "-99.00"), (17, 24, "-98.00"))
+    )
+
+    slots, missing = season_slots(
+        _charts(plan, SPRING_SEASON, stale), plan, SPRING_SEASON, SPRING, export=True
+    )
 
     assert slots is not None
     assert {slot.price for slot in slots.all} == {-21.0}
     assert missing is not None
-    assert "doesn't match the plan's rates" in missing
+
+
+def test_chart_showing_one_network_rate_only_in_some_hours_is_rejected_when_it_doesnt_match() -> (
+    None
+):
+    # The off-peak price matches, so the chart shows the network rate only applies at peak,
+    # but the peak price doesn't (the network changed it mid-season, say). Taking the rate to
+    # apply all day would price every off-peak half-hour wrongly.
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+    changed = ChartReading(
+        import_entries=(),
+        export_entries=_entries((0, 17, "-16.00"), (17, 21, "-25.00"), (21, 24, "-16.00")),
+    )
+
+    with pytest.raises(ChartReadError, match="doesn't match the plan's rates"):
+        season_slots(
+            _charts(plan, SPRING_SEASON, changed), plan, SPRING_SEASON, SPRING, export=True
+        )
 
 
 def test_season_is_explained_only_when_its_charts_match_the_rates() -> None:
@@ -632,9 +677,27 @@ def test_side_that_needs_its_charts_is_rejected_without_them() -> None:
         season_slots({}, plan, SPRING_SEASON, SPRING, export=True)
 
 
+def test_chart_whose_cut_off_price_fits_several_of_the_rates_prices_is_rejected() -> None:
+    # A cut-off price that fits both the peak and off-peak price is still one the rates give, so
+    # with another price on the chart, the price is shown to vary.
+    plan = _peak_only_network_export_plan(SPRING_SEASON)
+    cut_off = LegendEntry(0, 17 * 60, "-", clipped=True)
+    reading = ChartReading(
+        import_entries=(), export_entries=(cut_off, *_entries((17, 24, "-99.00")))
+    )
+
+    with pytest.raises(ChartReadError, match="fits more than one"):
+        season_slots(
+            _charts(plan, SPRING_SEASON, reading), plan, SPRING_SEASON, SPRING, export=True
+        )
+
+
 def test_later_season_whose_chart_isnt_explained_is_left_out() -> None:
     plan = _peak_only_network_export_plan(SPRING_SEASON, SUMMER_SEASON)
-    unexplained = ChartReading(import_entries=(), export_entries=_entries((0, 24, "-99.00")))
+    unexplained = ChartReading(
+        import_entries=(),
+        export_entries=_entries((0, 17, "-16.00"), (17, 21, "-25.00"), (21, 24, "-16.00")),
+    )
     charts = _charts(plan, SPRING_SEASON, PEAK_ONLY_EXPORT_LEGEND) | _charts(
         plan, SUMMER_SEASON, unexplained
     )
@@ -649,16 +712,18 @@ def test_later_season_whose_chart_isnt_explained_is_left_out() -> None:
     assert "doesn't match the plan's rates" in slots.later_errors[0]
 
 
-def test_later_season_with_missing_charts_is_left_out() -> None:
-    # Taking the network rate to apply all day is only a fallback for today's prices, so a later
-    # season priced that way can't decide which periods the plan has.
+def test_later_season_with_missing_charts_takes_one_network_rate_to_apply_all_day() -> None:
+    # Priced as today's would be, and reported the same way, so the season still counts towards
+    # the plan's periods and doesn't hold back removing sensors the plan no longer has.
     plan = _peak_only_network_export_plan(SPRING_SEASON, SUMMER_SEASON)
 
     slots = plan_slots(_charts(plan, SPRING_SEASON, PEAK_ONLY_EXPORT_LEGEND), plan, SPRING)
 
-    assert slots.later[True] == []
-    assert len(slots.later_errors) == 1
-    assert not slots.missing
+    assert len(slots.later[True]) == 1
+    assert {slot.price for slot in slots.later[True][0].all} == {-21.0}
+    assert not slots.later_errors
+    assert len(slots.missing) == 1
+    assert slots.missing[0].startswith("Export from 2027-01-01: ")
 
 
 def test_todays_missing_charts_are_reported_separately_from_errors() -> None:

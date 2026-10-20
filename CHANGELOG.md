@@ -23,7 +23,7 @@ Some sensors have changed in ways that can affect automations, templates and das
 
 - Time-of-use prices are now read from the price list printed under Ecotricity's charts, instead of from the height of the bars, so every half-hour's price is exact.
 - The charts of every published season are now downloaded, so sensors for your plan's periods don't come and go with the seasons.
-- If a chart can't be downloaded, or shows prices that don't match your plan's rates, for import or export where your network has only one rate, such as on an anytime plan, prices carry on with that rate all day and the chart is tried again daily for up to three days.
+- If a chart can't be downloaded, or shows prices that don't match your plan's rates, for import or export where your network has only one rate, such as on an anytime plan, prices carry on with that rate all day and the chart is tried again daily up to three times, then at the usual times.
 - Pricing saved by earlier versions can't be read by this one, so it's fetched again once after updating.
 - The **Time-of-use chart** image is now called **Current time-of-use chart**, as it switches between the weekday and weekend charts and changes with the season. Its entity ID stays the same, so existing automations are unaffected.
 

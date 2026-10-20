@@ -30,13 +30,19 @@ from custom_components.ecotricity_nz.tariff import (
 )
 from tests.conftest import (
     NETWORKS,
+    chart_file,
     chart_files,
+    chart_name,
     chart_reading,
     explained_chart,
+    find_plan_where,
+    has_overlapping_seasons,
     load_json_fixture,
     load_plan_list,
     network_codes,
     price_categories,
+    season_chart_name,
+    stored_charts,
 )
 
 if TYPE_CHECKING:
@@ -109,3 +115,25 @@ def test_every_period_is_translated(network: str, category: str) -> None:
             for party in ("", "supplier_", "network_"):
                 key = f"current_{party}{direction}_period"
                 assert period in sensors[key]["state"], f"{plan.code}: {period} has no {key} state"
+
+
+def test_overlapping_seasons_each_find_their_own_chart() -> None:
+    # A season inside "Standard Rates" has its own chart. Tests asking for a day's chart, or a
+    # plan's stored charts, must get the chart of the season that applies that day.
+    plan = find_plan_where(
+        lambda plan: (
+            has_overlapping_seasons(plan)
+            and sum(chart_file(season_chart_name(plan, season)).exists() for season in plan.seasons)
+            > 1
+        )
+    )
+    kept = {
+        season_chart_name(plan, season)
+        for season in plan.seasons
+        if chart_file(season_chart_name(plan, season)).exists()
+    }
+
+    weekday = [(day, chart) for day, chart in stored_charts(plan) if chart.name in kept]
+    assert {chart.name for _, chart in weekday} == kept
+    for day, chart in weekday:
+        assert chart_name(plan, day) == chart.name

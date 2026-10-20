@@ -22,6 +22,7 @@ from custom_components.ecotricity_nz.api import (
     PortalIndicator,
     Rate,
     RateUnit,
+    Season,
 )
 from custom_components.ecotricity_nz.api.parsers import (
     parse_icp,
@@ -43,12 +44,14 @@ from custom_components.ecotricity_nz.const import (
     CONF_PLAN_ID,
     DOMAIN,
 )
+from custom_components.ecotricity_nz.coordinator import _first_day
 from custom_components.ecotricity_nz.tariff import (
     ANYTIME,
     SideRates,
     Slot,
     explain,
     period_for_bucket,
+    season_for,
     side_rates,
 )
 
@@ -164,12 +167,20 @@ def has_extra_network_buckets(plan: Plan) -> bool:
 
 
 def chart_name(plan: Plan, day: date, *, weekend: bool = False, include_gst: bool = False) -> str:
-    """Return the file name of a plan's chart for the season containing a day.
+    """Return the file name of a plan's chart for the season that applies on a day."""
+    season = season_for(plan, day)
+    assert season is not None
+    return season_chart_name(plan, season, weekend=weekend, include_gst=include_gst)
+
+
+def season_chart_name(
+    plan: Plan, season: Season, *, weekend: bool = False, include_gst: bool = False
+) -> str:
+    """Return the file name of a plan's chart for a season.
 
     Built from the plan's own chart template, the way Ecotricity names its charts, so tests don't
     hard-code plan codes and season dates.
     """
-    season = next(season for season in plan.seasons if season.contains(day))
     template = plan.timeframe_chart_weekend if weekend else plan.timeframe_chart_weekday
     assert template is not None
     name = (
@@ -181,16 +192,17 @@ def chart_name(plan: Plan, day: date, *, weekend: bool = False, include_gst: boo
 
 
 def stored_charts(plan: Plan) -> list[tuple[date, Path]]:
-    """Return the first day of each season with a stored chart for the plan, and the chart.
+    """Return the first day each season with a stored chart applies, and the chart.
 
     Only charts that test something no other chart does are kept, so most seasons have none.
     """
     charts = []
     for season in sorted(plan.seasons, key=lambda season: season.start):
+        day = _first_day(plan, season, season.start)
         for weekend in (False, True):
-            chart = chart_file(chart_name(plan, season.start, weekend=weekend))
-            if chart.exists():
-                charts.append((season.start, chart))
+            chart = chart_file(season_chart_name(plan, season, weekend=weekend))
+            if day is not None and chart.exists():
+                charts.append((day, chart))
     return charts
 
 
@@ -352,7 +364,9 @@ def _captured_seasons(plans: PlanList) -> PlanList:
         if not plan.timeframe_chart_weekday or not needs_season(plan.timeframe_chart_weekday):
             return plan
         seasons = tuple(
-            season for season in plan.seasons if chart_file(chart_name(plan, season.start)).exists()
+            season
+            for season in plan.seasons
+            if chart_file(season_chart_name(plan, season)).exists()
         )
         return replace(plan, seasons=seasons)
 

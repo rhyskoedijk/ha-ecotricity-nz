@@ -43,7 +43,14 @@ from custom_components.ecotricity_nz.const import (
     CONF_PLAN_ID,
     DOMAIN,
 )
-from custom_components.ecotricity_nz.tariff import SideRates, Slot, explain, side_rates
+from custom_components.ecotricity_nz.tariff import (
+    ANYTIME,
+    SideRates,
+    Slot,
+    explain,
+    period_for_bucket,
+    side_rates,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # One folder per network, named by its distributor code, holding icp.json where the network has a
@@ -53,9 +60,6 @@ NETWORKS = FIXTURES / "networks"
 # The network and price category most tests run against: the test ICP's.
 DEFAULT_NETWORK = "CKHK"
 DEFAULT_PRICE_CATEGORY = "RLUTOU"
-# Charge codes with a fixed period on every network; any other code is defined by the network.
-ANYTIME = "CHARGE_24"
-FIXED_PERIOD_CODES = frozenset({ANYTIME, "CHARGE_HIGH", "CHARGE_LOW"})
 TEST_ICP = "0000123456AB1C2"
 NZ = ZoneInfo("Pacific/Auckland")
 # Plans in the default fixture, by the kind of pricing a test needs. They're found by their internal
@@ -141,7 +145,7 @@ def extra_network_codes(plan: Plan, day: date) -> list[str]:
         {
             rate.charge
             for rate in import_rates(plan.network_rates, day)
-            if rate.charge and rate.charge not in FIXED_PERIOD_CODES
+            if rate.charge and period_for_bucket(rate.charge) is None
         }
     )
 

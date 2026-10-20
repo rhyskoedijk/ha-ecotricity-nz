@@ -496,8 +496,6 @@ def test_outer_season_first_applies_when_the_season_inside_it_ends() -> None:
 
     assert _first_day(plan, inner, day) == day
     assert _first_day(plan, outer, day) == inner.end + timedelta(days=1)
-    # A plan whose charts don't depend on the season has one set of charts for every day.
-    assert _first_day(plan, None, day) == day
 
 
 def test_season_covered_by_another_for_the_rest_of_its_days_no_longer_applies() -> None:

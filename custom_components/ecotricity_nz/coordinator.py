@@ -504,15 +504,12 @@ def _seasons(plan: Plan, day: date, *, upcoming: bool) -> list[Season | None]:
     return seasons
 
 
-def _first_day(plan: Plan, season: Season | None, day: date) -> date | None:
+def _first_day(plan: Plan, season: Season, day: date) -> date | None:
     """Return the first day from `day` on that a season applies, or None if it no longer does.
 
     An outer season, such as "Standard Rates" all year, doesn't apply while a season inside it
-    does, so its rates are those from when the inner one ends. A plan whose charts don't depend
-    on the season gives None as its season, which applies every day.
+    does, so its rates are those from when the inner one ends.
     """
-    if season is None:
-        return day
     # Which season applies only changes when a season starts or the day after one ends.
     candidates = {max(season.start, day)} | {
         other.end + timedelta(days=1) for other in plan.seasons if other.end >= day
@@ -573,8 +570,12 @@ def _plan_slots(
     seasons: dict[bool, list[DaySlots]] = {}
     errors: list[str] = []
     complete = True
+    # A plan whose charts don't depend on the season (a None season) has one chart, which shows
+    # today's prices, so there's no other season to explain.
     upcoming = [
-        item for item in _seasons(plan, day, upcoming=True) if item != season_for(plan, day)
+        item
+        for item in _seasons(plan, day, upcoming=True)
+        if item is not None and item != season_for(plan, day)
     ]
     for export in (False, True):
         try:
@@ -620,9 +621,13 @@ def _plan_periods(
     sensors stay.
     """
     buckets: set[str] = set(pricing.rate_buckets)
-    for item in _seasons(plan, day, upcoming=True):
-        if (start := _first_day(plan, item, day)) is not None:
-            buckets.update(controlled_prices(plan, start)[0])
+    starts = {day} | {
+        start
+        for item in plan.seasons
+        if item.end >= day and (start := _first_day(plan, item, day)) is not None
+    }
+    for start in starts:
+        buckets.update(controlled_prices(plan, start)[0])
     supplier: set[str] = set()
     network: set[str] = set()
     for export, alignment in ((False, alignments[0]), (True, alignments[1])):

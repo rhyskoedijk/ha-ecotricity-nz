@@ -445,6 +445,55 @@ async def test_chart_templates_without_season_dates(
     assert _state(hass, "current_import_price") != "unavailable"
 
 
+async def test_fixed_chart_plan_has_later_seasons_controlled_periods(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # With one fixed chart, today's is the only chart to explain, once for each side. A later
+    # season's controlled rate needs no chart, so it still has its sensor from now.
+    freezer.move_to(WINTER_PEAK)
+    plan = find_plan(TIME_OF_USE_PLAN)
+    season = next(item for item in plan.seasons if item.contains(WINTER_PEAK.date()))
+    later = next(item for item in plan.seasons if item.start > season.end)
+
+    def fixed(template: str | None) -> str:
+        assert template is not None
+        return template.replace("SSSSSSSS", season.start.strftime("%Y%m%d")).replace(
+            "EEEEEEEE", season.end.strftime("%Y%m%d")
+        )
+
+    night = Rate(
+        id="c1",
+        description="Controlled night",
+        charge="CHARGE_LOW",
+        register_type="CN",
+        unit=RateUnit.PER_KWH,
+        raw_unit="cents/kWh",
+        price=9.0,
+        is_network=False,
+        valid_start=later.start,
+        valid_end=later.end,
+    )
+    fixed_plan = replace(
+        plan,
+        timeframe_chart_weekday=fixed(plan.timeframe_chart_weekday),
+        timeframe_chart_weekend=fixed(plan.timeframe_chart_weekend),
+        retail_rates=(*plan.retail_rates, night),
+    )
+    mock_onboarding.async_get_plans.return_value = PlanList(default=fixed_plan)
+    with patch.object(
+        coordinator_module, "_season_slots", wraps=coordinator_module._season_slots
+    ) as season_slots:
+        await _setup(hass, config_entry, {CONF_PLAN_ID: fixed_plan.id})
+
+    assert season_slots.call_count == 2
+    assert config_entry.runtime_data.pricing.data.tou_error is None
+    assert await _enabled_price(hass, config_entry, entity_registry, "cn_charge_low") == "unknown"
+
+
 @pytest.mark.usefixtures("mock_onboarding")
 async def test_refreshes_after_nz_midnight(
     hass: HomeAssistant,

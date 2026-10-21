@@ -131,6 +131,9 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         attrs_fn=lambda data: {
             "internal_name": data.plan.description,
             "code": data.plan.code,
+            # Here rather than on the current price sensors, which are unavailable, and so show
+            # no attributes, when their own side's charts can't be read.
+            "tou_error": data.tou_error,
         },
     ),
     PricingSensorDescription(
@@ -622,8 +625,6 @@ class CurrentPriceSensor(_HalfHourlyEntity):
         if slot is not None:
             attributes["period"] = self._period(slot.bucket)
             attributes |= self._component_attributes(slot.components, export=self._export)
-        if (error := self.coordinator.data.tou_error) is not None:
-            attributes["tou_error"] = error
         return attributes
 
 

@@ -52,6 +52,6 @@ async def test_diagnostics_redact_personal_data(
     details = diagnostics["pricing"]["icp_details"]
     assert details["network_code"] == DEFAULT_NETWORK
     assert details["icp"] == "**REDACTED**"
-    assert details["address"] == "**REDACTED**"
+    assert "address" not in details
     for secret in (TEST_ICP, "123456", "secret", "Example Road", "900000001", "100001"):
         assert secret not in text

@@ -392,6 +392,23 @@ def side_rates(plan: Plan, day: date, *, export: bool) -> SideRates:
     return SideRates(prefix=prefix, always=tuple(always), supplier=supplier, network=network)
 
 
+def without_export(plan: Plan) -> Plan:
+    """Return the plan without its per-kWh export rates, for an ICP that can't export.
+
+    Plans list export rates whatever the ICP's registers, so without this an ICP with no export
+    register would still have export periods, and its export charts would be checked.
+    """
+
+    def kept(rates: tuple[Rate, ...]) -> tuple[Rate, ...]:
+        return tuple(
+            rate for rate in rates if not (rate.is_export and rate.unit is RateUnit.PER_KWH)
+        )
+
+    return replace(
+        plan, retail_rates=kept(plan.retail_rates), network_rates=kept(plan.network_rates)
+    )
+
+
 def _component(rate: Rate) -> PriceComponent:
     if rate.is_levy:
         kind = ComponentKind.LEVY

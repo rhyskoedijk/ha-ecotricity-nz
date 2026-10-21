@@ -367,10 +367,10 @@ def _fixture_snapshot() -> PricingSnapshot:
 
 def test_snapshot_round_trip() -> None:
     snapshot = _fixture_snapshot()
-    # Through JSON, as Home Assistant's store saves it. Only the unused personal details differ.
+    # Through JSON, as Home Assistant's store saves it.
     assert snapshot.charts
     saved = json.loads(json.dumps(_snapshot_dict(snapshot)))
-    assert _snapshot(saved) == replace(snapshot, icp=replace(snapshot.icp, address="", region=""))
+    assert _snapshot(saved) == snapshot
 
 
 async def test_pricing_saved_in_an_older_format_is_fetched_again(
@@ -404,14 +404,18 @@ async def test_saved_file_leaves_out_unused_personal_details(
     freezer: FrozenDateTimeFactory,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
-    icp = parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
-    assert icp.address
-    assert icp.region
+    raw = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    icp = parse_icp(raw)
+    address = raw["content"]["address"]
+    assert address["street"]
+    assert address["vRegion"]
     await _setup(hass, config_entry)
 
     saved = json.dumps(hass_storage[_storage_key(config_entry)])
-    assert icp.address not in saved
-    assert f'"{icp.region}"' not in saved
+    assert "address" not in saved
+    assert "region" not in saved
+    assert str(address["street"]) not in saved
+    assert f'"{address["vRegion"]}"' not in saved
     # What the sensors show is kept.
     assert TEST_ICP in saved
     for serial in icp.meter_serial_numbers:

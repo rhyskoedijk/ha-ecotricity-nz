@@ -74,9 +74,12 @@ from .tariff import (
     plan_needs_season,
     price_plan_day,
     price_side,
+    rate_periods,
     season_charts,
     season_explained,
     season_for,
+    side_rates,
+    without_export,
 )
 
 if TYPE_CHECKING:
@@ -99,8 +102,9 @@ type EcotricityConfigEntry = ConfigEntry[EcotricityRuntimeData]
 
 @dataclass(frozen=True, slots=True)
 class PlanPeriods:
-    """The periods the plan uses in today's and every upcoming season with readable charts.
+    """The periods the plan uses in any published season, today's, upcoming or ended.
 
+    Upcoming seasons count once their charts can be read, and ended ones from their rates.
     Entities are created from these, so they don't come and go with the seasons.
     """
 
@@ -380,7 +384,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             plans=plans,
             fetched_at=now,
             plan_titles=titles,
-            charts=await self._async_charts(plan, day),
+            charts=await self._async_charts(_pricing_plan(plan, icp), day),
             charts_plan_id=plan.id,
         )
         data = self._price_day(snapshot, day)
@@ -500,7 +504,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                     self._clear_issue(ISSUE_TOU_CHART)
                 return data
         season = season_for(plan, day)
-        priced = price_plan_day(snapshot.charts, plan, day)
+        pricing_plan = _pricing_plan(plan, snapshot.icp)
+        priced = price_plan_day(snapshot.charts, pricing_plan, day)
         slots = priced.slots
         for error in slots.missing:
             LOGGER.debug(
@@ -518,7 +523,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             day=day,
             season=season,
             pricing=priced.pricing,
-            periods=_plan_periods(plan, day, priced),
+            periods=_plan_periods(pricing_plan, day, priced),
             names=bucket_names(plan),
             fetched_at=snapshot.fetched_at,
             tou_error=tou_error,
@@ -545,11 +550,13 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
 
 
 def _plan_periods(plan: Plan, day: date, priced: PlanDay) -> PlanPeriods:
-    """Return the periods the plan uses today or in any later season with readable charts.
+    """Return the periods the plan uses today, in later seasons with readable charts, or before.
 
-    Controlled load needs no charts, so its periods come from every later season's rates. A side
-    whose charts can't be read today has the periods its rates give (`rate_buckets`), so its
-    sensors stay.
+    Controlled load needs no charts, so its periods come from every season's rates. A side whose
+    charts can't be read today has the periods its rates give (`rate_buckets`), so its sensors
+    stay. So does a period only an ended season had (a winter-only peak, say): its charts are no
+    longer downloaded, so its periods come from its rates, and its sensors don't go when it ends
+    only to come back next year.
     """
     slots, alignments, pricing = priced.slots, priced.alignments, priced.pricing
     buckets: set[str] = set(pricing.rate_buckets)
@@ -563,6 +570,7 @@ def _plan_periods(plan: Plan, day: date, priced: PlanDay) -> PlanPeriods:
     }
     for start in starts:
         buckets.update(controlled_prices(plan, start)[0])
+    buckets.update(_ended_periods(plan, day, alignments))
     supplier: set[str] = set()
     network: set[str] = set()
     for export, alignment in ((False, alignments[0]), (True, alignments[1])):
@@ -580,6 +588,28 @@ def _plan_periods(plan: Plan, day: date, priced: PlanDay) -> PlanPeriods:
         export_alignment=alignments[1],
         complete=not slots.later_errors,
     )
+
+
+def _ended_periods(plan: Plan, day: date, alignments: tuple[Alignment, Alignment]) -> set[str]:
+    """Return the periods the rates give in every published season that ended before `day`.
+
+    Its charts are no longer downloaded, so the rates are all there is to go on.
+    """
+    buckets: set[str] = set()
+    for item in plan.seasons:
+        if item.end >= day or (start := first_day(plan, item, item.start)) is None:
+            continue
+        buckets.update(controlled_prices(plan, start)[0])
+        for export, alignment in ((False, alignments[0]), (True, alignments[1])):
+            rates = side_rates(plan, start, export=export)
+            if not rates.is_empty:
+                buckets.update(rate_periods(rates, alignment))
+    return buckets
+
+
+def _pricing_plan(plan: Plan, icp: IcpDetails) -> Plan:
+    """Return the plan as it's priced for the ICP, without export rates if it can't export."""
+    return plan if icp.has_export else without_export(plan)
 
 
 class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):

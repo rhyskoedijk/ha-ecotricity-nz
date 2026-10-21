@@ -51,6 +51,7 @@ from custom_components.ecotricity_nz.tariff import (
     explain,
     first_day,
     period_for_bucket,
+    resolve_bucket,
     season_for,
     side_rates,
 )
@@ -169,6 +170,23 @@ def has_extra_network_buckets(plan: Plan) -> bool:
         and {rate.charge for rate in import_rates(plan.retail_rates, season.start)} == {ANYTIME}
         for season in plan.seasons
     )
+
+
+def season_only_period(plan: Plan) -> tuple[str, Season] | None:
+    """Return an import period that only one season has, and that season.
+
+    A network can charge a peak rate in winter only, so the period has no rate once winter ends.
+    """
+    seasons = sorted(plan.seasons, key=lambda season: (season.start, season.end))
+    buckets = [
+        {resolve_bucket(rate) for rate in import_rates(plan.rates, season.start)}
+        for season in seasons
+    ]
+    for index, season in enumerate(seasons[:-1]):
+        later = set().union(*buckets[index + 1 :])
+        if only := sorted(buckets[index] - later):
+            return only[0], season
+    return None
 
 
 def has_supplier_periods_and_anytime_network(plan: Plan) -> bool:
@@ -426,7 +444,6 @@ def mock_portal() -> Generator[MagicMock]:
     client.async_get_indicator = AsyncMock(
         return_value=PortalIndicator(
             indicator_id="ind",
-            display_name=TEST_ICP,
             last_import=datetime(2026, 4, 6, 3, 6, tzinfo=NZ),
             data_start=datetime(2026, 4, 5, 0, 0, tzinfo=NZ),
             data_end=datetime(2026, 4, 6, 0, 0, tzinfo=NZ),

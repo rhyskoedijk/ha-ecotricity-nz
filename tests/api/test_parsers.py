@@ -51,7 +51,6 @@ def test_parse_icp() -> None:
     assert icp.register_codes == ("UN", "EG", "7304", "7304")
     assert icp.meter_serial_numbers == ("900000001",)
     assert icp.has_export
-    assert icp.address == "1 Example Road, Testville, Sampletown 9999"
 
 
 @pytest.mark.parametrize(
@@ -336,7 +335,6 @@ def test_parse_indicator() -> None:
     indicator = parse_indicator(load_json_fixture("portal_init_data.json"), NZ)
 
     assert indicator.indicator_id == "00000000-0000-0000-0000-000000000001"
-    assert indicator.display_name == TEST_ICP
     assert indicator.data_start == datetime(2026, 3, 1, 0, 0, tzinfo=NZ)
     assert indicator.data_end == datetime(2026, 4, 9, 0, 0, tzinfo=NZ)
     assert indicator.last_import == datetime(2026, 4, 10, 3, 6, 24, 0, tzinfo=NZ)

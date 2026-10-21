@@ -4,8 +4,8 @@ Everything the pricing coordinator fetches from the onboarding site is kept here
 plans (with their seasons and rates), plan names and the chart readings. Prices for any day are
 worked out from this, so nothing needs fetching again until Ecotricity might have changed it.
 
-Personal details no entity uses are left out of the file: the ICP's address and region are
-saved blank. The ICP number and meter serial numbers are kept, because sensors show them.
+Personal details no entity uses, such as the ICP's address, aren't parsed, so they never reach
+the file. The ICP number and meter serial numbers are kept, because sensors show them.
 """
 
 from __future__ import annotations
@@ -150,9 +150,6 @@ def _icp_dict(icp: IcpDetails) -> dict[str, Any]:
         "price_category_description": icp.price_category_description,
         "retailer_code": icp.retailer_code,
         "retailer_name": icp.retailer_name,
-        # Not used by any entity, so not written to disk. Loaded back as blank.
-        "address": "",
-        "region": "",
         "meter_type": icp.meter_type,
         "channels": [
             {
@@ -181,8 +178,6 @@ def _icp(raw: dict[str, Any]) -> IcpDetails:
         price_category_description=raw["price_category_description"],
         retailer_code=raw["retailer_code"],
         retailer_name=raw["retailer_name"],
-        address=raw["address"],
-        region=raw["region"],
         meter_type=raw["meter_type"],
         channels=tuple(
             MeterChannel(

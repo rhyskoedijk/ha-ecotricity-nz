@@ -50,6 +50,7 @@ from custom_components.ecotricity_nz.tariff import (
     season_for,
     season_slots,
     side_rates,
+    without_export,
 )
 from tests.conftest import (
     ANYTIME_PLAN,
@@ -1059,3 +1060,22 @@ def test_solar_plan_export_prices() -> None:
     for slot in priced.slots.all:
         assert slot.price == pytest.approx(sum(part.price for part in slot.components))
         assert slot.price < 0
+
+
+def test_plan_without_export_keeps_import_and_daily_rates() -> None:
+    # For an ICP with no export register: its plan still lists export rates, which go, while
+    # import, controlled load and every daily charge stay.
+    plan = find_plan(SOLAR_PLAN)
+    day = plan.seasons[0].start
+    assert not side_rates(plan, day, export=True).is_empty
+    export_daily = Rate("Export meter", None, "EG", RateUnit.PER_DAY, 10.0, is_network=False)
+    plan = replace(plan, retail_rates=(*plan.retail_rates, export_daily))
+
+    stripped = without_export(plan)
+
+    assert side_rates(stripped, day, export=True).is_empty
+    assert side_rates(stripped, day, export=False) == side_rates(plan, day, export=False)
+    assert export_daily in stripped.rates
+    assert [rate for rate in plan.rates if rate not in stripped.rates] == [
+        rate for rate in plan.rates if rate.is_export and rate.unit is RateUnit.PER_KWH
+    ]

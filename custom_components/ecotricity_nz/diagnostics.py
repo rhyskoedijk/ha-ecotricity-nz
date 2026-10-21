@@ -18,11 +18,8 @@ TO_REDACT = {
     CONF_ACCOUNT_NUMBER,
     CONF_PASSWORD,
     CONF_ICP,
-    "address",
-    "region",
     "serial_number",
     "indicator_id",
-    "display_name",
     "title",
     "unique_id",
 }

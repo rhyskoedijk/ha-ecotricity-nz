@@ -63,6 +63,7 @@ from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.sensor import BucketPriceSensor
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
 from custom_components.ecotricity_nz.tariff import (
+    EXPORT_PREFIX,
     day_slots,
     plan_alignment,
     price_side,
@@ -90,6 +91,7 @@ from tests.conftest import (
     import_rates,
     load_network_fixture,
     plan_id,
+    season_only_period,
     stored_charts,
 )
 
@@ -135,6 +137,7 @@ async def test_pricing_sensors(
     plan = hass.states.get(f"{PREFIX}_plan")
     assert plan is not None
     assert plan.attributes["internal_name"] == "Low Off Peak"
+    assert plan.attributes["tou_error"] is None
 
     # 11:05am is off peak, and the price changes at the half-hour boundary without a poll.
     freezer.move_to(WINTER_PEAK + timedelta(hours=2, minutes=50))
@@ -590,6 +593,8 @@ async def test_unreadable_chart_leaves_price_unavailable(
 
     assert _state(hass, "current_import_price") == "unavailable"
     assert _state(hass, "current_import_period") == "unavailable"
+    # The price sensor is unavailable, so the plan sensor, which isn't, says why.
+    assert "Import:" in _extra(hass, "plan")["tou_error"]
     # The daily charge doesn't need the chart.
     assert float(_state(hass, "daily_charge")) == pytest.approx(1.7825)
 
@@ -785,9 +790,7 @@ async def test_portal_without_data_yet(
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     indicator = mock_portal.async_get_indicator.return_value
-    mock_portal.async_get_indicator.return_value = type(indicator)(
-        indicator_id="ind", display_name=TEST_ICP
-    )
+    mock_portal.async_get_indicator.return_value = type(indicator)(indicator_id="ind")
     await _setup(hass, portal_config_entry)
 
     assert _state(hass, "latest_day_imported") == "unknown"
@@ -1139,6 +1142,108 @@ async def test_stale_price_sensors_are_removed_at_setup(
 
     assert entity_registry.async_get(stale.entity_id) is None
     assert entity_registry.async_get(other.entity_id) is not None
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_price_sensor_for_a_period_only_an_ended_season_has_is_kept(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A network can charge a peak rate in winter only. Once winter ends, its sensor stays, rather
+    # than being removed and coming back disabled next winter with the user's settings lost.
+    plan = find_plan(ANYTIME_PLAN)
+    found = season_only_period(plan)
+    assert found is not None
+    bucket, season = found
+    freezer.move_to(datetime.combine(season.end, time(12), NZ))
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan.id})
+    unique_id = f"{TEST_ICP}_price_{sensor_module._slug(bucket)}"
+    entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+    assert entity_id is not None
+    entity_registry.async_update_entity(entity_id, name="My peak price")
+
+    freezer.move_to(datetime.combine(season.end + timedelta(days=1), time(0, 1), NZ))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    data = config_entry.runtime_data.pricing.data
+    assert data.day == season.end + timedelta(days=1)
+    assert data.tou_error is None
+    assert data.periods.complete
+    assert bucket in data.periods.buckets
+    kept = entity_registry.async_get(entity_id)
+    assert kept is not None
+    assert kept.name == "My peak price"
+
+
+async def test_icp_without_an_export_register_has_no_export_periods(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    entity_registry: er.EntityRegistry,
+    issue_registry: ir.IssueRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Plans list export rates whatever the ICP's registers. Without an export register, there are
+    # no export period sensors, and export charts the rates don't explain are no error.
+    freezer.move_to(WINTER_PEAK)
+    plan = find_plan(SOLAR_PLAN)
+    assert any(rate.is_export and rate.is_network for rate in plan.rates)
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(
+        icp, channels=tuple(channel for channel in icp.channels if channel.register_code != "EG")
+    )
+
+    def read(data: bytes) -> ChartReading:
+        reading = read_chart(data)
+        wrong = tuple(replace(entry, text="-99.99") for entry in reading.export_entries)
+        return replace(reading, export_entries=wrong)
+
+    with patch.object(coordinator_module, "read_chart", side_effect=read):
+        await _setup(hass, config_entry, {CONF_PLAN_ID: plan.id})
+        coordinator = config_entry.runtime_data.pricing
+        for _ in range(FAILURE_ISSUE_THRESHOLD):
+            assert await coordinator.async_fetch_now()
+
+    data = coordinator.data
+    assert data.tou_error is None
+    assert data.pricing.export_side is None
+    assert not any(bucket.startswith(EXPORT_PREFIX) for bucket in data.periods.buckets)
+    assert _state(hass, "current_import_period") == "peak"
+    unique_ids = [
+        entry.unique_id
+        for entry in er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
+    ]
+    assert not [unique_id for unique_id in unique_ids if "export" in unique_id]
+    assert not [unique_id for unique_id in unique_ids if "_price_eg_" in unique_id]
+    issue_id = f"tou_chart_unreadable_{config_entry.entry_id}"
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_removed_half_hourly_sensor_stops_updating(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    coordinator = config_entry.runtime_data.pricing
+    listeners = len(coordinator._half_hour_listeners)
+    entity_id = f"{PREFIX}_current_import_period"
+    assert entity_registry.async_get(entity_id) is not None
+
+    entity_registry.async_remove(entity_id)
+    await hass.async_block_till_done()
+    assert len(coordinator._half_hour_listeners) == listeners - 1
+
+    freezer.tick(timedelta(minutes=30))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id) is None
 
 
 @pytest.mark.usefixtures("new_season_charts")
@@ -2308,7 +2413,8 @@ async def test_export_chart_mismatch_keeps_import_windows(
 
     assert _state(hass, "current_import_period") == "peak"
     assert _state(hass, "current_export_period") == "unavailable"
-    assert "Export:" in _extra(hass, "current_import_price")["tou_error"]
+    assert "Export:" in _extra(hass, "plan")["tou_error"]
+    assert "tou_error" not in _extra(hass, "current_import_price")
 
 
 def _import_legend(plan: Plan, day: date, *windows: tuple[int, int, str, str]) -> tuple:

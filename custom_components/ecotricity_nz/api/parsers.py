@@ -106,8 +106,6 @@ def parse_icp(payload: Any) -> IcpDetails:
             price_category_description=str(category.get("description", "")),
             retailer_code=str(retailer.get("code", "")),
             retailer_name=str(retailer.get("description", "")),
-            address=_format_address(content.get("address") or {}),
-            region=str((content.get("address") or {}).get("vRegion", "")),
             meter_type=meter_type,
             channels=tuple(channels),
             smart_meter=smart_meter,
@@ -133,26 +131,6 @@ def _parse_registry_date(value: Any) -> date | None:
     if parsed is None or parsed.year in (1900, 9999):
         return None
     return parsed
-
-
-def _format_address(address: dict[str, Any]) -> str:
-    unit = str(address.get("unit") or "").strip()
-    number = str(address.get("number") or "").strip()
-    street = str(address.get("street") or "").strip().title()
-    first = " ".join(part for part in (f"{unit}/" if unit else "", number, street) if part)
-    parts = [
-        first.replace("/ ", "/"),
-        str(address.get("suburb") or "").strip().title(),
-        " ".join(
-            part
-            for part in (
-                str(address.get("town") or "").strip().title(),
-                str(address.get("postCode") or "").strip(),
-            )
-            if part
-        ),
-    ]
-    return ", ".join(part for part in parts if part)
 
 
 def _rate_unit(raw: str) -> RateUnit:
@@ -350,7 +328,6 @@ def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
 
     return PortalIndicator(
         indicator_id=indicator_id,
-        display_name=str(indicator.get("displayName") or ""),
         last_import=last_import,
         data_start=min(starts, default=None),
         data_end=max(ends, default=None),

@@ -185,8 +185,6 @@ class IcpDetails:
     price_category_description: str
     retailer_code: str
     retailer_name: str
-    address: str
-    region: str
     meter_type: str | None
     channels: tuple[MeterChannel, ...] = ()
     smart_meter: bool | None = None
@@ -219,8 +217,6 @@ class PortalIndicator:
     """The portal's metering indicator for an ICP, with the range of data it holds."""
 
     indicator_id: str
-    display_name: str
-    """The ICP number."""
     last_import: datetime | None = None
     """When the portal last imported meter data."""
     data_start: datetime | None = None

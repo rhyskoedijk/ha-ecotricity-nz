@@ -27,7 +27,7 @@ With both, the integration identifies itself with a User-Agent of `HomeAssistant
 
 - Entity IDs include your ICP number (for example `sensor.icp_0000123456ab1c2_current_import_price`), and so does the device name. Keep that in mind when sharing screenshots, dashboards, automations or logs.
 - Sensors and their attributes include your network, price category, plan and meter details, including the meter's serial number, but not your address.
-- The pricing fetched from Ecotricity is saved in `.storage/ecotricity_nz.<entry_id>.pricing`, so it keeps working offline. It includes your ICP number and meter serial numbers, because sensors show them, but not your address or region, which no sensor uses. It holds no credentials. It's deleted when you delete the entry, and it's included in Home Assistant backups like the rest of `.storage`.
+- The pricing fetched from Ecotricity is saved in `.storage/ecotricity_nz.<entry_id>.pricing`, so it keeps working offline. It includes your ICP number and meter serial numbers, because sensors show them, but not your address or region, which no sensor uses, so they aren't read from Ecotricity's response at all. It holds no credentials. It's deleted when you delete the entry, and it's included in Home Assistant backups like the rest of `.storage`.
 
 ## Reporting a vulnerability
 

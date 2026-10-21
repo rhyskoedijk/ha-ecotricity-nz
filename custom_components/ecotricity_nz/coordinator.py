@@ -362,12 +362,21 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         )
         data = self._price_day(snapshot, day)
         if data.missing_charts:
-            # Counted per plan, so choosing another starts again.
+            # Counted per plan and gap, so choosing another plan starts again, and so does a gap
+            # the last fetch didn't have (a later season's missing chart that now prices today).
             saved = self._snapshot
             previous = (
-                saved.missing_chart_fetches if saved and saved.charts_plan_id == plan.id else 0
+                saved.missing_chart_fetches
+                if saved
+                and saved.charts_plan_id == plan.id
+                and set(data.missing_charts) <= set(saved.missing_charts)
+                else 0
             )
-            snapshot = replace(snapshot, missing_chart_fetches=previous + 1)
+            snapshot = replace(
+                snapshot,
+                missing_charts=data.missing_charts,
+                missing_chart_fetches=previous + 1,
+            )
             # The count doesn't change the prices, so they needn't be worked out again.
             self._priced = (snapshot, day, data)
         self._snapshot = snapshot

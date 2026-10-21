@@ -67,6 +67,7 @@ from custom_components.ecotricity_nz.tariff import (
     plan_alignment,
     price_side,
     resolve_bucket,
+    season_for,
     side_rates,
 )
 from tests.conftest import (
@@ -278,6 +279,37 @@ async def test_missing_chart_retries_carry_on_after_a_restart(
     fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=3)
 
     assert fetched == [True, False, False]
+
+
+async def test_missing_chart_retries_start_again_for_a_new_gap(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The next season's charts are missing for weeks, using up their retries. Once that season
+    # starts, today's prices depend on them, which is a new gap, so it gets retries of its own.
+    freezer.move_to(datetime(2026, 9, 15, 0, 0, tzinfo=UTC))
+    next_season = season_for(find_plan(ANYTIME_PLAN), date(2026, 10, 1))
+    assert next_season is not None
+    serve = mock_onboarding.async_get_chart.side_effect
+
+    def next_season_missing(path: str) -> bytes:
+        if next_season.start.strftime("%Y%m%d") in path:
+            raise EcotricityConnectionError("down")
+        return serve(path)
+
+    mock_onboarding.async_get_chart.side_effect = next_season_missing
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
+    coordinator = config_entry.runtime_data.pricing
+    assert coordinator.data.missing_charts
+    until = (next_season.start - date(2026, 9, 15)).days
+    await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=until)
+    assert coordinator.data.day == next_season.start
+
+    fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=4)
+
+    assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
 
 
 async def test_missing_chart_retries_start_again_once_the_chart_has_been_read(
@@ -1423,6 +1455,30 @@ async def test_daily_charge_components_are_attributes_only(
     entry = entity_registry.async_get(f"{PREFIX}_daily_charge")
     assert entry is not None
     assert entry.options["sensor"]["suggested_display_precision"] == 4
+
+
+async def test_daily_charge_leaves_out_items_priced_at_nothing(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    plan = find_plan(TIME_OF_USE_PLAN)
+    free_metering = replace(
+        plan,
+        retail_rates=tuple(
+            replace(rate, price=0.0)
+            if rate.unit is RateUnit.PER_DAY and "meter" in rate.description.lower()
+            else rate
+            for rate in plan.retail_rates
+        ),
+    )
+    assert free_metering != plan
+    mock_onboarding.async_get_plans.return_value = PlanList(default=free_metering)
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan.id})
+
+    assert set(_extra(hass, "daily_charge")) == {"supplier_rate", "network_rate"}
 
 
 @pytest.mark.usefixtures("mock_onboarding")

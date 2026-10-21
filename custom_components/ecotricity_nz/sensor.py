@@ -702,7 +702,7 @@ class CurrentPeriodSensor(_HalfHourlyEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """List today's windows, for example "07:00-11:00 peak"."""
         side = self._side(export=self._export)
-        if side is None:
+        if side is None:  # pragma: no cover - unavailable without it, so attributes aren't read
             return None
         day = side.slots.day(dt_util.now(self._local_tz))
         return {

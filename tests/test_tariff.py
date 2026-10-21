@@ -467,12 +467,12 @@ def test_fixture_clipped_price_is_settled_by_its_bar() -> None:
 
 
 def test_one_price_all_day_needs_no_chart() -> None:
-    rates = side_rates(
-        _plan(_supplier("CHARGE_24", 25.0), _network("CHARGE_24", 5.0)), SPRING, export=False
-    )
-    slots = day_slots(rates, None, None, export=False)
+    plan = _plan(_supplier("CHARGE_24", 25.0), _network("CHARGE_24", 5.0))
+    slots, gap = season_slots({}, plan, season_for(plan, SPRING), SPRING, export=False)
 
+    assert slots is not None
     assert {slot.price for slot in slots.all} == {30.0}
+    assert gap is None
 
 
 def _peak_only_network_export() -> SideRates:
@@ -764,6 +764,16 @@ def test_plan_with_one_set_of_charts_has_no_seasons_for_them() -> None:
     assert season_charts(plan, None) == ["/charts/X-WD-NOGST.png", "/charts/X-WE-NOGST.png"]
 
 
+def test_weekday_and_weekend_sharing_a_chart_download_it_once() -> None:
+    plan = replace(
+        _peak_only_network_export_plan(SPRING_SEASON),
+        timeframe_chart_weekday="/charts/X.png",
+        timeframe_chart_weekend="/charts/X.png",
+    )
+
+    assert season_charts(plan, None) == ["/charts/X-NOGST.png"]
+
+
 def test_fixture_charts_agree_where_one_network_rate_is_taken_to_apply_all_day() -> None:
     # Without a chart, a side whose network has one time-of-use rate gets that rate all day;
     # every fixture chart of such a side shows that price all day too.
@@ -903,10 +913,9 @@ def test_split_is_decided_across_seasons() -> None:
 def test_split_side_with_one_price_all_day_in_a_season() -> None:
     # A side that's split in other seasons can have a season with one anytime price, where
     # neither Ecotricity nor the network has periods; it's labelled anytime.
-    rates = side_rates(
-        _plan(_supplier("CHARGE_24", 20.0), _network("CHARGE_24", 2.0)), SPRING, export=False
-    )
-    flat = day_slots(rates, None, None, export=False)
+    plan = _plan(_supplier("CHARGE_24", 20.0), _network("CHARGE_24", 2.0))
+    flat, _gap = season_slots({}, plan, season_for(plan, SPRING), SPRING, export=False)
+    assert flat is not None
     priced = price_side(flat, Alignment.SPLIT)
 
     assert {slot.bucket for slot in priced.slots.all} == {"CHARGE_24"}
@@ -932,6 +941,31 @@ def test_controlled_rates_are_priced_separately() -> None:
     assert pricing.controlled_buckets == {"CN_CHARGE_LOW": pytest.approx(23.2)}
     kinds = [part.kind.value for part in pricing.controlled_components["CN_CHARGE_LOW"]]
     assert kinds == ["supplier", "supplier", "network", "levy"]
+
+
+def test_levy_on_the_controlled_register_is_added_once() -> None:
+    plan = _plan(
+        _rate(description="Controlled", charge="CHARGE_24", register_type="CN", price=12.0),
+        _rate(description="EA Levy", charge="CHARGE_24", register_type="CN", price=0.2),
+    )
+    pricing = price_day(plan, SPRING, None, None)
+
+    assert pricing.controlled_buckets == {"CN_CHARGE_24": pytest.approx(12.2)}
+    kinds = [part.kind.value for part in pricing.controlled_components["CN_CHARGE_24"]]
+    assert kinds == ["supplier", "levy"]
+
+
+def test_levy_on_the_export_register_is_left_out_of_export_prices() -> None:
+    # Levies are charged on imported energy, never taken off export credits.
+    plan = _plan(
+        _supplier("CHARGE_24", -16.0, register_type="EG"),
+        _rate(description="EA Levy", charge="CHARGE_24", register_type="EG", price=0.2),
+    )
+    flat = side_rates(plan, SPRING, export=True).flat()
+
+    assert flat is not None
+    assert flat.price == pytest.approx(-16.0)
+    assert [part.kind.value for part in flat.components] == ["supplier"]
 
 
 def _peak_slots(*peak: int) -> DaySlots:

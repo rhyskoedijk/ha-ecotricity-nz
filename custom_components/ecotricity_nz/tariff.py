@@ -486,14 +486,12 @@ def explain(entries: Sequence[LegendEntry], rates: SideRates) -> tuple[Slot, ...
 def day_slots(
     rates: SideRates, weekday: ChartReading | None, weekend: ChartReading | None, *, export: bool
 ) -> DaySlots:
-    """Return one side's half-hours for a weekday and a weekend day.
+    """Return one side's half-hours for a weekday and a weekend day, from its charts.
 
-    A side with one possible price all day needs no chart. Raises ChartReadError if the charts
-    are needed but missing, or can't be explained. `season_slots` decides when a side whose one
-    network rate likely applies all day can do without them.
+    Raises ChartReadError if the charts are missing, or can't be explained. `season_slots`
+    decides when a side can do without them: one with one possible price all day, or whose one
+    network rate likely applies all day.
     """
-    if (flat := rates.flat()) is not None:
-        return _all_day(flat)
     if weekday is None or weekend is None:
         raise ChartReadError("The plan's charts for the season couldn't be downloaded or read")
     weekday_entries = weekday.export_entries if export else weekday.import_entries

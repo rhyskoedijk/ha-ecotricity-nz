@@ -153,6 +153,11 @@ def extra_network_codes(plan: Plan, day: date) -> list[str]:
     )
 
 
+def has_capacity_charge(plan: Plan) -> bool:
+    """A fixed network charge per kVA of the connection's capacity, not per day."""
+    return any(rate.unit is RateUnit.OTHER and rate.price for rate in plan.network_rates)
+
+
 def has_extra_network_buckets(plan: Plan) -> bool:
     """One anytime retail import rate, and network rates in more periods than peak and off-peak.
 

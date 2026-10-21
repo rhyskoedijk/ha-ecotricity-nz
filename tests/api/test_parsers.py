@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.ecotricity_nz.api import (
+    ConsumptionData,
     EcotricityResponseError,
     IcpNotFoundError,
     RateUnit,
@@ -214,7 +215,6 @@ def test_parse_values_across_dst_end() -> None:
     assert starts[0] == datetime(2026, 4, 4, 11, 0, tzinfo=UTC)
     assert data.imported_kwh[-1].end == datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
     assert data.imported_kwh[0].value == pytest.approx(0.5)
-    assert not data.is_empty
 
 
 def test_parse_values_skips_bad_items() -> None:
@@ -247,7 +247,7 @@ def test_parse_values_skips_bad_items() -> None:
     }
     data = parse_values(payload, NZ)
     assert [reading.value for reading in data.imported_kwh] == [2.0]
-    assert parse_values({}, NZ).is_empty
+    assert parse_values({}, NZ) == ConsumptionData()
     with pytest.raises(EcotricityResponseError):
         parse_values([], NZ)
 

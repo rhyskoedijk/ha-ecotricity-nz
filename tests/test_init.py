@@ -312,6 +312,65 @@ async def test_missing_chart_retries_start_again_for_a_new_gap(
     assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
 
 
+async def test_missing_chart_retries_carry_on_when_the_chart_stops_matching_instead(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The same side and season's chart, first not downloaded and then not matching the rates,
+    # is one gap, so it doesn't get a fresh set of retries.
+    freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    serve = mock_onboarding.async_get_chart.side_effect
+    mock_onboarding.async_get_chart.side_effect = EcotricityConnectionError("down")
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
+    coordinator = config_entry.runtime_data.pricing
+    assert any("couldn't be downloaded" in gap for gap in coordinator.data.missing_charts)
+    fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=1)
+
+    mock_onboarding.async_get_chart.side_effect = serve
+    stale = ChartReading(import_entries=(LegendEntry(0, 1440, "99.99"),), export_entries=())
+    with patch.object(coordinator_module, "read_chart", return_value=stale):
+        fetched += await _daily_fetches(
+            hass, coordinator, mock_onboarding, freezer, days=PRICING_MISSING_CHART_RETRIES
+        )
+        assert any("doesn't match" in gap for gap in coordinator.data.missing_charts)
+
+    assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
+
+
+async def test_missing_chart_retries_start_again_for_a_gap_alongside_one_still_missing(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The import chart stays stale. For one fetch the export one is too, a new gap that gets
+    # retries of its own; once it reads again, the gap left is one already counted.
+    freezer.move_to(datetime(2026, 10, 15, 0, 0, tzinfo=UTC))
+    stale = (LegendEntry(0, 1440, "99.99"),)
+    stale_export = False
+
+    def read(data: bytes) -> ChartReading:
+        reading = replace(read_chart(data), import_entries=stale)
+        return replace(reading, export_entries=stale) if stale_export else reading
+
+    with patch.object(coordinator_module, "read_chart", side_effect=read):
+        await _setup(hass, config_entry, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)})
+        coordinator = config_entry.runtime_data.pricing
+        assert [gap.split(":")[0] for gap in coordinator.data.missing_charts] == ["Import"]
+        stale_export = True
+        fetched = await _daily_fetches(hass, coordinator, mock_onboarding, freezer, days=1)
+        assert len(coordinator.data.missing_charts) == 2
+        stale_export = False
+        fetched += await _daily_fetches(
+            hass, coordinator, mock_onboarding, freezer, days=PRICING_MISSING_CHART_RETRIES + 1
+        )
+
+    # Without the new gap, the fetch after the first would have been the last of three retries.
+    assert fetched == [True] * (PRICING_MISSING_CHART_RETRIES + 1) + [False]
+
+
 async def test_missing_chart_retries_start_again_once_the_chart_has_been_read(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -432,6 +491,30 @@ async def test_unlisted_plan_falls_back_and_raises_issue(
     assert not issue_registry.async_get_issue(DOMAIN, issue_id)
 
 
+async def test_options_flow_offers_the_plan_in_use_when_the_saved_one_is_unlisted(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The repair issue sends people to the options, which must still submit with only GST
+    # changed, so the plan defaults to the one in use rather than the unlisted one.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry, {CONF_PLAN_ID: "9999"})
+    in_use = config_entry.runtime_data.pricing.data.plan
+
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    defaults = {str(key): key.default() for key in result["data_schema"].schema}
+    assert defaults[CONF_PLAN_ID] == in_use.id
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_INCLUDE_GST: False}
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert config_entry.options == {CONF_INCLUDE_GST: False, CONF_PLAN_ID: in_use.id}
+    assert mock_onboarding.async_get_plans.await_count
+
+
 @pytest.mark.parametrize("error", [AttestationError("blocked"), EcotricityConnectionError("down")])
 async def test_setup_retries_on_errors(
     hass: HomeAssistant,
@@ -518,7 +601,12 @@ async def test_unreadable_chart_leaves_price_unavailable(
     assert not issue_registry.async_get_issue(DOMAIN, issue_id)
     for _ in range(FAILURE_ISSUE_THRESHOLD - 1):
         await coordinator.async_fetch_now()
-    assert issue_registry.async_get_issue(DOMAIN, issue_id)
+    issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    # Named as everywhere else the user sees a plan, not by its internal description.
+    plan = coordinator.data.plan
+    assert plan.name != plan.description
+    assert issue.translation_placeholders == {"plan": plan.name}
 
 
 async def test_unreadable_chart_prices_periods_from_the_rates(
@@ -670,6 +758,30 @@ async def test_refreshes_after_nz_midnight(
     # The new season comes from the saved pricing. Fetching waits for the daily check.
     assert mock_onboarding.async_get_icp.await_count == calls
     assert _state(hass, "pricing_season") == "Seasonal Rates 10/2026 - 12/2026"
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_half_hourly_sensors_show_the_new_day_at_midnight(
+    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    # The half-hourly sensors tick at midnight itself, before the midnight refresh, so they
+    # work out the new day rather than show the old season's next change.
+    freezer.move_to(datetime(2026, 9, 30, 10, 50, tzinfo=UTC))  # 11:50pm NZDT
+    await _setup(hass, config_entry)
+    coordinator = config_entry.runtime_data.pricing
+
+    freezer.move_to(datetime(2026, 9, 30, 11, 0, tzinfo=UTC))  # NZ midnight
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert coordinator.data.day == date(2026, 10, 1)
+    at_midnight = _state(hass, "next_import_period_change")
+    assert _state(hass, "pricing_season") == "Seasonal Rates 10/2026 - 12/2026"
+
+    freezer.move_to(datetime(2026, 9, 30, 11, 0, 6, tzinfo=UTC))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert at_midnight != "unknown"
+    assert _state(hass, "next_import_period_change") == at_midnight
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -1685,6 +1797,23 @@ async def test_generation_capacity_sensor_shows_recorded_capacity(
     await _setup(hass, config_entry)
 
     assert float(_state(hass, "registered_generation_capacity")) == 5.5
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_next_period_change_moves_on_at_the_half_hour(
+    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    # Peak until 11am, then off-peak until 5pm, from the same pricing.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    assert _state(hass, "next_import_period_change") == "2026-06-14T23:00:00+00:00"
+
+    freezer.move_to(datetime(2026, 6, 14, 23, 0, tzinfo=UTC))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert _state(hass, "next_import_period_change") == "2026-06-15T05:00:00+00:00"
+    assert _extra(hass, "next_import_period_change")["period"] == "peak"
 
 
 @pytest.mark.usefixtures("mock_onboarding")

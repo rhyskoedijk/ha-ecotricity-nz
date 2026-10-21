@@ -250,11 +250,6 @@ class ConsumptionData:
     exported_kwh: tuple[IntervalReading, ...] = field(default_factory=tuple)
     carbon_savings_kg: tuple[IntervalReading, ...] = field(default_factory=tuple)
 
-    @property
-    def is_empty(self) -> bool:
-        """Return True when no series has any readings."""
-        return not (self.imported_kwh or self.exported_kwh or self.carbon_savings_kg)
-
 
 def normalise_plan_name(text: str) -> str:
     """Normalise a plan name for matching: case-insensitive, with whitespace collapsed."""

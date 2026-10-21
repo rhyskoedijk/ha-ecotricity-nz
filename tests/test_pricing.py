@@ -360,7 +360,7 @@ def _fixture_snapshot() -> PricingSnapshot:
         plan_titles=titles,
         charts={"/chart.png": read_chart(chart.read_bytes())},
         charts_plan_id=plan_id(TIME_OF_USE_PLAN),
-        missing_charts=("Export: The chart has no export windows",),
+        chart_gaps=("Export today in 2026-06-01",),
         missing_chart_fetches=2,
     )
 
@@ -420,11 +420,11 @@ async def test_saved_file_leaves_out_unused_personal_details(
 
 def test_snapshot_saved_before_missing_charts_were_counted_starts_counting_again() -> None:
     saved = json.loads(json.dumps(_snapshot_dict(_fixture_snapshot())))
-    del saved["missing_charts"]
+    del saved["chart_gaps"]
     del saved["missing_chart_fetches"]
 
     restored = _snapshot(saved)
-    assert restored.missing_charts == ()
+    assert restored.chart_gaps == ()
     assert restored.missing_chart_fetches == 0
 
 

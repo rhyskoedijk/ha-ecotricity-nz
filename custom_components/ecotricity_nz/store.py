@@ -57,8 +57,9 @@ class PricingSnapshot:
     """Chart readings by chart path."""
     charts_plan_id: str | None = None
     """The plan the charts were downloaded for."""
-    missing_charts: tuple[str, ...] = ()
-    """What this fetch left missing (see `PricingData.missing_charts`), on the day it was made."""
+    chart_gaps: tuple[str, ...] = ()
+    """The side and season of each chart this fetch left missing (see `PlanSlots.gaps`), on the
+    day it was made."""
     missing_chart_fetches: int = 0
     """How many fetches in a row, up to and including this one, left charts missing, counted
     from the last that found a new gap."""
@@ -106,7 +107,7 @@ def _snapshot_dict(snapshot: PricingSnapshot) -> dict[str, Any]:
         "plan_titles": dict(snapshot.plan_titles),
         "charts": {path: _chart_dict(chart) for path, chart in snapshot.charts.items()},
         "charts_plan_id": snapshot.charts_plan_id,
-        "missing_charts": list(snapshot.missing_charts),
+        "chart_gaps": list(snapshot.chart_gaps),
         "missing_chart_fetches": snapshot.missing_chart_fetches,
     }
 
@@ -128,7 +129,7 @@ def _snapshot(raw: dict[str, Any]) -> PricingSnapshot:
         charts={str(path): _chart(chart) for path, chart in raw["charts"].items()},
         charts_plan_id=raw["charts_plan_id"],
         # Files saved before the count was kept don't have it, or the gaps.
-        missing_charts=tuple(str(gap) for gap in raw.get("missing_charts", ())),
+        chart_gaps=tuple(str(gap) for gap in raw.get("chart_gaps", ())),
         missing_chart_fetches=int(raw.get("missing_chart_fetches", 0)),
     )
 

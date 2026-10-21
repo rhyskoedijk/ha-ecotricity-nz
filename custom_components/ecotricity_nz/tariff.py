@@ -174,8 +174,9 @@ def _prefix_for(rate: Rate) -> str:
 def resolve_bucket(rate: Rate) -> str:
     """Return the bucket code for a rate: its charge code, with the group's prefix.
 
-    Every published rate has a charge code. A controlled rate without one applies whenever the
-    network switches the load on, so it's anytime; any other is bucketed by its description.
+    Every published per-kWh rate has a charge code. A controlled rate without one applies
+    whenever the network switches the load on, so it's anytime; any other is bucketed by its
+    description.
     """
     prefix = _prefix_for(rate)
     if code := (rate.charge or "").strip().upper():
@@ -911,6 +912,9 @@ class PlanSlots:
     charts are missing, or don't match the plan's rates."""
     later_errors: tuple[str, ...]
     """Why a later season was left out."""
+    gaps: tuple[str, ...] = ()
+    """One key for each of `missing`, naming its side and season but not why, so it stays the
+    same while the chart goes from missing to not matching."""
 
     def seasons(self, *, export: bool) -> list[DaySlots]:
         """Return today's half-hours, where there are any, and every later season's."""
@@ -938,6 +942,7 @@ def plan_slots(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> Pla
     later: dict[bool, list[DaySlots]] = {}
     errors: list[str] = []
     missing: list[str] = []
+    gaps: list[str] = []
     later_errors: list[str] = []
     for export in (False, True):
         side = "Export" if export else "Import"
@@ -948,6 +953,9 @@ def plan_slots(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> Pla
             errors.append(f"{side}: {err}")
         if gap is not None:
             missing.append(f"{side}: {gap}")
+            # Today's gap is keyed apart from the same season's while it was still to come, as
+            # today's prices now depend on it.
+            gaps.append(f"{side} today" + (f" in {season.start.isoformat()}" if season else ""))
         later[export] = []
         for item, start in upcoming:
             try:
@@ -957,9 +965,10 @@ def plan_slots(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> Pla
                 continue
             if gap is not None:
                 missing.append(f"{side} from {start.isoformat()}: {gap}")
+                gaps.append(f"{side} from {start.isoformat()}")
             if slots is not None:
                 later[export].append(slots)
-    return PlanSlots(today, later, tuple(errors), tuple(missing), tuple(later_errors))
+    return PlanSlots(today, later, tuple(errors), tuple(missing), tuple(later_errors), tuple(gaps))
 
 
 def side_alignment(

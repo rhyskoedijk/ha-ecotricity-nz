@@ -590,6 +590,7 @@ class _HalfHourlyEntity(_PricingEntity):
     @callback
     def _tick(self, _now: datetime) -> None:
         self._unsub_tick = None
+        self.coordinator.async_ensure_today()
         self.async_write_ha_state()
         self._schedule_tick()
 
@@ -727,16 +728,25 @@ class NextPeriodChangeSensor(_HalfHourlyEntity):
             coordinator, icp, SensorEntityDescription(key=key, translation_key=key), local_tz
         )
         self._export = export
+        # The state and attributes both need the next change, so it's worked out once per
+        # half-hour and pricing update rather than twice per state write.
+        self._change: tuple[PricingData, datetime, tuple[datetime, Slot] | None] | None = None
 
     def _next_change(self) -> tuple[datetime, Slot] | None:
         data = self.coordinator.data
+        now = dt_util.utcnow()
+        half_hour = now.replace(minute=now.minute // 30 * 30, second=0, microsecond=0)
+        if self._change is not None and self._change[0] is data and self._change[1] == half_hour:
+            return self._change[2]
         side = self._side(export=self._export)
-        if side is None:
-            return None
-        until: datetime | None = None
-        if (change := next_season_change(data.plan, data.day)) is not None:
-            until = datetime.combine(change, time.min, self._local_tz)
-        return next_change(side.slots, dt_util.utcnow(), self._local_tz, until)
+        result: tuple[datetime, Slot] | None = None
+        if side is not None:
+            until: datetime | None = None
+            if (change := next_season_change(data.plan, data.day)) is not None:
+                until = datetime.combine(change, time.min, self._local_tz)
+            result = next_change(side.slots, now, self._local_tz, until)
+        self._change = (data, half_hour, result)
+        return result
 
     @property
     def native_value(self) -> datetime | None:

@@ -23,7 +23,7 @@ Some sensors have changed in ways that can affect automations, templates and das
 
 - Time-of-use prices are now read from the price list printed under Ecotricity's charts, instead of from the height of the bars, so every half-hour's price is exact.
 - The charts of every published season are now downloaded, so sensors for your plan's periods don't come and go with the seasons.
-- If a chart can't be downloaded, or shows prices that don't match your plan's rates, for import or export where your network has only one rate, such as on an anytime plan, prices carry on with that rate all day and the chart is tried again daily up to three times, then at the usual times. A chart that goes missing later gets three tries of its own.
+- If a chart can't be downloaded, or shows prices that don't match your plan's rates, for import or export where your network has only one rate, such as on an anytime plan, prices carry on with that rate all day and the chart is tried again daily up to three times, then at the usual times. A chart that goes missing later gets three tries of its own, but one that goes from missing to not matching your rates doesn't.
 - Pricing saved by earlier versions can't be read by this one, so it's fetched again once after updating.
 - The **Time-of-use chart** image is now called **Current time-of-use chart**, as it switches between the weekday and weekend charts and changes with the season. Its entity ID stays the same, so existing automations are unaffected.
 
@@ -33,6 +33,9 @@ Some sensors have changed in ways that can affect automations, templates and das
 - Fix peak and off-peak prices on Vector being about 3c short. Its transmission charge is published as an anytime network rate, and is now added to every period's price.
 - Fix time-of-use hours never being read on networks whose plans have the same rates all year, such as Unison, Alpine, Horizon, Waipa, Network Waitaki, Centralines and Buller. Ecotricity publishes no pricing seasons for these plans, so their charts were never downloaded or checked. The plan's rate dates now stand in for the season, as Ecotricity's website does, and each pricing year keeps its own charts when next year's rates are published early.
 - Fix the wrong season being used on plans with overlapping seasons, such as Scanpower's "Standard Rates" for the whole year and "Seasonal Rates" from June to September. The seasonal one now applies in its months, as on Ecotricity's website.
+- Fix the options failing to save when Ecotricity no longer lists your chosen plan, unless you picked another plan. The plan now defaults to the one in use.
+- Fix the half-hourly sensors, such as **Current import price** and **Next import period change**, showing the previous day's pricing for a few seconds after midnight.
+- Fix the "time-of-use hours can't be read" repair notice naming the plan by Ecotricity's internal name instead of the one shown everywhere else.
 - Fix the **Current export period** sensor showing a raw value on networks whose plans have an "Export Shoulder Peak" rate, such as Northpower and Top Energy. That period is now shown as "Shoulder peak".
 
 ## 0.3.0 (2026-10-15)

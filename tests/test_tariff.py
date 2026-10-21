@@ -63,6 +63,7 @@ from tests.conftest import (
     find_chart_where,
     find_plan,
     find_plan_where,
+    has_capacity_charge,
     has_clipped_price_needing_its_bar,
     has_hours_without_a_network_rate,
     has_mixed_periods,
@@ -150,6 +151,22 @@ def test_daily_charges() -> None:
     assert pricing.daily_total == pytest.approx(155.0)
     assert any(charge.is_network for charge in pricing.daily_charges)
     assert pricing.has_export
+
+
+def test_daily_charges_leave_out_capacity_charges() -> None:
+    # Charged per kVA, which nothing published gives, so there's no daily amount to add.
+    plan = find_plan_where(has_capacity_charge)
+    day = plan.seasons[0].start
+
+    pricing = price_day(plan, day, None, None)
+
+    per_day = [
+        rate for rate in plan.rates if rate.applies_on(day) and rate.unit is RateUnit.PER_DAY
+    ]
+    assert pricing.daily_total == pytest.approx(sum(rate.price for rate in per_day))
+    assert [charge.description for charge in pricing.daily_charges] == [
+        rate.description for rate in per_day
+    ]
 
 
 def test_season_for() -> None:
@@ -724,6 +741,7 @@ def test_later_season_with_missing_charts_takes_one_network_rate_to_apply_all_da
     assert not slots.later_errors
     assert len(slots.missing) == 1
     assert slots.missing[0].startswith("Export from 2027-01-01: ")
+    assert slots.gaps == ("Export from 2027-01-01",)
 
 
 def test_todays_missing_charts_are_reported_separately_from_errors() -> None:
@@ -736,6 +754,8 @@ def test_todays_missing_charts_are_reported_separately_from_errors() -> None:
     assert slots.missing == (
         "Export: The plan's charts for the season couldn't be downloaded or read",
     )
+    # Keyed apart from the same season's gap while it was still to come.
+    assert slots.gaps == (f"Export today in {SPRING_SEASON.start.isoformat()}",)
     assert slots.seasons(export=True) == [slots.today[True]]
 
 

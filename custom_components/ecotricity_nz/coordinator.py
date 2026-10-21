@@ -136,6 +136,8 @@ class PricingData:
     charts are missing, or don't match the plan's rates."""
     later_errors: tuple[str, ...] = ()
     """Why a later season's charts couldn't be used, so its periods may be missing."""
+    chart_gaps: tuple[str, ...] = ()
+    """The side and season of each of `missing_charts` (see `PlanSlots.gaps`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,12 +219,22 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         @callback
         def _refresh(_now: datetime) -> None:
             self._unsub_midnight = None
-            self._async_new_day()
+            self.async_ensure_today()
             self.async_start_midnight_refresh()
 
         self._unsub_midnight = async_track_point_in_utc_time(
             self.hass, _refresh, dt_util.as_utc(midnight)
         )
+
+    @callback
+    def async_ensure_today(self) -> None:
+        """Work out the new day now if midnight has passed and it hasn't been yet.
+
+        The half-hourly sensors tick at midnight itself, a few seconds before the midnight
+        refresh, so they call this rather than show yesterday's pricing until it runs.
+        """
+        if self.data is not None and self.data.day != dt_util.now(self._local_tz).date():
+            self._async_new_day()
 
     @callback
     def _async_new_day(self) -> None:
@@ -274,7 +286,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                     data.tou_error,
                 )
                 if self._chart_failures >= FAILURE_ISSUE_THRESHOLD:
-                    self._raise_issue(ISSUE_TOU_CHART, {"plan": data.plan.description})
+                    self._raise_issue(ISSUE_TOU_CHART, {"plan": data.plan.name})
             if fetched.missing_chart_fetches == PRICING_MISSING_CHART_RETRIES + 1:
                 LOGGER.warning(
                     "The charts for %s are still missing or don't match its rates, so its "
@@ -364,17 +376,19 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         if data.missing_charts:
             # Counted per plan and gap, so choosing another plan starts again, and so does a gap
             # the last fetch didn't have (a later season's missing chart that now prices today).
+            # Gaps are keyed by side and season, so a chart that goes from missing to not
+            # matching its rates carries on counting.
             saved = self._snapshot
             previous = (
                 saved.missing_chart_fetches
                 if saved
                 and saved.charts_plan_id == plan.id
-                and set(data.missing_charts) <= set(saved.missing_charts)
+                and set(data.chart_gaps) <= set(saved.chart_gaps)
                 else 0
             )
             snapshot = replace(
                 snapshot,
-                missing_charts=data.missing_charts,
+                chart_gaps=data.chart_gaps,
                 missing_chart_fetches=previous + 1,
             )
             # The count doesn't change the prices, so they needn't be worked out again.
@@ -499,6 +513,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             tou_error=tou_error,
             missing_charts=slots.missing,
             later_errors=slots.later_errors,
+            chart_gaps=slots.gaps,
         )
         self._priced = (snapshot, day, data)
         return data

@@ -2679,6 +2679,7 @@ async def test_consumption_rechecks_until_new_data_arrives(
     assert consumption.update_interval == CONSUMPTION_UPDATE_INTERVAL
 
     # The next daily import finds nothing new, so it checks again sooner.
+    await async_wait_recording_done(hass)
     await consumption.async_refresh()
     assert consumption.data.hours_imported == 0
     assert consumption.update_interval == CONSUMPTION_RECHECK_INTERVAL
@@ -2719,6 +2720,7 @@ async def test_consumption_reads_again_daily_while_waiting(
     await _setup(hass, portal_config_entry)
     consumption = portal_config_entry.runtime_data.consumption
     assert consumption is not None
+    await async_wait_recording_done(hass)
     await consumption.async_refresh()
     assert consumption.update_interval == CONSUMPTION_RECHECK_INTERVAL
     reads = mock_portal.async_get_half_hourly.await_count

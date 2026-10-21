@@ -293,9 +293,9 @@ class EcotricityOptionsFlow(OptionsFlowWithReload):
         # Plans come from the running coordinator, which only exists while the entry is loaded.
         data = entry.runtime_data.pricing.data if entry.state is ConfigEntryState.LOADED else None
         if data is not None:
-            schema[
-                probatio.Required(
-                    CONF_PLAN_ID, default=entry.options.get(CONF_PLAN_ID, data.plan.id)
-                )
-            ] = _plan_selector(data.plans)
+            # A saved plan that's no longer listed isn't among the choices, so default to the
+            # plan in use (the site's default) or the form can't be submitted unchanged.
+            saved = entry.options.get(CONF_PLAN_ID)
+            default = saved if saved and data.plans.find(saved) else data.plan.id
+            schema[probatio.Required(CONF_PLAN_ID, default=default)] = _plan_selector(data.plans)
         return self.async_show_form(step_id="init", data_schema=probatio.Schema(schema))

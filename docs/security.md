@@ -18,16 +18,16 @@ The integration talks to two Ecotricity websites and nothing else. It has no ana
 
 | Destination                                                    | When                             | What's sent                                                                                                                                                                                                                                               |
 | -------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onboarding.ecotricity.co.nz` (public sign-up site)            | At setup, then about weekly      | Your ICP number, plus the network code, price category and meter register codes that this same site returns for your ICP. Requests for public plan, plan name and chart files. A browser-check answer the site requires (see [docs/api.md](docs/api.md)). |
+| `onboarding.ecotricity.co.nz` (public sign-up site)            | At setup, then about weekly      | Your ICP number, plus the network code, price category and meter register codes that this same site returns for your ICP. Requests for public plan, plan name and chart files. A browser-check answer the site requires (see [api.md](api.md)). |
 | `portal.ecotricity.co.nz` (customer portal), only with a login | At setup, then at least daily    | Your account number and password when logging in, then the session cookie. Date ranges for the usage data being imported.                                                                                                                                 |
 
-With both, the integration identifies itself with a User-Agent of `HomeAssistant/<version> ecotricity_nz/<version>`, so Ecotricity can see the requests that come from this integration and which Home Assistant version is running.
+With both, the integration identifies itself with a User-Agent of `HomeAssistant/<version> ecotricity_nz/<version>`, so Ecotricity can see the requests that come from this integration and which Home Assistant version is running. During setup, reauthentication and reconfiguration, the User-Agent is `HomeAssistant ecotricity_nz config flow` instead.
 
 ## What stays visible inside Home Assistant
 
 - Entity IDs include your ICP number (for example `sensor.icp_0000123456ab1c2_current_import_price`), and so does the device name. Keep that in mind when sharing screenshots, dashboards, automations or logs.
 - Sensors and their attributes include your network, price category, plan and meter details, including the meter's serial number, but not your address.
-- The pricing fetched from Ecotricity is saved in `.storage/ecotricity_nz.<entry_id>.pricing`, so it keeps working offline. It includes your ICP number and meter serial numbers, because sensors show them, but not your address or region, which no sensor uses. It holds no credentials. It's deleted when you delete the entry, and it's included in Home Assistant backups like the rest of `.storage`.
+- The pricing fetched from Ecotricity is saved in `.storage/ecotricity_nz.<entry_id>.pricing`, so it keeps working offline. It includes your ICP number and meter serial numbers, because sensors show them, but not your address or region, which no sensor uses, so they aren't read from Ecotricity's response at all. It holds no credentials. It's deleted when you delete the entry, and it's included in Home Assistant backups like the rest of `.storage`.
 
 ## Reporting a vulnerability
 

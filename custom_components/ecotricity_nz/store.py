@@ -4,8 +4,8 @@ Everything the pricing coordinator fetches from the onboarding site is kept here
 plans (with their seasons and rates), plan names and the chart readings. Prices for any day are
 worked out from this, so nothing needs fetching again until Ecotricity might have changed it.
 
-Personal details no entity uses are left out of the file: the ICP's address and region are
-saved blank. The ICP number and meter serial numbers are kept, because sensors show them.
+Personal details no entity uses, such as the ICP's address, aren't parsed, so they never reach
+the file. The ICP number and meter serial numbers are kept, because sensors show them.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.helpers.storage import Store
 
 from .api import IcpDetails, MeterChannel, Plan, PlanList, Rate, RateUnit, Season
-from .api.timeframes import ChartReading, ChartTier
+from .api.timeframes import ChartReading, LegendEntry
 from .const import DOMAIN, LOGGER
 
 if TYPE_CHECKING:
@@ -25,7 +25,23 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
-STORAGE_VERSION = 1
+# Version 2 reads chart legends rather than bar heights; older snapshots are fetched again.
+STORAGE_VERSION = 2
+
+
+class _SnapshotStore(Store[dict[str, Any]]):
+    """A store that drops snapshots saved in an older format, so pricing is fetched again."""
+
+    async def _async_migrate_func(
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any],  # noqa: ARG002 - the signature Store calls
+    ) -> dict[str, Any]:
+        LOGGER.debug(
+            "Discarding saved pricing in format %s.%s", old_major_version, old_minor_version
+        )
+        return {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +57,12 @@ class PricingSnapshot:
     """Chart readings by chart path."""
     charts_plan_id: str | None = None
     """The plan the charts were downloaded for."""
+    chart_gaps: tuple[str, ...] = ()
+    """The side and season of each chart this fetch left missing (see `PlanSlots.gaps`), on the
+    day it was made."""
+    missing_chart_fetches: int = 0
+    """How many fetches in a row, up to and including this one, left charts missing, counted
+    from the last that found a new gap."""
 
 
 class PricingStore:
@@ -48,14 +70,12 @@ class PricingStore:
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         """Initialise the store."""
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.pricing"
-        )
+        self._store = _SnapshotStore(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.pricing")
 
     async def async_load(self) -> PricingSnapshot | None:
         """Return the saved snapshot, or None if there isn't a usable one."""
         raw = await self._store.async_load()
-        if raw is None:
+        if not raw:
             return None
         try:
             return _snapshot(raw)
@@ -87,6 +107,8 @@ def _snapshot_dict(snapshot: PricingSnapshot) -> dict[str, Any]:
         "plan_titles": dict(snapshot.plan_titles),
         "charts": {path: _chart_dict(chart) for path, chart in snapshot.charts.items()},
         "charts_plan_id": snapshot.charts_plan_id,
+        "chart_gaps": list(snapshot.chart_gaps),
+        "missing_chart_fetches": snapshot.missing_chart_fetches,
     }
 
 
@@ -106,6 +128,8 @@ def _snapshot(raw: dict[str, Any]) -> PricingSnapshot:
         plan_titles={str(key): str(value) for key, value in raw["plan_titles"].items()},
         charts={str(path): _chart(chart) for path, chart in raw["charts"].items()},
         charts_plan_id=raw["charts_plan_id"],
+        chart_gaps=tuple(str(gap) for gap in raw["chart_gaps"]),
+        missing_chart_fetches=int(raw["missing_chart_fetches"]),
     )
 
 
@@ -126,9 +150,6 @@ def _icp_dict(icp: IcpDetails) -> dict[str, Any]:
         "price_category_description": icp.price_category_description,
         "retailer_code": icp.retailer_code,
         "retailer_name": icp.retailer_name,
-        # Not used by any entity, so not written to disk. Loaded back as blank.
-        "address": "",
-        "region": "",
         "meter_type": icp.meter_type,
         "channels": [
             {
@@ -157,8 +178,6 @@ def _icp(raw: dict[str, Any]) -> IcpDetails:
         price_category_description=raw["price_category_description"],
         retailer_code=raw["retailer_code"],
         retailer_name=raw["retailer_name"],
-        address=raw["address"],
-        region=raw["region"],
         meter_type=raw["meter_type"],
         channels=tuple(
             MeterChannel(
@@ -180,12 +199,10 @@ def _icp(raw: dict[str, Any]) -> IcpDetails:
 
 def _rate_dict(rate: Rate) -> dict[str, Any]:
     return {
-        "id": rate.id,
         "description": rate.description,
         "charge": rate.charge,
         "register_type": rate.register_type,
         "unit": rate.unit.value,
-        "raw_unit": rate.raw_unit,
         "price": rate.price,
         "is_network": rate.is_network,
         "season": rate.season,
@@ -196,12 +213,10 @@ def _rate_dict(rate: Rate) -> dict[str, Any]:
 
 def _rate(raw: dict[str, Any]) -> Rate:
     return Rate(
-        id=raw["id"],
         description=raw["description"],
         charge=raw["charge"],
         register_type=raw["register_type"],
         unit=RateUnit(raw["unit"]),
-        raw_unit=raw["raw_unit"],
         price=float(raw["price"]),
         is_network=raw["is_network"],
         season=raw["season"],
@@ -217,8 +232,6 @@ def _plan_dict(plan: Plan) -> dict[str, Any]:
         "description": plan.description,
         "network": plan.network,
         "price_category": plan.price_category,
-        "customer_type": plan.customer_type,
-        "standard_low": plan.standard_low,
         "retail_rates": [_rate_dict(rate) for rate in plan.retail_rates],
         "network_rates": [_rate_dict(rate) for rate in plan.network_rates],
         "seasons": [
@@ -238,8 +251,6 @@ def _plan(raw: dict[str, Any]) -> Plan:
         description=raw["description"],
         network=raw["network"],
         price_category=raw["price_category"],
-        customer_type=raw["customer_type"],
-        standard_low=raw["standard_low"],
         retail_rates=tuple(_rate(rate) for rate in raw["retail_rates"]),
         network_rates=tuple(_rate(rate) for rate in raw["network_rates"]),
         seasons=tuple(
@@ -256,28 +267,30 @@ def _plan(raw: dict[str, Any]) -> Plan:
     )
 
 
-def _tier_dict(tier: ChartTier) -> dict[str, Any]:
-    return {"colour": list(tier.colour), "height": tier.height, "slots": sorted(tier.slots)}
+def _entry_dict(entry: LegendEntry) -> list[Any]:
+    return [entry.start, entry.end, entry.text, entry.clipped, entry.estimate]
 
 
-def _tier(raw: dict[str, Any]) -> ChartTier:
-    red, green, blue = (int(value) for value in raw["colour"])
-    return ChartTier(
-        colour=(red, green, blue),
-        height=float(raw["height"]),
-        slots=frozenset(int(slot) for slot in raw["slots"]),
+def _entry(raw: list[Any]) -> LegendEntry:
+    start, end, text, clipped, estimate = raw
+    return LegendEntry(
+        start=int(start),
+        end=int(end),
+        text=str(text),
+        clipped=bool(clipped),
+        estimate=None if estimate is None else float(estimate),
     )
 
 
 def _chart_dict(chart: ChartReading) -> dict[str, Any]:
     return {
-        "import_tiers": [_tier_dict(tier) for tier in chart.import_tiers],
-        "export_tiers": [_tier_dict(tier) for tier in chart.export_tiers],
+        "import": [_entry_dict(entry) for entry in chart.import_entries],
+        "export": [_entry_dict(entry) for entry in chart.export_entries],
     }
 
 
 def _chart(raw: dict[str, Any]) -> ChartReading:
     return ChartReading(
-        import_tiers=tuple(_tier(tier) for tier in raw["import_tiers"]),
-        export_tiers=tuple(_tier(tier) for tier in raw["export_tiers"]),
+        import_entries=tuple(_entry(entry) for entry in raw["import"]),
+        export_entries=tuple(_entry(entry) for entry in raw["export"]),
     )

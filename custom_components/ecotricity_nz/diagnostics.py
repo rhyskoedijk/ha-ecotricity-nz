@@ -18,11 +18,8 @@ TO_REDACT = {
     CONF_ACCOUNT_NUMBER,
     CONF_PASSWORD,
     CONF_ICP,
-    "address",
-    "region",
     "serial_number",
     "indicator_id",
-    "display_name",
     "title",
     "unique_id",
 }
@@ -46,7 +43,8 @@ async def async_get_config_entry_diagnostics(
                     "id": pricing.plan.id,
                     "code": pricing.plan.code,
                     "description": pricing.plan.description,
-                    "title": pricing.plan.title,
+                    # Not "title", which is redacted to hide the entry title.
+                    "name": pricing.plan.name,
                     "seasons": [asdict(season) for season in pricing.plan.seasons],
                 },
                 "available_plans": [plan.name for plan in pricing.plans.all_plans],
@@ -54,9 +52,10 @@ async def async_get_config_entry_diagnostics(
                 "day": pricing.day,
                 "season": asdict(pricing.season) if pricing.season else None,
                 "pricing": asdict(pricing.pricing),
-                "import_slots": asdict(pricing.import_slots) if pricing.import_slots else None,
-                "export_slots": asdict(pricing.export_slots) if pricing.export_slots else None,
+                "periods": _lists(asdict(pricing.periods)),
                 "tou_error": pricing.tou_error,
+                "missing_charts": list(pricing.missing_charts),
+                "later_errors": list(pricing.later_errors),
             },
             "consumption": asdict(consumption) if consumption else None,
             "consumption_last_update_success": (
@@ -68,9 +67,15 @@ async def async_get_config_entry_diagnostics(
 
 
 def _lists(value: Any) -> Any:  # noqa: ANN401 - walks arbitrary dataclass output
-    """Turn tuples into lists, because async_redact_data only looks inside lists."""
+    """Turn tuples and sets into lists.
+
+    async_redact_data only looks inside lists, and Home Assistant's JSON encoder writes a set as
+    its repr, so sets become sorted lists.
+    """
     if isinstance(value, dict):
         return {key: _lists(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return [_lists(item) for item in value]
+    if isinstance(value, set | frozenset):
+        return [_lists(item) for item in sorted(value, key=str)]
     return value

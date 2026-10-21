@@ -24,7 +24,7 @@ from custom_components.ecotricity_nz.const import (
     CONF_PLAN_ID,
     DOMAIN,
 )
-from tests.conftest import LOW_USER_PLAN_ID, TEST_ICP
+from tests.conftest import ANYTIME_PLAN, TEST_ICP, plan_id
 
 pytestmark = pytest.mark.usefixtures("mock_onboarding", "mock_portal", "mock_setup_entry")
 
@@ -55,11 +55,11 @@ async def test_user_without_credentials_picks_plan(hass: HomeAssistant) -> None:
     assert {"Low ecoSOLAR", "Low ecoANYTIME", "ecoSAVER"} <= labels
 
     result = await hass.config_entries.flow.async_configure(
-        flow_id, {CONF_PLAN_ID: LOW_USER_PLAN_ID}
+        flow_id, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_ICP: TEST_ICP}
-    assert result["options"] == {CONF_INCLUDE_GST: True, CONF_PLAN_ID: LOW_USER_PLAN_ID}
+    assert result["options"] == {CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
     assert result["result"].unique_id == TEST_ICP
 
 
@@ -74,7 +74,7 @@ async def test_user_with_credentials(hass: HomeAssistant, mock_portal: MagicMock
     mock_portal.async_login.assert_awaited_once()
 
     result = await hass.config_entries.flow.async_configure(
-        flow_id, {CONF_PLAN_ID: LOW_USER_PLAN_ID}
+        flow_id, {CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {
@@ -82,7 +82,7 @@ async def test_user_with_credentials(hass: HomeAssistant, mock_portal: MagicMock
         CONF_ACCOUNT_NUMBER: "123456",
         CONF_PASSWORD: "secret",
     }
-    assert result["options"][CONF_PLAN_ID] == LOW_USER_PLAN_ID
+    assert result["options"][CONF_PLAN_ID] == plan_id(ANYTIME_PLAN)
 
 
 @pytest.mark.parametrize(

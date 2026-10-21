@@ -10,7 +10,7 @@ from homeassistant.helpers.entity import EntityDescription
 from homeassistant.util import dt as dt_util
 
 from .api.onboarding import ONBOARDING_URL
-from .api.timeframes import chart_path, needs_season
+from .api.timeframes import ChartReadError, season_chart_path
 from .const import CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
 from .coordinator import PricingCoordinator
 from .entity import EcotricityEntity
@@ -57,7 +57,8 @@ class TimeOfUseChartImage(EcotricityEntity[PricingCoordinator], ImageEntity):
             self,
             coordinator,
             icp,
-            EntityDescription(key="time_of_use_chart", translation_key="time_of_use_chart"),
+            # The key keeps the unique ID from before the rename, so existing entities keep it.
+            EntityDescription(key="time_of_use_chart", translation_key="current_time_of_use_chart"),
         )
         ImageEntity.__init__(self, hass)
         self._local_tz = local_tz
@@ -72,19 +73,14 @@ class TimeOfUseChartImage(EcotricityEntity[PricingCoordinator], ImageEntity):
             if today.weekday() < WEEKDAY_COUNT
             else data.plan.timeframe_chart_weekend
         )
-        season = data.season
-        # Without a published season the chart's dates are unknown, so there's no chart to show.
-        if not template or (season is None and needs_season(template)):
-            return None
         include_gst = self.coordinator.config_entry.options.get(
             CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
         )
-        path = chart_path(
-            template,
-            season.start if season else None,
-            season.end if season else None,
-            include_gst=include_gst,
-        )
+        try:
+            path = season_chart_path(template, data.season, include_gst=include_gst)
+        except ChartReadError:
+            # No chart, or no published season to give the chart's dates.
+            return None
         # The template comes from the API; a missing leading slash would let it change the host.
         if not path.startswith("/"):
             path = "/" + path

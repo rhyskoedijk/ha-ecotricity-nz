@@ -72,7 +72,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
         hass, entry, onboarding, local_tz, PricingStore(hass, entry.entry_id)
     )
     await pricing.async_config_entry_first_refresh()
-    pricing.async_start_midnight_refresh()
+    pricing.async_start_half_hour_updates()
 
     consumption = (
         ConsumptionCoordinator(hass, entry, portal, local_tz) if portal is not None else None

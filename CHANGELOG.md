@@ -2,7 +2,46 @@
 
 ## Unreleased
 
-## v0.3.0 (2026-10-15)
+Time-of-use pricing only worked on a handful of networks; on most, it was either unavailable or inaccurate. This release reads the exact prices printed under Ecotricity's time-of-use charts instead of working them out from the height of the bars, and has been checked against every chart Ecotricity publishes on every network as of October 2026.
+
+Some sensors have changed in ways that can affect automations, templates and dashboards, so please read the breaking changes before updating. These changes lay the groundwork for recreating Ecotricity's bills more accurately, which will continue in the next release.
+
+### Breaking changes
+
+- **Export prices are now negative when they are a credit.** Every price now keeps its sign exactly as Ecotricity publishes it, so a credit is negative and a cost is positive. This applies to every sensor and attribute that shows an export price. If you use these sensors in automations, templates or the Energy dashboard, you'll need to flip the sign to keep the old behaviour.
+- **Line loss factors have moved to their own sensors.** The **Network** sensor no longer has the `loss_factor_consumption` and `loss_factor_generation` attributes. They're now the **Network import loss factor** and **Network export loss factor** sensors.
+- **A period's price sensor has no value on days its period doesn't apply.** Sensors such as **Peak import price** used to show another period's price on days when their own period didn't apply. They now show unknown, and the `charged_as` attribute has been removed.
+- **Next period change now also changes when the price does.** **Next import period change** and **Next export period change** now also change when the price changes within a period, and today's `windows` attribute starts a new window wherever the price changes, so one period can appear in more than one window in a day. This only happens where Ecotricity's and your network's periods don't line up exactly, which is the case on some networks but not all.
+- **The `tou_error` attribute has moved to the Plan sensor.** It was on **Current import price** and **Current export price**, but those sensors are unavailable, and so show no attributes, when their own chart can't be read, so it only ever explained the other side's problem. **Plan** stays available, so its `tou_error` attribute now says why the time-of-use hours can't be read, and is empty when they can.
+- **Registered generation capacity is no longer created when none is recorded.** Some networks record a capacity of zero even for connections with solar or other generation, so the value couldn't be relied on. If your ICP has no generation capacity above zero on record, the sensor isn't created. An existing one shows as no longer provided and can be deleted from the device page.
+
+### New features
+
+- **Network import loss factor** and **Network export loss factor** sensors show your connection's line loss factors. Ecotricity bills its energy rates on your usage times this factor, which the prices leave out; the README's [Known limitations](README.md#known-limitations) show how to include it.
+- Where Ecotricity's and your network's pricing periods don't line up, **Current supplier import period** and **Current network import period** sensors (and the export ones) show each side's own period. **Current import period** then shows the overall period: the one whose own price is nearest what you're paying. Plans whose periods line up exactly keep one period sensor per direction.
+
+### Improvements
+
+- Time-of-use prices are now read from the price list printed under Ecotricity's charts, instead of from the height of the bars, so every half-hour's price is exact.
+- The charts of every published season are now downloaded, so sensors for your plan's periods don't come and go with the seasons.
+- If a chart can't be downloaded, or shows prices that don't match your plan's rates, for import or export where your network has only one rate, such as on an anytime plan, prices carry on with that rate all day and the chart is tried again daily up to three times, then at the usual times. A chart that goes missing later gets three tries of its own, but one that goes from missing to not matching your rates doesn't.
+- Pricing saved by earlier versions can't be read by this one, so it's fetched again once after updating.
+- The **Time-of-use chart** image is now called **Current time-of-use chart**, as it switches between the weekday and weekend charts and changes with the season. Its entity ID stays the same, so existing automations are unaffected.
+
+### Bug fixes
+
+- Fix the current price sensors being unavailable, with a repair issue, on most networks because their charts couldn't be read. This covered hours where Ecotricity's and the network's peak times don't line up (such as 9pm to 10pm in winter on Vector, Unison's weekends, and battery plans' export on most networks), prices too close together to tell apart by height, pale or patterned bars, and all-day prices such as Powerco's weekends. Hours where a network charges no rate at all, such as outside Scanpower's export peak, are now priced too.
+- Fix peak and off-peak prices on Vector being about 3c short. Its transmission charge is published as an anytime network rate, and is now added to every period's price.
+- Fix time-of-use hours never being read on networks whose plans have the same rates all year, such as Unison, Alpine, Horizon, Waipa, Network Waitaki, Centralines and Buller. Ecotricity publishes no pricing seasons for these plans, so their charts were never downloaded or checked. The plan's rate dates now stand in for the season, as Ecotricity's website does, and each pricing year keeps its own charts when next year's rates are published early.
+- Fix the wrong season being used on plans with overlapping seasons, such as Scanpower's "Standard Rates" for the whole year and "Seasonal Rates" from June to September. The seasonal one now applies in its months, as on Ecotricity's website.
+- Fix the options failing to save when Ecotricity no longer lists your chosen plan, unless you picked another plan. The plan now defaults to the one in use.
+- Fix **Current export price**, **Current export period**, **Next export period change** and **Network export loss factor** being created for ICPs that don't export. They're now only created when the ICP has an export (EG) register. Existing ones on an ICP without one show as no longer provided and can be deleted from the device page. Export period price sensors, such as **Peak export price**, and **Current supplier export period** and **Current network export period** are removed too, and an export chart that can't be read no longer raises the repair notice.
+- Fix a period's price sensor being removed when the only season with that period ended, such as **Peak import price** on networks with a winter-only peak. It came back disabled the next winter, without your settings. Periods from seasons that have ended now count as the plan's own while Ecotricity still lists them.
+- Fix the half-hourly sensors, such as **Current import price** and **Next import period change**, showing the previous day's pricing for a few seconds after midnight.
+- Fix the "time-of-use hours can't be read" repair notice naming the plan by Ecotricity's internal name instead of the one shown everywhere else.
+- Fix the **Current export period** sensor showing a raw value on networks whose plans have an "Export Shoulder Peak" rate, such as Northpower and Top Energy. That period is now shown as "Shoulder peak".
+
+## 0.3.0 (2026-10-15)
 
 Pricing only worked properly for networks shaped like Wellington Electricity's. This release fixes pricing on Orion and other similar networks that have extra network-defined charge buckets such as "weekend" and "super off-peak" (#9).
 
@@ -14,7 +53,7 @@ Pricing only worked properly for networks shaped like Wellington Electricity's. 
 - The **Current import period** and **Current export period** sensors only list the periods your plan uses as options, so "shoulder" is no longer an option on plans without a shoulder price.
 - Price sensors for prices your plan no longer has, such as after switching to a different plan, are now removed instead of being left behind as no longer provided.
 
-## v0.2.0 (2026-10-13)
+## 0.2.0 (2026-10-13)
 
 - Pricing is saved and keeps working through restarts and internet outages, including into the next pricing season (once Ecotricity has published it). Ecotricity's pricing data is now fetched weekly, on the 1st of each month and at the end of each season, instead of twice a day. If it can't be reached, retries slow down from hourly to every 8 hours until it eventually succeeds again.
 - New **Last pricing update** sensor shows when pricing data was last fetched.
@@ -22,15 +61,15 @@ Pricing only worked properly for networks shaped like Wellington Electricity's. 
 - When the daily usage import finds nothing new, the portal is checked again every 3 hours until the data for the day becomes available.
 - The first import of your usage history is now faster, as it asks the portal for 31 days at a time instead of only seven.
 
-## v0.1.2 (2026-10-13)
+## 0.1.2 (2026-10-13)
 
 - HACS now lists the integration as New Zealand only, and the repository passes all HACS validation checks.
 
-## v0.1.1 (2026-10-13)
+## 0.1.1 (2026-10-13)
 
 - New **Refresh data** action (`ecotricity_nz.refresh`) fetches the latest pricing and usage immediately.
 
-## v0.1.0 (2026-10-13)
+## 0.1.0 (2026-10-13)
 
 Initial release.
 

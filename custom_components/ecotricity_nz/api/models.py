@@ -31,14 +31,12 @@ class RateUnit(StrEnum):
 class Rate:
     """A single retail or network charge line on a plan."""
 
-    id: str
     description: str
     charge: str | None
     """Charge bucket code from the API, for example CHARGE_24, CHARGE_HIGH or CHARGE_LOW."""
     register_type: str | None
     """Meter register this rate applies to. EG means export (generation)."""
     unit: RateUnit
-    raw_unit: str
     price: float
     """Price in cents (per kWh or per day), excluding GST. Export rates are negative."""
     is_network: bool
@@ -97,8 +95,6 @@ class Plan:
     description: str
     network: str
     price_category: str
-    customer_type: str
-    standard_low: str | None
     retail_rates: tuple[Rate, ...]
     network_rates: tuple[Rate, ...]
     seasons: tuple[Season, ...]
@@ -189,8 +185,6 @@ class IcpDetails:
     price_category_description: str
     retailer_code: str
     retailer_name: str
-    address: str
-    region: str
     meter_type: str | None
     channels: tuple[MeterChannel, ...] = ()
     smart_meter: bool | None = None
@@ -223,8 +217,6 @@ class PortalIndicator:
     """The portal's metering indicator for an ICP, with the range of data it holds."""
 
     indicator_id: str
-    display_name: str
-    """The ICP number."""
     last_import: datetime | None = None
     """When the portal last imported meter data."""
     data_start: datetime | None = None
@@ -249,11 +241,6 @@ class ConsumptionData:
     imported_kwh: tuple[IntervalReading, ...] = field(default_factory=tuple)
     exported_kwh: tuple[IntervalReading, ...] = field(default_factory=tuple)
     carbon_savings_kg: tuple[IntervalReading, ...] = field(default_factory=tuple)
-
-    @property
-    def is_empty(self) -> bool:
-        """Return True when no series has any readings."""
-        return not (self.imported_kwh or self.exported_kwh or self.carbon_savings_kg)
 
 
 def normalise_plan_name(text: str) -> str:

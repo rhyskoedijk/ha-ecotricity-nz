@@ -106,8 +106,6 @@ def parse_icp(payload: Any) -> IcpDetails:
             price_category_description=str(category.get("description", "")),
             retailer_code=str(retailer.get("code", "")),
             retailer_name=str(retailer.get("description", "")),
-            address=_format_address(content.get("address") or {}),
-            region=str((content.get("address") or {}).get("vRegion", "")),
             meter_type=meter_type,
             channels=tuple(channels),
             smart_meter=smart_meter,
@@ -135,26 +133,6 @@ def _parse_registry_date(value: Any) -> date | None:
     return parsed
 
 
-def _format_address(address: dict[str, Any]) -> str:
-    unit = str(address.get("unit") or "").strip()
-    number = str(address.get("number") or "").strip()
-    street = str(address.get("street") or "").strip().title()
-    first = " ".join(part for part in (f"{unit}/" if unit else "", number, street) if part)
-    parts = [
-        first.replace("/ ", "/"),
-        str(address.get("suburb") or "").strip().title(),
-        " ".join(
-            part
-            for part in (
-                str(address.get("town") or "").strip().title(),
-                str(address.get("postCode") or "").strip(),
-            )
-            if part
-        ),
-    ]
-    return ", ".join(part for part in parts if part)
-
-
 def _rate_unit(raw: str) -> RateUnit:
     lowered = raw.strip().lower()
     if lowered.endswith("cents/kwh"):
@@ -167,17 +145,35 @@ def _rate_unit(raw: str) -> RateUnit:
 def _parse_rate(raw: dict[str, Any], *, network: bool) -> Rate:
     unit = str(raw.get("unit") or "")
     return Rate(
-        id=str(raw.get("id", "")),
         description=str(raw.get("charge_description") or raw.get("rate_description") or ""),
         charge=raw.get("charge") or None,
         register_type=raw.get("register_type") or None,
         unit=_rate_unit(unit),
-        raw_unit=unit,
         price=float(raw["price"]),
         is_network=network,
         season=raw.get("season") or None,
         valid_start=_parse_date(raw.get("valid_start")),
         valid_end=_parse_date(raw.get("valid_end")),
+    )
+
+
+def _rates_season(rates: tuple[Rate, ...]) -> tuple[Season, ...]:
+    """Return a season for each date range of the plan's rates, for a plan that publishes none.
+
+    Plans whose rates are the same all year can come with an empty season list. The web app then
+    shows every rate and fills the chart URL with the pricing year's dates, which the rates carry
+    as their validity dates. Next year's rates can be published before this year's end, so each
+    range is its own season rather than one spanning both, whose chart wouldn't exist.
+    """
+    names: dict[tuple[date, date], set[str]] = {}
+    for rate in rates:
+        if rate.valid_start and rate.valid_end:
+            group = names.setdefault((rate.valid_start, rate.valid_end), set())
+            if rate.season:
+                group.add(rate.season)
+    return tuple(
+        Season(name=group.pop() if len(group) == 1 else "", start=start, end=end)
+        for (start, end), group in sorted(names.items())
     )
 
 
@@ -187,23 +183,23 @@ def _parse_plan(raw: dict[str, Any]) -> Plan:
         for item in _as_list(raw.get("seasons"))
         if (start := _parse_date(item.get("start"))) and (end := _parse_date(item.get("end")))
     )
+    # The web app treats any rate carrying a priceplan_id key as a network charge.
+    retail_rates = tuple(
+        _parse_rate(rate, network="priceplan_id" in rate)
+        for rate in _as_list(raw.get("retail_rates"))
+    )
+    network_rates = tuple(
+        _parse_rate(rate, network=True) for rate in _as_list(raw.get("network_rates"))
+    )
     return Plan(
         id=str(raw["id"]),
         code=str(raw.get("price_plan", "")),
         description=str(raw.get("price_plan_description", "")).strip(),
         network=str(raw.get("network", "")),
         price_category=str(raw.get("price_category", "")),
-        customer_type=str(raw.get("customer_type", "")),
-        standard_low=raw.get("standard_low") or None,
-        # The web app treats any rate carrying a priceplan_id key as a network charge.
-        retail_rates=tuple(
-            _parse_rate(rate, network="priceplan_id" in rate)
-            for rate in _as_list(raw.get("retail_rates"))
-        ),
-        network_rates=tuple(
-            _parse_rate(rate, network=True) for rate in _as_list(raw.get("network_rates"))
-        ),
-        seasons=seasons,
+        retail_rates=retail_rates,
+        network_rates=network_rates,
+        seasons=seasons or _rates_season((*retail_rates, *network_rates)),
         timeframe_chart_weekday=raw.get("timeframes_chart_wd") or None,
         timeframe_chart_weekend=raw.get("timeframes_chart_we") or None,
     )
@@ -332,7 +328,6 @@ def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
 
     return PortalIndicator(
         indicator_id=indicator_id,
-        display_name=str(indicator.get("displayName") or ""),
         last_import=last_import,
         data_start=min(starts, default=None),
         data_end=max(ends, default=None),

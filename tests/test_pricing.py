@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
@@ -17,13 +17,14 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
+from custom_components.ecotricity_nz import coordinator as coordinator_module
 from custom_components.ecotricity_nz.api import EcotricityConnectionError
 from custom_components.ecotricity_nz.api.parsers import (
     parse_icp,
     parse_plan_list,
     parse_plan_titles,
 )
-from custom_components.ecotricity_nz.api.timeframes import read_chart
+from custom_components.ecotricity_nz.api.timeframes import ChartReading, read_chart
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST,
     CONF_PLAN_ID,
@@ -33,18 +34,29 @@ from custom_components.ecotricity_nz.const import (
     PRICING_RETRY_MAX_INTERVAL,
 )
 from custom_components.ecotricity_nz.store import (
+    STORAGE_VERSION,
     PricingSnapshot,
     _snapshot,
     _snapshot_dict,
 )
+from custom_components.ecotricity_nz.tariff import season_charts, season_explained
 from tests.conftest import (
+    ANYTIME_PLAN,
     DEFAULT_NETWORK,
+    DEFAULT_PRICE_CATEGORY,
     NZ,
     TEST_ICP,
+    TIME_OF_USE_PLAN,
     WINTER_PEAK,
     chart_file,
+    chart_name,
+    find_plan,
+    find_plan_where,
+    has_overlapping_seasons,
     load_json_fixture,
     load_network_fixture,
+    load_plan_list,
+    plan_id,
 )
 
 PREFIX = f"sensor.icp_{TEST_ICP.lower()}"
@@ -202,12 +214,36 @@ async def test_unreadable_windows_are_fetched_again_next_day(
 
     mock_onboarding.async_get_chart.side_effect = None
     mock_onboarding.async_get_chart.return_value = (
-        chart_file("CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png")
+        chart_file(chart_name(find_plan(TIME_OF_USE_PLAN), date(2026, 6, 15)))
     ).read_bytes()
     # Set up at 8:15am, so the next day's check runs then.
     await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
     assert mock_onboarding.async_get_chart.await_count > calls
     assert _state(hass, "current_import_price") != "unavailable"
+
+
+async def test_each_day_is_priced_once(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Midnight prices the new day, and the day's check prices it again to decide whether to
+    # fetch, then for the entities. Every season's charts are explained each time, so it's only
+    # worked out once while the saved pricing stays the same.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    calls = mock_onboarding.async_get_icp.await_count
+
+    with patch.object(
+        coordinator_module, "price_plan_day", wraps=coordinator_module.price_plan_day
+    ) as price_plan_day:
+        # Set up at 8:15am, so the next day's check runs then.
+        await _move_to(hass, freezer, datetime(2026, 6, 16, 8, 16, tzinfo=NZ))
+
+    assert mock_onboarding.async_get_icp.await_count == calls
+    assert config_entry.runtime_data.pricing.data.day == date(2026, 6, 16)
+    assert price_plan_day.call_count == 1
 
 
 async def test_choosing_another_plan_fetches(
@@ -222,11 +258,11 @@ async def test_choosing_another_plan_fetches(
 
     # Its charts weren't downloaded with the last fetch, so they're fetched now.
     hass.config_entries.async_update_entry(
-        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: "3001"}
+        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
     )
     await _reload(hass, config_entry)
     assert mock_onboarding.async_get_icp.await_count == calls + 1
-    assert config_entry.runtime_data.pricing.data.plan.id == "3001"
+    assert config_entry.runtime_data.pricing.data.plan.id == plan_id(ANYTIME_PLAN)
     assert _state(hass, "current_import_price") != "unavailable"
 
 
@@ -241,7 +277,11 @@ async def test_saved_pricing_for_another_icp_is_ignored(
     snapshot = _fixture_snapshot()
     data = _snapshot_dict(snapshot)
     data["icp"]["icp"] = "9999999999ZZ9Z9"
-    hass_storage[_storage_key(config_entry)] = {"version": 1, "key": "x", "data": data}
+    hass_storage[_storage_key(config_entry)] = {
+        "version": STORAGE_VERSION,
+        "key": "x",
+        "data": data,
+    }
 
     await _setup(hass, config_entry)
     mock_onboarding.async_get_icp.assert_awaited()
@@ -257,7 +297,11 @@ async def test_damaged_saved_pricing_is_fetched_again(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
-    hass_storage[_storage_key(config_entry)] = {"version": 1, "key": "x", "data": {"icp": {}}}
+    hass_storage[_storage_key(config_entry)] = {
+        "version": STORAGE_VERSION,
+        "key": "x",
+        "data": {"icp": {}},
+    }
 
     await _setup(hass, config_entry)
     assert "Ignoring the saved pricing" in caplog.text
@@ -305,27 +349,51 @@ async def test_offline_warning_is_logged_once(
 
 
 def _fixture_snapshot() -> PricingSnapshot:
-    chart = chart_file(
-        "CKHK-RTOU24-CKHK_OFPK_LOW_260401_T0-RESIDENTIAL-20260401-20260930-WD-NOGST.png"
-    )
+    chart = chart_file(chart_name(find_plan(TIME_OF_USE_PLAN), date(2026, 6, 15)))
     titles = parse_plan_titles(load_json_fixture("plan_mappings.json"))
     return PricingSnapshot(
         icp=parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json")),
-        plans=parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json")).with_titles(
+        plans=parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles(
             titles
         ),
         fetched_at=datetime(2026, 6, 14, 20, 15, tzinfo=UTC),
         plan_titles=titles,
         charts={"/chart.png": read_chart(chart.read_bytes())},
-        charts_plan_id="3003",
+        charts_plan_id=plan_id(TIME_OF_USE_PLAN),
+        chart_gaps=("Export today in 2026-06-01",),
+        missing_chart_fetches=2,
     )
 
 
 def test_snapshot_round_trip() -> None:
     snapshot = _fixture_snapshot()
-    # Through JSON, as Home Assistant's store saves it. Only the unused personal details differ.
+    # Through JSON, as Home Assistant's store saves it.
+    assert snapshot.charts
     saved = json.loads(json.dumps(_snapshot_dict(snapshot)))
-    assert _snapshot(saved) == replace(snapshot, icp=replace(snapshot.icp, address="", region=""))
+    assert _snapshot(saved) == snapshot
+
+
+async def test_pricing_saved_in_an_older_format_is_fetched_again(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Snapshots from before chart legends were read hold bar heights, which no longer mean
+    # anything, so they're dropped and pricing is fetched again.
+    freezer.move_to(WINTER_PEAK)
+    old = _snapshot_dict(_fixture_snapshot())
+    hass_storage[_storage_key(config_entry)] = {
+        "version": STORAGE_VERSION - 1,
+        "key": _storage_key(config_entry),
+        "data": old,
+    }
+
+    await _setup(hass, config_entry)
+    mock_onboarding.async_get_icp.assert_awaited()
+    assert _state(hass, "current_import_price") != "unavailable"
+    assert hass_storage[_storage_key(config_entry)]["version"] == STORAGE_VERSION
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -336,14 +404,18 @@ async def test_saved_file_leaves_out_unused_personal_details(
     freezer: FrozenDateTimeFactory,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
-    icp = parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
-    assert icp.address
-    assert icp.region
+    raw = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    icp = parse_icp(raw)
+    address = raw["content"]["address"]
+    assert address["street"]
+    assert address["vRegion"]
     await _setup(hass, config_entry)
 
     saved = json.dumps(hass_storage[_storage_key(config_entry)])
-    assert icp.address not in saved
-    assert f'"{icp.region}"' not in saved
+    assert "address" not in saved
+    assert "region" not in saved
+    assert str(address["street"]) not in saved
+    assert f'"{address["vRegion"]}"' not in saved
     # What the sensors show is kept.
     assert TEST_ICP in saved
     for serial in icp.meter_serial_numbers:
@@ -420,3 +492,16 @@ async def test_failed_refresh_action_doesnt_keep_backing_off(
     assert coordinator.update_interval == PRICING_RETRY_INTERVAL
     await coordinator.async_refresh()
     assert coordinator.update_interval == PRICING_CHECK_INTERVAL
+
+
+def test_saved_charts_of_a_season_that_no_longer_applies_are_kept() -> None:
+    # A season covered by another for the rest of its days isn't priced, so its saved charts are
+    # kept rather than downloaded again.
+    plan = find_plan_where(has_overlapping_seasons)
+    inner = min(plan.seasons, key=lambda season: season.end - season.start)
+    outer = max(plan.seasons, key=lambda season: season.end - season.start)
+    plan = replace(plan, seasons=(outer, replace(inner, end=outer.end)))
+    charts = dict.fromkeys(season_charts(plan, outer), ChartReading((), ()))
+
+    assert season_explained(charts, plan, outer, inner.start + timedelta(days=14))
+    assert not season_explained({}, plan, outer, inner.start + timedelta(days=14))

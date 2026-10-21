@@ -1,4 +1,4 @@
-"""Tests for reading time-of-use windows from timeframe charts."""
+"""Tests for reading time-of-use windows and prices from timeframe chart legends."""
 
 from __future__ import annotations
 
@@ -8,34 +8,47 @@ from datetime import date
 import pytest
 from PIL import Image, ImageDraw
 
+from custom_components.ecotricity_nz.api import timeframes
+from custom_components.ecotricity_nz.api.glyphs import GLYPHS
 from custom_components.ecotricity_nz.api.timeframes import (
-    SLOTS_PER_DAY,
+    MINUTES_PER_DAY,
     ChartReadError,
-    ChartTier,
+    LegendEntry,
     chart_path,
-    match_tiers,
+    glyph_distance,
     needs_season,
     read_chart,
+    shown_price,
 )
-from tests.conftest import chart_file
+from tests.conftest import (
+    TIME_OF_USE_PLAN,
+    chart_file,
+    chart_name,
+    explained_chart,
+    find_chart_where,
+    find_plan,
+    has_clipped_price,
+    has_clipped_price_needing_its_bar,
+)
 
-PREFIX = "CKHK-RTOU24-"
-SUFFIX = "-WD-NOGST.png"
-WINTER = "RESIDENTIAL-20260401-20260930"
-SPRING = "RESIDENTIAL-20261001-20261231"
-
-# Weekday peak on the fixture charts: 7am to 11am and 5pm to 9pm. Other networks differ, which is
-# why windows are read from each plan's own charts rather than assumed.
-PEAK_SLOTS = frozenset(range(14, 22)) | frozenset(range(34, 42))
-ALL_SLOTS = frozenset(range(SLOTS_PER_DAY))
+WINTER = date(2026, 6, 15)
+# The legend starts below the chart's x-axis labels.
+LEGEND_TOP = 520
 
 
-def _chart(plan: str, season: str) -> bytes:
-    return chart_file(f"{PREFIX}{plan}_260401_T0-{season}{SUFFIX}").read_bytes()
+def _chart(*, weekend: bool = False) -> bytes:
+    """Return the default time-of-use plan's winter chart."""
+    return chart_file(chart_name(find_plan(TIME_OF_USE_PLAN), WINTER, weekend=weekend)).read_bytes()
 
 
-def _expected(peak: str, off_peak: str) -> tuple[str, ...]:
-    return tuple(peak if slot in PEAK_SLOTS else off_peak for slot in range(SLOTS_PER_DAY))
+def _edited(data: bytes, edit: object) -> bytes:
+    """Return a chart with an edit applied to its pixels."""
+    with Image.open(io.BytesIO(data)) as raw:
+        image = raw.convert("RGB")
+    edit(image)  # type: ignore[operator]
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
 
 
 def test_chart_path() -> None:
@@ -52,119 +65,154 @@ def test_needs_season() -> None:
     assert not needs_season("/X-20261001-20261231-WD.png")
 
 
-def test_read_two_tier_import_and_export() -> None:
-    reading = read_chart(_chart("BATT_SPECIAL_LOW", WINTER))
+def test_legend_is_read_as_the_website_shows_it() -> None:
+    # The default fixture's Low Off Peak weekday chart, as its legend reads on the site.
+    reading = read_chart(_chart())
 
-    assert len(reading.import_tiers) == 2
-    assert len(reading.export_tiers) == 2
-    peak = max(reading.import_tiers, key=lambda tier: tier.height)
-    assert peak.slots == PEAK_SLOTS
-
-    # Legend: import 23.87c off peak, 35.87c peak; export 16c off peak, 23c peak.
-    imports = match_tiers(reading.import_tiers, {"CHARGE_LOW": 23.87, "CHARGE_HIGH": 35.87})
-    assert imports == _expected("CHARGE_HIGH", "CHARGE_LOW")
-    exports = match_tiers(reading.export_tiers, {"EG_CHARGE_LOW": -16.0, "EG_CHARGE_HIGH": -23.0})
-    assert exports == _expected("EG_CHARGE_HIGH", "EG_CHARGE_LOW")
-
-
-def test_read_close_prices() -> None:
-    # Legend: 24.04c off peak, 25.35c peak. Only 5% apart, so heights must be precise.
-    reading = read_chart(_chart("CKHK_OFPK_LOW", SPRING))
-
-    imports = match_tiers(reading.import_tiers, {"CHARGE_LOW": 24.04, "CHARGE_HIGH": 25.35})
-    assert imports == _expected("CHARGE_HIGH", "CHARGE_LOW")
-    [export] = reading.export_tiers
-    assert export.slots == ALL_SLOTS
+    assert [(entry.start, entry.end, entry.text) for entry in reading.import_entries] == [
+        (0, 420, "24.04"),
+        (420, 660, "37.35"),
+        (660, 1020, "24.04"),
+        (1020, 1260, "37.35"),
+        (1260, MINUTES_PER_DAY, "24.04"),
+    ]
+    assert [entry.text for entry in reading.export_entries] == [
+        "-13.74",
+        "-15.74",
+        "-13.74",
+        "-15.74",
+        "-13.74",
+    ]
+    assert reading.import_entries[1].slots == range(14, 22)
+    assert reading.import_entries[1].price == pytest.approx(37.35)
 
 
-def test_read_flat_chart_with_unused_bucket() -> None:
-    # Anytime plan outside winter: one tier, even though the plan also has a peak price.
-    reading = read_chart(_chart("CKHK_ANY_LOW", SPRING))
+def test_one_window_covers_the_whole_day() -> None:
+    reading = read_chart(_chart(weekend=True))
 
-    [tier] = reading.import_tiers
-    assert tier.slots == ALL_SLOTS
-    import_prices = {"CHARGE_HIGH": 30.0, "CHARGE_24": 24.57}
-    # One tier fits either price, so the export bars on the same axis (legend -13.74c) settle it.
-    with pytest.raises(ChartReadError, match="more than one"):
-        match_tiers(reading.import_tiers, import_prices)
-    assert match_tiers(
-        reading.import_tiers,
-        import_prices,
-        other_tiers=reading.export_tiers,
-        other_prices={"EG_CHARGE_24": -13.74},
-    ) == (("CHARGE_24",) * SLOTS_PER_DAY)
+    assert [(entry.start, entry.end) for entry in reading.import_entries] == [(0, MINUTES_PER_DAY)]
 
 
-def test_read_shade_shared_by_two_prices() -> None:
-    # "off-peak" and "super off-peak" price for part of the day are drawn in the same shade, so
-    # only their heights tell them apart. Matching against the plan's prices is in test_tariff.py.
-    chart = "ORON-URES-BATT_SPECIAL_LOW_260401_T0-RESIDENTIAL-20260901-20270331-WD-NOGST.png"
-    reading = read_chart(chart_file(chart).read_bytes())
+def test_small_rendering_changes_still_read() -> None:
+    # Lighter text, as a slightly different font weight or anti-aliasing would draw it.
+    def lighten(image: Image.Image) -> None:
+        pixels = image.load()
+        assert pixels is not None
+        for y in range(LEGEND_TOP, image.height):
+            for x in range(image.width):
+                red, green, blue = pixels[x, y]  # type: ignore[misc]
+                pixels[x, y] = tuple(
+                    255 - (255 - value) * 85 // 100 for value in (red, green, blue)
+                )
 
-    assert len(reading.import_tiers) == 4
-    cheaper, low = sorted(reading.import_tiers, key=lambda tier: tier.height)[:2]
-    assert low.colour == cheaper.colour
-    assert cheaper.slots == frozenset(range(6, 10))
-    assert low.slots == frozenset(range(6)) | frozenset(range(44, SLOTS_PER_DAY))
-    assert low.height / cheaper.height == pytest.approx(19.029 / 18.2, abs=0.01)
-
-
-def test_single_tier_is_not_assumed_cheapest() -> None:
-    # 30c, 22c and 15c all fit one tier on their own; the export side pins the scale to 10px/c.
-    tier = ChartTier(colour=(0, 0, 255), height=300, slots=frozenset(range(SLOTS_PER_DAY)))
-    export = ChartTier(colour=(255, 128, 0), height=100, slots=frozenset(range(SLOTS_PER_DAY)))
-    prices = {"CHARGE_LOW": 15.0, "CHARGE_3": 22.0, "CHARGE_HIGH": 30.0}
-
-    with pytest.raises(ChartReadError, match="more than one"):
-        match_tiers((tier,), prices)
-    assert match_tiers(
-        (tier,), prices, other_tiers=(export,), other_prices={"EG_CHARGE_24": -10.0}
-    ) == (("CHARGE_HIGH",) * SLOTS_PER_DAY)
+    assert read_chart(_edited(_chart(), lighten)) == read_chart(_chart())
 
 
-def test_ambiguous_ratio_rejected() -> None:
-    # Heights 2:1 against 40c, 20c and 10c fit peak and shoulder as well as shoulder and off-peak.
-    tall = ChartTier(colour=(0, 0, 255), height=200, slots=frozenset(range(24)))
-    short = ChartTier(colour=(0, 0, 128), height=100, slots=frozenset(range(24, SLOTS_PER_DAY)))
-    prices = {"CHARGE_LOW": 10.0, "CHARGE_3": 20.0, "CHARGE_HIGH": 40.0}
-    export = ChartTier(colour=(255, 128, 0), height=50, slots=frozenset(range(SLOTS_PER_DAY)))
+def test_clipped_price_keeps_its_digits_and_an_estimate() -> None:
+    # Long export lines on battery plans run off the image, cutting the last price short. The
+    # digits that fit are kept, with an estimate of the price from its bar's height.
+    chart = find_chart_where(has_clipped_price)
+    reading = read_chart(chart.read_bytes())
+    clipped = [
+        entry for entry in (*reading.import_entries, *reading.export_entries) if entry.clipped
+    ]
+    sides = explained_chart(chart)
 
-    with pytest.raises(ChartReadError, match="more than one"):
-        match_tiers((tall, short), prices)
-    # An export side that fits both scales doesn't help.
-    with pytest.raises(ChartReadError, match="more than one"):
-        match_tiers(
-            (tall, short),
-            prices,
-            other_tiers=(export,),
-            other_prices={"EG_CHARGE_LOW": -5.0, "EG_CHARGE_HIGH": -10.0},
-        )
-    # Prices without export bars don't either.
-    with pytest.raises(ChartReadError, match="more than one"):
-        match_tiers((tall, short), prices, other_prices={"EG_CHARGE_24": -5.0})
-    assert (
-        match_tiers(
-            (tall, short), prices, other_tiers=(export,), other_prices={"EG_CHARGE_24": -5.0}
-        )
-        == ("CHARGE_3",) * 24 + ("CHARGE_LOW",) * 24
+    assert clipped
+    for entry in clipped:
+        assert entry.price is None
+        assert entry.estimate is not None
+        export = entry in reading.export_entries
+        price = sides[export][1][entry.slots[0]].price
+        assert shown_price(price).startswith(entry.text)
+        assert entry.estimate == pytest.approx(price, abs=0.5)
+
+
+def test_clipped_price_without_bars_has_no_estimate() -> None:
+    chart = find_chart_where(has_clipped_price_needing_its_bar)
+
+    def remove_bars(image: Image.Image) -> None:
+        ImageDraw.Draw(image).rectangle((0, 40, image.width, LEGEND_TOP - 50), fill="white")
+
+    reading = read_chart(_edited(chart.read_bytes(), remove_bars))
+    assert all(entry.estimate is None for entry in reading.export_entries if entry.clipped)
+
+
+def test_clipped_price_with_unmeasured_bars_has_no_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pale or patterned bars can leave no coloured pixels in the column measured. They give no
+    # scale to estimate from, which must not stop the rest of the chart being read.
+    chart = find_chart_where(has_clipped_price)
+    monkeypatch.setattr(
+        timeframes, "_bar_heights", lambda _image: [(0, 0)] * (MINUTES_PER_DAY // 30)
     )
 
+    reading = read_chart(chart.read_bytes())
 
-def test_mismatched_prices_rejected() -> None:
-    reading = read_chart(_chart("BATT_SPECIAL_LOW", WINTER))
-
-    with pytest.raises(ChartReadError):
-        match_tiers(reading.import_tiers, {"CHARGE_LOW": 10.0, "CHARGE_HIGH": 50.0})
-    with pytest.raises(ChartReadError):
-        match_tiers(reading.import_tiers, {"CHARGE_LOW": 0.0})
-    with pytest.raises(ChartReadError):
-        match_tiers((), {"CHARGE_LOW": 1.0})
+    entries = (*reading.import_entries, *reading.export_entries)
+    assert any(entry.clipped for entry in entries)
+    assert all(entry.estimate is None for entry in entries)
 
 
-def test_partial_tiers_rejected() -> None:
-    tier = ChartTier(colour=(0, 0, 255), height=100, slots=frozenset({0, 1}))
-    with pytest.raises(ChartReadError):
-        match_tiers((tier,), {"CHARGE_24": 20.0})
+@pytest.mark.parametrize(
+    ("text", "export", "sign"),
+    [
+        # The printed digits give the sign: an export price can be a cost, and an import price
+        # a credit.
+        ("2", True, 1),
+        ("-2", False, -1),
+        ("-2", True, -1),
+        # With none printed, the column's usual sign.
+        ("", True, -1),
+        ("", False, 1),
+    ],
+)
+def test_clipped_price_estimate_keeps_the_sign_it_was_printed_with(
+    monkeypatch: pytest.MonkeyPatch, text: str, *, export: bool, sign: int
+) -> None:
+    # Bars are drawn by size, so every bar here is 10 pixels per cent.
+    half_day = MINUTES_PER_DAY // 2
+    slots = MINUTES_PER_DAY // 30
+    monkeypatch.setattr(
+        timeframes,
+        "_bar_heights",
+        lambda _image: [(200, 100)] * (slots // 2) + [(25, 25)] * (slots // 2),
+    )
+    imports = [LegendEntry(0, half_day, "20.00")]
+    exports = [LegendEntry(0, half_day, "-10.00")]
+    clipped = LegendEntry(half_day, MINUTES_PER_DAY, text, clipped=True)
+    (imports if not export else exports).append(clipped)
+
+    imports, exports = timeframes._estimate_clipped(Image.new("RGB", (1, 1)), imports, exports)
+
+    estimate = (exports if export else imports)[-1].estimate
+    assert estimate == pytest.approx(sign * 2.5)
+
+
+@pytest.mark.parametrize(
+    ("cents", "shown"),
+    [
+        # Rounded with GST to the cent, then converted back: 30.5532c shows as 30.56c, not 30.55c.
+        (30.5532, "30.56"),
+        (-21.0, "-21.00"),
+        (24.0412, "24.04"),
+    ],
+)
+def test_shown_price_rounds_like_the_legend(cents: float, shown: str) -> None:
+    assert shown_price(cents) == shown
+
+
+def test_glyph_templates_are_far_apart() -> None:
+    templates = {
+        char: tuple(tuple(int(value, 16) * 16 for value in row) for row in rows)
+        for char, rows in GLYPHS.items()
+    }
+    for char, glyph in templates.items():
+        assert glyph_distance(glyph, glyph) == 0
+        for other, template in templates.items():
+            if other != char:
+                assert glyph_distance(glyph, template) > 0.3, (char, other)
 
 
 def test_unreadable_images_rejected() -> None:
@@ -173,102 +221,57 @@ def test_unreadable_images_rejected() -> None:
 
     blank = io.BytesIO()
     Image.new("RGB", (200, 100), "white").save(blank, format="PNG")
-    with pytest.raises(ChartReadError):
+    with pytest.raises(ChartReadError, match="no legend"):
         read_chart(blank.getvalue())
 
 
-# Ecotricity's chart palette, read from a chart legend: light to dark.
-IMPORT_SHADES = [
-    (179, 217, 255),
-    (153, 204, 255),
-    (102, 178, 255),
-    (76, 153, 204),
-    (51, 136, 204),
-    (0, 102, 161),
-    (0, 79, 136),
-]
-EXPORT_SHADES = [
-    (249, 210, 114),
-    (247, 199, 92),
-    (248, 184, 74),
-    (246, 156, 61),
-    (248, 124, 60),
-    (225, 95, 50),
-]
+def test_unknown_character_rejected() -> None:
+    # A blot in the first price, where a digit should be.
+    def blot(image: Image.Image) -> None:
+        ImageDraw.Draw(image).rectangle((150, 556, 156, 568), fill="black")
+
+    with pytest.raises(ChartReadError, match="can't be read"):
+        read_chart(_edited(_chart(), blot))
 
 
-def _draw_chart(imports: list[tuple[tuple[int, int, int], int]], export: tuple) -> bytes:
-    """Draw a chart in Ecotricity's layout: 48 bars, import above the axis and export below."""
-    image = Image.new("RGB", (924, 682), "white")
-    draw = ImageDraw.Draw(image)
-    zero = 344
-    for slot, (colour, height) in enumerate(imports):
-        left = 64 + slot * 17
-        draw.rectangle((left, zero - height, left + 11, zero - 1), fill=colour)
-        draw.rectangle((left, zero, left + 11, zero + export[1]), fill=export[0])
-    out = io.BytesIO()
-    image.save(out, format="PNG")
-    return out.getvalue()
+def test_missing_window_rejected() -> None:
+    # The legend's second line is gone, leaving a gap in the day.
+    def erase_line(image: Image.Image) -> None:
+        ImageDraw.Draw(image).rectangle((0, 578, image.width, 596), fill="white")
+
+    with pytest.raises(ChartReadError, match="cover the day"):
+        read_chart(_edited(_chart(), erase_line))
 
 
-def test_three_tier_chart_with_shoulder() -> None:
-    # Off-peak 20c, shoulder 26c and peak 32c, drawn in the two closest import shades plus dark,
-    # at 8px per cent. Shoulder runs 5-7am and 11am-5pm, as on some networks.
-    off_peak, shoulder, peak = (
-        (IMPORT_SHADES[0], 160),
-        (IMPORT_SHADES[1], 208),
-        (IMPORT_SHADES[6], 256),
-    )
-    day = (
-        [off_peak] * 10
-        + [shoulder] * 4
-        + [peak] * 8
-        + [shoulder] * 12
-        + [peak] * 10
-        + [off_peak] * 4
-    )
-    reading = read_chart(_draw_chart(day, (EXPORT_SHADES[0], 100)))
+def test_unexpected_text_rejected() -> None:
+    # A stray character between two windows on a line.
+    def stray(image: Image.Image) -> None:
+        legend = image.crop((10, 555, 20, 571))
+        image.paste(legend, (230, 555))
 
-    assert len(reading.import_tiers) == 3
-    slots = match_tiers(
-        reading.import_tiers, {"CHARGE_LOW": 20.0, "CHARGE_3": 26.0, "CHARGE_HIGH": 32.0}
-    )
-    expected = (
-        ["CHARGE_LOW"] * 10
-        + ["CHARGE_3"] * 4
-        + ["CHARGE_HIGH"] * 8
-        + ["CHARGE_3"] * 12
-        + ["CHARGE_HIGH"] * 10
-        + ["CHARGE_LOW"] * 4
-    )
-    assert slots == tuple(expected)
+    with pytest.raises(ChartReadError, match="unexpected text"):
+        read_chart(_edited(_chart(), stray))
 
 
-@pytest.mark.parametrize(("gap", "tiers"), [(0, 1), (2, 1), (3, 2)])
-def test_one_shade_splits_by_height(gap: int, tiers: int) -> None:
-    # Bars of one price measure the same height, so only a gap over 2px means a second price.
-    day = [(IMPORT_SHADES[0], 160)] * 24 + [(IMPORT_SHADES[0], 160 + gap)] * 24
-    reading = read_chart(_draw_chart(day, (EXPORT_SHADES[0], 100)))
+def test_unreadable_legend_heading_rejected() -> None:
+    # Only the export column's first letter is left, which gives no character width.
+    def erase_heading(image: Image.Image) -> None:
+        ImageDraw.Draw(image).rectangle((482, 528, image.width, 546), fill="white")
 
-    assert len(reading.import_tiers) == tiers
+    with pytest.raises(ChartReadError, match="headings can't be read"):
+        read_chart(_edited(_chart(), erase_heading))
 
 
-def test_closest_export_shades_stay_separate() -> None:
-    # The two closest shades in the whole palette.
-    first, second = EXPORT_SHADES[1], EXPORT_SHADES[2]
-    image = Image.new("RGB", (924, 682), "white")
-    draw = ImageDraw.Draw(image)
-    for slot in range(SLOTS_PER_DAY):
-        left = 64 + slot * 17
-        draw.rectangle((left, 244, left + 11, 343), fill=IMPORT_SHADES[2])
-        colour, height = (first, 80) if slot < 24 else (second, 120)
-        draw.rectangle((left, 344, left + 11, 344 + height), fill=colour)
-    out = io.BytesIO()
-    image.save(out, format="PNG")
+def test_legend_without_import_windows_rejected() -> None:
+    # Only the headings are left.
+    def erase_windows(image: Image.Image) -> None:
+        ImageDraw.Draw(image).rectangle((0, 550, image.width, image.height), fill="white")
 
-    reading = read_chart(out.getvalue())
+    with pytest.raises(ChartReadError, match="no import windows"):
+        read_chart(_edited(_chart(), erase_windows))
 
-    assert len(reading.export_tiers) == 2
-    assert match_tiers(reading.export_tiers, {"EG_CHARGE_LOW": -10.0, "EG_CHARGE_HIGH": -15.0}) == (
-        ("EG_CHARGE_LOW",) * 24 + ("EG_CHARGE_HIGH",) * 24
-    )
+
+def test_entry_slots() -> None:
+    entry = LegendEntry(start=420, end=570, text="-28.34")
+    assert entry.slots == range(14, 19)
+    assert LegendEntry(start=0, end=30, text="-2", clipped=True).price is None

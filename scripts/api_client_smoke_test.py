@@ -17,21 +17,27 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import aiohttp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from custom_components.ecotricity_nz.api import OnboardingClient, PortalClient
-from custom_components.ecotricity_nz.api.timeframes import (
-    chart_path,
-    match_tiers,
-    read_chart,
+from custom_components.ecotricity_nz.api import EcotricityError, OnboardingClient, PortalClient
+from custom_components.ecotricity_nz.api.timeframes import read_chart
+from custom_components.ecotricity_nz.tariff import (
+    chart_seasons,
+    day_windows,
+    price_plan_day,
+    season_charts,
 )
-from custom_components.ecotricity_nz.tariff import price_day, season_for
+
+if TYPE_CHECKING:
+    from custom_components.ecotricity_nz.api.models import Plan
+    from custom_components.ecotricity_nz.api.timeframes import ChartReading
 
 NZ = ZoneInfo("Pacific/Auckland")
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -50,6 +56,43 @@ def _load_env() -> None:
 
 def _mask(text: str) -> str:
     return text[:4] + "*" * (len(text) - 6) + text[-2:] if len(text) > 6 else "***"  # noqa: PLR2004 - shortest value worth partly masking
+
+
+async def _async_read_charts(
+    onboarding: OnboardingClient, plan: Plan, today: date
+) -> dict[str, ChartReading]:
+    """Read every season's charts, as the integration does: periods are worked out across them."""
+    charts: dict[str, ChartReading] = {}
+    for season in chart_seasons(plan, today, upcoming=True):
+        for path in season_charts(plan, season):
+            try:
+                charts[path] = read_chart(await onboarding.async_get_chart(path))
+            except EcotricityError as err:
+                print(f"Chart {path}: {err}")
+    return charts
+
+
+def _print_pricing(plan: Plan, today: date, charts: dict[str, ChartReading]) -> None:
+    """Print today's periods, windows and daily charge, as the integration works them out."""
+    priced = price_plan_day(charts, plan, today)
+    slots, alignments, pricing = priced.slots, priced.alignments, priced.pricing
+    for error in (*slots.errors, *slots.missing, *slots.later_errors):
+        print(f"Charts: {error}")
+    print(f"Plan {plan.name} ({plan.description}), today (cents excl GST):")
+    for label, side, alignment in (
+        ("import", pricing.import_side, alignments[0]),
+        ("export", pricing.export_side, alignments[1]),
+    ):
+        if side is None:
+            continue
+        print(f"  {label} periods ({alignment.value}): {side.buckets}")
+        for day_type, day in (("weekday", side.slots.weekday), ("weekend", side.slots.weekend)):
+            windows = ", ".join(
+                f"{start}-{end} {slot.bucket} {slot.price:.2f}"
+                for start, end, slot in day_windows(day)
+            )
+            print(f"  {label} {day_type}: {windows}")
+    print(f"  daily {pricing.daily_total:.2f}")
 
 
 async def main() -> int:
@@ -101,28 +144,7 @@ async def main() -> int:
                     )
 
         today = datetime.now(NZ).date()
-        pricing = price_day(plan, today)
-        print(f"Plan {plan.name} ({plan.description}), prices today (cents excl GST):")
-        print("  import", pricing.import_buckets)
-        print("  export", pricing.export_buckets)
-        print(f"  daily {pricing.daily_total:.2f}")
-
-        season = season_for(plan, today)
-        for label, template in (
-            ("weekday", plan.timeframe_chart_weekday),
-            ("weekend", plan.timeframe_chart_weekend),
-        ):
-            if not template:
-                continue
-            path = chart_path(template, season.start, season.end) if season else template
-            reading = read_chart(await onboarding.async_get_chart(path))
-            slots = match_tiers(reading.import_tiers, pricing.import_buckets)
-            changes = [
-                f"{slot // 2:02d}:{30 * (slot % 2):02d} {bucket}"
-                for slot, bucket in enumerate(slots)
-                if slot == 0 or slots[slot - 1] != bucket
-            ]
-            print(f"  {label} import windows: {', '.join(changes)}")
+        _print_pricing(plan, today, await _async_read_charts(onboarding, plan, today))
     return 0
 
 

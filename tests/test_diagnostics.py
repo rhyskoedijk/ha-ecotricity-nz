@@ -12,7 +12,11 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 )
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from tests.conftest import TEST_ICP, WINTER_PEAK
+from tests.conftest import (
+    DEFAULT_NETWORK,
+    TEST_ICP,
+    WINTER_PEAK,
+)
 
 
 @pytest.mark.usefixtures("mock_onboarding", "mock_portal")
@@ -31,11 +35,23 @@ async def test_diagnostics_redact_personal_data(
     text = json.dumps(diagnostics, default=str)
 
     assert diagnostics["pricing"]["plan"]["description"] == "Low User"
-    assert diagnostics["pricing"]["import_slots"] is not None
+    # The plan's public name is kept, unlike the entry title, which names the ICP.
+    plan = portal_config_entry.runtime_data.pricing.data.plan
+    assert diagnostics["pricing"]["plan"]["name"] == plan.name
+    assert diagnostics["entry"]["title"] == "**REDACTED**"
+    assert diagnostics["pricing"]["pricing"]["import_side"]["slots"] is not None
+    assert diagnostics["pricing"]["missing_charts"] == []
+    assert diagnostics["pricing"]["later_errors"] == []
+    periods = diagnostics["pricing"]["periods"]
+    assert periods["import_alignment"] == "network"
+    # Sets are written as lists, not as their repr.
+    assert periods["buckets"] == sorted(
+        portal_config_entry.runtime_data.pricing.data.periods.buckets
+    )
     # Registry details are kept; only the identifying fields inside them are redacted.
     details = diagnostics["pricing"]["icp_details"]
-    assert details["network_code"] == "CKHK"
+    assert details["network_code"] == DEFAULT_NETWORK
     assert details["icp"] == "**REDACTED**"
-    assert details["address"] == "**REDACTED**"
+    assert "address" not in details
     for secret in (TEST_ICP, "123456", "secret", "Example Road", "900000001", "100001"):
         assert secret not in text

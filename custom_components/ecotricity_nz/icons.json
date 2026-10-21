@@ -1,7 +1,7 @@
 {
   "entity": {
     "image": {
-      "time_of_use_chart": {
+      "current_time_of_use_chart": {
         "default": "mdi:chart-bar"
       }
     },
@@ -18,6 +18,15 @@
       "meter": {
         "default": "mdi:meter-electric-outline"
       },
+      "registered_generation_capacity": {
+        "default": "mdi:solar-power-variant"
+      },
+      "network_import_loss_factor": {
+        "default": "mdi:transmission-tower-import"
+      },
+      "network_export_loss_factor": {
+        "default": "mdi:transmission-tower-export"
+      },
       "plan": {
         "default": "mdi:file-document-outline"
       },
@@ -27,17 +36,14 @@
       "next_pricing_season_change": {
         "default": "mdi:calendar-arrow-right"
       },
+      "last_pricing_update": {
+        "default": "mdi:update"
+      },
       "daily_charge": {
         "default": "mdi:cash-clock"
       },
       "current_import_price": {
         "default": "mdi:cash-plus"
-      },
-      "current_export_price": {
-        "default": "mdi:cash-minus"
-      },
-      "current_controlled_price": {
-        "default": "mdi:water-boiler"
       },
       "anytime_import_price": {
         "default": "mdi:cash-plus"
@@ -51,6 +57,9 @@
       "named_import_price": {
         "default": "mdi:cash-plus"
       },
+      "current_export_price": {
+        "default": "mdi:cash-minus"
+      },
       "anytime_export_price": {
         "default": "mdi:cash-minus"
       },
@@ -62,6 +71,9 @@
       },
       "named_export_price": {
         "default": "mdi:cash-minus"
+      },
+      "current_controlled_price": {
+        "default": "mdi:water-boiler"
       },
       "anytime_controlled_price": {
         "default": "mdi:water-boiler"
@@ -78,30 +90,83 @@
       "current_import_period": {
         "default": "mdi:clock-outline",
         "state": {
+          "anytime": "mdi:clock-outline",
           "peak": "mdi:clock-alert-outline",
-          "off_peak": "mdi:clock-check-outline",
+          "shoulder_peak": "mdi:clock-time-four-outline",
           "shoulder": "mdi:clock-time-four-outline",
+          "off_peak": "mdi:clock-check-outline",
           "super_off_peak": "mdi:clock-check",
-          "weekend": "mdi:calendar-weekend-outline",
-          "anytime": "mdi:clock-outline"
+          "weekend": "mdi:calendar-weekend-outline"
         }
       },
-      "current_export_period": {
+      "current_supplier_import_period": {
         "default": "mdi:clock-outline",
         "state": {
+          "anytime": "mdi:clock-outline",
           "peak": "mdi:clock-alert-outline",
-          "off_peak": "mdi:clock-check-outline",
+          "shoulder_peak": "mdi:clock-time-four-outline",
           "shoulder": "mdi:clock-time-four-outline",
+          "off_peak": "mdi:clock-check-outline",
           "super_off_peak": "mdi:clock-check",
-          "weekend": "mdi:calendar-weekend-outline",
-          "anytime": "mdi:clock-outline"
+          "weekend": "mdi:calendar-weekend-outline"
+        }
+      },
+      "current_network_import_period": {
+        "default": "mdi:clock-outline",
+        "state": {
+          "anytime": "mdi:clock-outline",
+          "peak": "mdi:clock-alert-outline",
+          "shoulder_peak": "mdi:clock-time-four-outline",
+          "shoulder": "mdi:clock-time-four-outline",
+          "off_peak": "mdi:clock-check-outline",
+          "super_off_peak": "mdi:clock-check",
+          "weekend": "mdi:calendar-weekend-outline"
         }
       },
       "next_import_period_change": {
         "default": "mdi:clock-end"
       },
+      "current_export_period": {
+        "default": "mdi:clock-outline",
+        "state": {
+          "anytime": "mdi:clock-outline",
+          "peak": "mdi:clock-alert-outline",
+          "shoulder_peak": "mdi:clock-time-four-outline",
+          "shoulder": "mdi:clock-time-four-outline",
+          "off_peak": "mdi:clock-check-outline",
+          "super_off_peak": "mdi:clock-check",
+          "weekend": "mdi:calendar-weekend-outline"
+        }
+      },
+      "current_supplier_export_period": {
+        "default": "mdi:clock-outline",
+        "state": {
+          "anytime": "mdi:clock-outline",
+          "peak": "mdi:clock-alert-outline",
+          "shoulder_peak": "mdi:clock-time-four-outline",
+          "shoulder": "mdi:clock-time-four-outline",
+          "off_peak": "mdi:clock-check-outline",
+          "super_off_peak": "mdi:clock-check",
+          "weekend": "mdi:calendar-weekend-outline"
+        }
+      },
+      "current_network_export_period": {
+        "default": "mdi:clock-outline",
+        "state": {
+          "anytime": "mdi:clock-outline",
+          "peak": "mdi:clock-alert-outline",
+          "shoulder_peak": "mdi:clock-time-four-outline",
+          "shoulder": "mdi:clock-time-four-outline",
+          "off_peak": "mdi:clock-check-outline",
+          "super_off_peak": "mdi:clock-check",
+          "weekend": "mdi:calendar-weekend-outline"
+        }
+      },
       "next_export_period_change": {
         "default": "mdi:clock-end"
+      },
+      "latest_day_of_usage": {
+        "default": "mdi:calendar-check"
       },
       "latest_day_imported": {
         "default": "mdi:transmission-tower-import"
@@ -112,17 +177,8 @@
       "latest_day_carbon_savings": {
         "default": "mdi:molecule-co2"
       },
-      "latest_day_of_usage": {
-        "default": "mdi:calendar-check"
-      },
       "last_meter_data_update": {
         "default": "mdi:cloud-download-outline"
-      },
-      "last_pricing_update": {
-        "default": "mdi:update"
-      },
-      "registered_generation_capacity": {
-        "default": "mdi:solar-power-variant"
       }
     }
   },

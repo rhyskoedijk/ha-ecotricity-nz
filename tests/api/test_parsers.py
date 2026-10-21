@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.ecotricity_nz.api import (
+    ConsumptionData,
     EcotricityResponseError,
     IcpNotFoundError,
     RateUnit,
+    Season,
 )
 from custom_components.ecotricity_nz.api.parsers import (
     localise_wall_time,
@@ -22,23 +25,32 @@ from custom_components.ecotricity_nz.api.parsers import (
     parse_values,
     portal_wall_time,
 )
-from tests.conftest import DEFAULT_NETWORK, TEST_ICP, load_json_fixture, load_network_fixture
+from custom_components.ecotricity_nz.tariff import season_for
+from tests.conftest import (
+    ANYTIME_PLAN,
+    DEFAULT_NETWORK,
+    DEFAULT_PRICE_CATEGORY,
+    TEST_ICP,
+    load_json_fixture,
+    load_network_fixture,
+    load_plan_list,
+)
 
 NZ = ZoneInfo("Pacific/Auckland")
 
 
 def test_parse_icp() -> None:
-    icp = parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json"))
+    raw = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    icp = parse_icp(raw)
 
     assert icp.icp == TEST_ICP
-    assert icp.network_code == "CKHK"
-    assert icp.network_name == "Wellington Electricity Lines"
-    assert icp.price_category == "RTOU24"
+    assert icp.network_code == DEFAULT_NETWORK
+    assert icp.network_name == raw["content"]["network"]["myNetwork"]["description"]
+    assert icp.price_category == DEFAULT_PRICE_CATEGORY
     assert icp.retailer_code == "ECOT"
     assert icp.register_codes == ("UN", "EG", "7304", "7304")
     assert icp.meter_serial_numbers == ("900000001",)
     assert icp.has_export
-    assert icp.address == "1 Example Road, Testville, Sampletown 9999"
 
 
 @pytest.mark.parametrize(
@@ -67,19 +79,26 @@ def test_parse_icp_single_item_lists() -> None:
 
 
 def test_parse_plan_list() -> None:
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    content = raw["content"][0]
+    plans = parse_plan_list(raw)
 
-    assert plans.default.description == "Eco Off Peak"
+    assert plans.default.description == content["default"]["price_plan_description"]
     assert plans.alternative is not None
-    assert plans.alternative.description == "Low Off Peak"
+    assert plans.alternative.description == content["alternative"]["price_plan_description"]
     names = [plan.description for plan in plans.all_plans]
-    assert names[0] == "Eco Off Peak"
-    assert "Low User" in names
+    assert names[0] == plans.default.description
+    assert ANYTIME_PLAN in names
     assert len(names) == len(set(names))
 
     levy = next(rate for rate in plans.default.retail_rates if rate.is_levy)
     assert levy.unit is RateUnit.PER_KWH
-    assert levy.price == pytest.approx(0.16)
+    raw_levy = next(
+        rate
+        for rate in content["default"]["retail_rates"]
+        if rate["charge_description"] == levy.description
+    )
+    assert levy.price == pytest.approx(raw_levy["price"])
 
     export = next(rate for rate in plans.default.retail_rates if rate.is_export)
     assert export.price < 0
@@ -96,12 +115,64 @@ def test_parse_plan_list() -> None:
 
 
 def test_find_plans() -> None:
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json"))
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
 
     assert plans.find_by_name("  low   USER ") is not None
     assert plans.find_by_name("Nonexistent") is None
     assert plans.find(plans.default.id) is plans.default
     assert plans.find("missing") is None
+
+
+def _all_year_plan_list() -> tuple[Any, list[dict[str, Any]]]:
+    """Return the default plan list with no seasons, and its plan's dated rates in one year."""
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    default = raw["content"][0]["default"]
+    default["seasons"] = []
+    dated = [rate for rate in default["network_rates"] if rate["valid_start"] and rate["valid_end"]]
+    for rate in dated:
+        rate["season"] = "All-Year Rates"
+        rate["valid_start"], rate["valid_end"] = "2026-04-01", "2027-03-31"
+    return raw, dated
+
+
+def test_plan_without_seasons_spans_its_rates() -> None:
+    # A plan whose rates apply all year can publish no seasons. It still needs one, to fill in its
+    # chart dates, so it gets one spanning its dated rates.
+    raw, _dated = _all_year_plan_list()
+
+    (season,) = parse_plan_list(raw).default.seasons
+
+    assert season == Season(name="All-Year Rates", start=date(2026, 4, 1), end=date(2027, 3, 31))
+
+
+def test_plan_without_seasons_publishing_next_years_rates_has_a_season_for_each_year() -> None:
+    # Next year's rates can be published before this year ends. A season spanning both years would
+    # give a chart URL that doesn't exist, so each year keeps its own.
+    raw, dated = _all_year_plan_list()
+    next_year = [
+        {**rate, "id": f"{rate['id']}-next", "valid_start": "2027-04-01", "valid_end": "2028-03-31"}
+        for rate in dated
+    ]
+    raw["content"][0]["default"]["network_rates"].extend(next_year)
+
+    plan = parse_plan_list(raw).default
+
+    assert plan.seasons == (
+        Season(name="All-Year Rates", start=date(2026, 4, 1), end=date(2027, 3, 31)),
+        Season(name="All-Year Rates", start=date(2027, 4, 1), end=date(2028, 3, 31)),
+    )
+    assert season_for(plan, date(2027, 3, 31)) == plan.seasons[0]
+    assert season_for(plan, date(2027, 4, 1)) == plan.seasons[1]
+
+
+def test_plan_without_seasons_or_dated_rates_has_no_season() -> None:
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    default = raw["content"][0]["default"]
+    default["seasons"] = []
+    for rate in [*default["retail_rates"], *default["network_rates"]]:
+        rate["valid_start"] = rate["valid_end"] = None
+
+    assert parse_plan_list(raw).default.seasons == ()
 
 
 @pytest.mark.parametrize(
@@ -143,7 +214,6 @@ def test_parse_values_across_dst_end() -> None:
     assert starts[0] == datetime(2026, 4, 4, 11, 0, tzinfo=UTC)
     assert data.imported_kwh[-1].end == datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
     assert data.imported_kwh[0].value == pytest.approx(0.5)
-    assert not data.is_empty
 
 
 def test_parse_values_skips_bad_items() -> None:
@@ -176,7 +246,7 @@ def test_parse_values_skips_bad_items() -> None:
     }
     data = parse_values(payload, NZ)
     assert [reading.value for reading in data.imported_kwh] == [2.0]
-    assert parse_values({}, NZ).is_empty
+    assert parse_values({}, NZ) == ConsumptionData()
     with pytest.raises(EcotricityResponseError):
         parse_values([], NZ)
 
@@ -265,7 +335,6 @@ def test_parse_indicator() -> None:
     indicator = parse_indicator(load_json_fixture("portal_init_data.json"), NZ)
 
     assert indicator.indicator_id == "00000000-0000-0000-0000-000000000001"
-    assert indicator.display_name == TEST_ICP
     assert indicator.data_start == datetime(2026, 3, 1, 0, 0, tzinfo=NZ)
     assert indicator.data_end == datetime(2026, 4, 9, 0, 0, tzinfo=NZ)
     assert indicator.last_import == datetime(2026, 4, 10, 3, 6, 24, 0, tzinfo=NZ)
@@ -290,7 +359,7 @@ def test_plan_titles() -> None:
     assert titles["lowbattery user"] == "Low ecoSOLAR"
     assert "default" not in titles
 
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json")).with_titles(
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles(
         titles
     )
     battery = plans.find_by_name("Low ecoSOLAR")
@@ -298,15 +367,15 @@ def test_plan_titles() -> None:
     assert battery is not None
     assert battery.name == "Low ecoSOLAR"
     assert battery.description == "LowBATTERY User"
-    assert plans.default.name == "ecoSAVER"
+    assert plans.default.name == titles[plans.default.description.casefold()]
     assert plans.alternative is not None
-    assert plans.alternative.name == "Low ecoSAVER"
+    assert plans.alternative.name == titles[plans.alternative.description.casefold()]
 
 
 def test_plan_without_title_uses_description() -> None:
-    plans = parse_plan_list(load_network_fixture(DEFAULT_NETWORK, "plan_list.json")).with_titles({})
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles({})
 
-    assert plans.default.name == "Eco Off Peak"
+    assert [plan.name for plan in plans.all_plans] == [plan.description for plan in plans.all_plans]
 
 
 def test_plan_titles_skip_bad_entries() -> None:

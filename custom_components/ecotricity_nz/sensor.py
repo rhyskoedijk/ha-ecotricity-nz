@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import date, datetime, time, tzinfo
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -16,9 +16,8 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
 )
 from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfMass, UnitOfPower
-from homeassistant.core import CALLBACK_TYPE, callback
+from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST, DOMAIN, GST_FACTOR
@@ -205,7 +204,9 @@ def _pricing_sensors(
         if description.exists_fn(data)
     }
     sensors["daily_charge"] = partial(DailyChargeSensor, pricing, icp)
-    has_export = data.icp.has_export or data.pricing.has_export
+    # Plans list export rates whatever the ICP's registers, so only an export (EG) register
+    # shows the ICP exports.
+    has_export = data.icp.has_export
     for export in (False, True) if has_export else (False,):
         direction = "export" if export else "import"
         sensors[f"current_{direction}_price"] = partial(
@@ -571,34 +572,13 @@ class _HalfHourlyEntity(_PricingEntity):
     ) -> None:
         super().__init__(coordinator, icp, description)
         self._local_tz = local_tz
-        self._unsub_tick: CALLBACK_TYPE | None = None
 
     async def async_added_to_hass(self) -> None:
-        """Start the half-hour timer."""
+        """Update at each half-hour, with the coordinator's timer."""
         await super().async_added_to_hass()
-        self._schedule_tick()
-        self.async_on_remove(self._cancel_tick)
-
-    @callback
-    def _schedule_tick(self) -> None:
-        now = dt_util.utcnow()
-        boundary = now.replace(minute=30 if now.minute < 30 else 0, second=0, microsecond=0)  # noqa: PLR2004 - minutes in half an hour
-        if boundary <= now:
-            boundary += timedelta(hours=1)
-        self._unsub_tick = async_track_point_in_utc_time(self.hass, self._tick, boundary)
-
-    @callback
-    def _tick(self, _now: datetime) -> None:
-        self._unsub_tick = None
-        self.coordinator.async_ensure_today()
-        self.async_write_ha_state()
-        self._schedule_tick()
-
-    @callback
-    def _cancel_tick(self) -> None:
-        if self._unsub_tick is not None:
-            self._unsub_tick()
-            self._unsub_tick = None
+        self.async_on_remove(
+            self.coordinator.async_add_half_hour_listener(self.async_write_ha_state)
+        )
 
     def _current_slot(self, *, export: bool) -> Slot | None:
         side = self._side(export=export)

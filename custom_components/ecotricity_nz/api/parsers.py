@@ -167,12 +167,10 @@ def _rate_unit(raw: str) -> RateUnit:
 def _parse_rate(raw: dict[str, Any], *, network: bool) -> Rate:
     unit = str(raw.get("unit") or "")
     return Rate(
-        id=str(raw.get("id", "")),
         description=str(raw.get("charge_description") or raw.get("rate_description") or ""),
         charge=raw.get("charge") or None,
         register_type=raw.get("register_type") or None,
         unit=_rate_unit(unit),
-        raw_unit=unit,
         price=float(raw["price"]),
         is_network=network,
         season=raw.get("season") or None,
@@ -221,8 +219,6 @@ def _parse_plan(raw: dict[str, Any]) -> Plan:
         description=str(raw.get("price_plan_description", "")).strip(),
         network=str(raw.get("network", "")),
         price_category=str(raw.get("price_category", "")),
-        customer_type=str(raw.get("customer_type", "")),
-        standard_low=raw.get("standard_low") or None,
         retail_rates=retail_rates,
         network_rates=network_rates,
         seasons=seasons or _rates_season((*retail_rates, *network_rates)),

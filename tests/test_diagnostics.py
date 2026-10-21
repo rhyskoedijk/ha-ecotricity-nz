@@ -35,6 +35,10 @@ async def test_diagnostics_redact_personal_data(
     text = json.dumps(diagnostics, default=str)
 
     assert diagnostics["pricing"]["plan"]["description"] == "Low User"
+    # The plan's public name is kept, unlike the entry title, which names the ICP.
+    plan = portal_config_entry.runtime_data.pricing.data.plan
+    assert diagnostics["pricing"]["plan"]["name"] == plan.name
+    assert diagnostics["entry"]["title"] == "**REDACTED**"
     assert diagnostics["pricing"]["pricing"]["import_side"]["slots"] is not None
     assert diagnostics["pricing"]["missing_charts"] == []
     assert diagnostics["pricing"]["later_errors"] == []

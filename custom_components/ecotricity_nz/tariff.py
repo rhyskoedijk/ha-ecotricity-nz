@@ -285,8 +285,6 @@ class DayPricing:
     """Prices for controlled-load registers (such as hot water). Empty for most plans."""
     controlled_components: dict[str, tuple[PriceComponent, ...]]
     daily_charges: tuple[DailyCharge, ...]
-    has_export: bool
-    """Whether the plan has export rates on the day."""
     rate_buckets: dict[str, tuple[PriceComponent, ...] | None] = field(default_factory=dict)
     """Each period's parts from the rates alone, on a side whose charts couldn't be read (see
     `rate_periods`). None for a period whose price only the chart can tell."""
@@ -720,7 +718,6 @@ def price_day(
         controlled_buckets=controlled,
         controlled_components=controlled_components,
         daily_charges=daily,
-        has_export=not side_rates(plan, day, export=True).is_empty,
         rate_buckets=rate_buckets,
     )
 

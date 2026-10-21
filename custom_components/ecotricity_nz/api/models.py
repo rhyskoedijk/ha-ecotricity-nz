@@ -31,14 +31,12 @@ class RateUnit(StrEnum):
 class Rate:
     """A single retail or network charge line on a plan."""
 
-    id: str
     description: str
     charge: str | None
     """Charge bucket code from the API, for example CHARGE_24, CHARGE_HIGH or CHARGE_LOW."""
     register_type: str | None
     """Meter register this rate applies to. EG means export (generation)."""
     unit: RateUnit
-    raw_unit: str
     price: float
     """Price in cents (per kWh or per day), excluding GST. Export rates are negative."""
     is_network: bool
@@ -97,8 +95,6 @@ class Plan:
     description: str
     network: str
     price_category: str
-    customer_type: str
-    standard_low: str | None
     retail_rates: tuple[Rate, ...]
     network_rates: tuple[Rate, ...]
     seasons: tuple[Season, ...]

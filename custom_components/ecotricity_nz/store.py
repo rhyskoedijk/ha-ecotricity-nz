@@ -128,9 +128,8 @@ def _snapshot(raw: dict[str, Any]) -> PricingSnapshot:
         plan_titles={str(key): str(value) for key, value in raw["plan_titles"].items()},
         charts={str(path): _chart(chart) for path, chart in raw["charts"].items()},
         charts_plan_id=raw["charts_plan_id"],
-        # Files saved before the count was kept don't have it, or the gaps.
-        chart_gaps=tuple(str(gap) for gap in raw.get("chart_gaps", ())),
-        missing_chart_fetches=int(raw.get("missing_chart_fetches", 0)),
+        chart_gaps=tuple(str(gap) for gap in raw["chart_gaps"]),
+        missing_chart_fetches=int(raw["missing_chart_fetches"]),
     )
 
 
@@ -205,12 +204,10 @@ def _icp(raw: dict[str, Any]) -> IcpDetails:
 
 def _rate_dict(rate: Rate) -> dict[str, Any]:
     return {
-        "id": rate.id,
         "description": rate.description,
         "charge": rate.charge,
         "register_type": rate.register_type,
         "unit": rate.unit.value,
-        "raw_unit": rate.raw_unit,
         "price": rate.price,
         "is_network": rate.is_network,
         "season": rate.season,
@@ -221,12 +218,10 @@ def _rate_dict(rate: Rate) -> dict[str, Any]:
 
 def _rate(raw: dict[str, Any]) -> Rate:
     return Rate(
-        id=raw["id"],
         description=raw["description"],
         charge=raw["charge"],
         register_type=raw["register_type"],
         unit=RateUnit(raw["unit"]),
-        raw_unit=raw["raw_unit"],
         price=float(raw["price"]),
         is_network=raw["is_network"],
         season=raw["season"],
@@ -242,8 +237,6 @@ def _plan_dict(plan: Plan) -> dict[str, Any]:
         "description": plan.description,
         "network": plan.network,
         "price_category": plan.price_category,
-        "customer_type": plan.customer_type,
-        "standard_low": plan.standard_low,
         "retail_rates": [_rate_dict(rate) for rate in plan.retail_rates],
         "network_rates": [_rate_dict(rate) for rate in plan.network_rates],
         "seasons": [
@@ -263,8 +256,6 @@ def _plan(raw: dict[str, Any]) -> Plan:
         description=raw["description"],
         network=raw["network"],
         price_category=raw["price_category"],
-        customer_type=raw["customer_type"],
-        standard_low=raw["standard_low"],
         retail_rates=tuple(_rate(rate) for rate in raw["retail_rates"]),
         network_rates=tuple(_rate(rate) for rate in raw["network_rates"]),
         seasons=tuple(

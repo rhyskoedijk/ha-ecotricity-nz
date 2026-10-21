@@ -68,6 +68,7 @@ from tests.conftest import (
     has_hours_without_a_network_rate,
     has_mixed_periods,
     has_overlapping_seasons,
+    has_supplier_periods_and_anytime_network,
 )
 
 NZ = ZoneInfo("Pacific/Auckland")
@@ -77,12 +78,10 @@ SPRING = date(2026, 10, 15)
 
 def _rate(**kwargs: object) -> Rate:
     defaults: dict[str, object] = {
-        "id": "1",
         "description": "",
         "charge": None,
         "register_type": None,
         "unit": RateUnit.PER_KWH,
-        "raw_unit": "cents/kWh",
         "price": 1.0,
         "is_network": False,
     }
@@ -150,7 +149,6 @@ def test_daily_charges() -> None:
 
     assert pricing.daily_total == pytest.approx(155.0)
     assert any(charge.is_network for charge in pricing.daily_charges)
-    assert pricing.has_export
 
 
 def test_daily_charges_leave_out_capacity_charges() -> None:
@@ -692,6 +690,21 @@ def test_side_that_needs_its_charts_is_rejected_without_them() -> None:
 
     with pytest.raises(ChartReadError, match="couldn't be downloaded or read"):
         season_slots({}, plan, SPRING_SEASON, SPRING, export=True)
+
+
+def test_supplier_periods_with_an_anytime_network_rate_need_their_charts() -> None:
+    # The network has one rate, but Ecotricity's peak and off-peak rates still need a chart to
+    # say when each applies, so it isn't taken to be one price all day.
+    plan = find_plan_where(has_supplier_periods_and_anytime_network)
+    season = next(
+        season
+        for season in plan.seasons
+        if len(side_rates(plan, season.start, export=False).supplier) > 1
+    )
+
+    with pytest.raises(ChartReadError, match="couldn't be downloaded or read"):
+        season_slots({}, plan, season, season.start, export=False)
+    assert plan_slots({}, plan, season.start).errors
 
 
 def test_chart_whose_cut_off_price_fits_several_of_the_rates_prices_is_rejected() -> None:

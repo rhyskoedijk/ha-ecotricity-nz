@@ -710,12 +710,10 @@ async def test_fixed_chart_plan_has_later_seasons_controlled_periods(
         )
 
     night = Rate(
-        id="c1",
         description="Controlled night",
         charge="CHARGE_LOW",
         register_type="CN",
         unit=RateUnit.PER_KWH,
-        raw_unit="cents/kWh",
         price=9.0,
         is_network=False,
         valid_start=later.start,
@@ -764,8 +762,8 @@ async def test_refreshes_after_nz_midnight(
 async def test_half_hourly_sensors_show_the_new_day_at_midnight(
     hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
 ) -> None:
-    # The half-hourly sensors tick at midnight itself, before the midnight refresh, so they
-    # work out the new day rather than show the old season's next change.
+    # The new day is worked out before the half-hourly sensors update at midnight, so they never
+    # show the old season's next change.
     freezer.move_to(datetime(2026, 9, 30, 10, 50, tzinfo=UTC))  # 11:50pm NZDT
     await _setup(hass, config_entry)
     coordinator = config_entry.runtime_data.pricing
@@ -774,14 +772,8 @@ async def test_half_hourly_sensors_show_the_new_day_at_midnight(
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     assert coordinator.data.day == date(2026, 10, 1)
-    at_midnight = _state(hass, "next_import_period_change")
     assert _state(hass, "pricing_season") == "Seasonal Rates 10/2026 - 12/2026"
-
-    freezer.move_to(datetime(2026, 9, 30, 11, 0, 6, tzinfo=UTC))
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-    assert at_midnight != "unknown"
-    assert _state(hass, "next_import_period_change") == at_midnight
+    assert _state(hass, "next_import_period_change") != "unknown"
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -892,12 +884,10 @@ def _with_new_season(plans: PlanList) -> PlanList:
 
     def shoulder(description: str, price: float, *, network: bool) -> Rate:
         return Rate(
-            id=f"900{int(network)}",
             description=description,
             charge="CHARGE_3",
             register_type=None,
             unit=RateUnit.PER_KWH,
-            raw_unit="cents/kWh",
             price=price,
             is_network=network,
             season=NEW_SEASON.name,
@@ -1088,12 +1078,10 @@ async def test_kept_price_sensors_get_their_buckets_back_from_the_plan(
 
     def uncoded(description: str, register_type: str | None) -> Rate:
         return Rate(
-            id=description,
             description=description,
             charge=None,
             register_type=register_type,
             unit=RateUnit.PER_KWH,
-            raw_unit="cents/kWh",
             price=10.0,
             is_network=False,
             valid_start=date(2030, 1, 1),
@@ -1273,12 +1261,10 @@ async def test_export_price_keeps_its_sign(
     plans: PlanList = mock_onboarding.async_get_plans.return_value
     rates = [
         Rate(
-            id=f"900{index}",
             description=description,
             charge="CHARGE_24",
             register_type="EG",
             unit=RateUnit.PER_KWH,
-            raw_unit="cents/kWh",
             price=cents,
             is_network=is_network,
         )
@@ -1324,12 +1310,10 @@ async def test_code_without_a_fixed_period_is_named_from_the_plan(
     freezer.move_to(WINTER_PEAK)
     plans: PlanList = mock_onboarding.async_get_plans.return_value
     unnamed = Rate(
-        id="9002",
         description="Network usage",
         charge="CHARGE_9",
         register_type=None,
         unit=RateUnit.PER_KWH,
-        raw_unit="cents/kWh",
         price=12.0,
         is_network=False,
     )
@@ -1739,33 +1723,21 @@ async def test_generation_capacity_sensor_added_once_recorded(
     assert float(_state(hass, "registered_generation_capacity")) == 5.5
 
 
-def _without_export(plan: Plan) -> Plan:
-    return replace(
-        plan,
-        retail_rates=tuple(rate for rate in plan.retail_rates if not rate.is_export),
-        network_rates=tuple(rate for rate in plan.network_rates if not rate.is_export),
-    )
-
-
 async def test_export_sensors_added_once_the_icp_can_export(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_onboarding: MagicMock,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    # Without an export register or export rates there's nothing to show. Once the ICP gains a
-    # register (solar installed, say), the export sensors appear without a reload.
+    # Plans list export rates whatever the ICP's registers, so without an export register there's
+    # nothing to show. Once the ICP gains one (solar installed, say), the export sensors appear
+    # without a reload.
     freezer.move_to(WINTER_PEAK)
     icp = mock_onboarding.async_get_icp.return_value
     plans: PlanList = mock_onboarding.async_get_plans.return_value
+    assert any(rate.is_export for rate in plans.default.rates)
     mock_onboarding.async_get_icp.return_value = replace(
         icp, channels=tuple(channel for channel in icp.channels if channel.register_code != "EG")
-    )
-    mock_onboarding.async_get_plans.return_value = replace(
-        plans,
-        default=_without_export(plans.default),
-        alternative=_without_export(plans.alternative) if plans.alternative else None,
-        others=tuple(_without_export(plan) for plan in plans.others),
     )
     await _setup(hass, config_entry)
     export_sensors = (
@@ -1879,7 +1851,7 @@ async def test_time_of_use_chart_image(
     assert image.image_url == base + chart_name(plan, winter, include_gst=True)
     first_update = image.image_last_updated
 
-    # Saturday, after the midnight refresh: the weekend chart.
+    # Saturday, after midnight: the weekend chart.
     freezer.move_to(datetime(2026, 6, 19, 12, 1, tzinfo=UTC))
     await config_entry.runtime_data.pricing.async_refresh()
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -2083,12 +2055,10 @@ async def test_controlled_load(
     assert low_user is not None
     controlled = [
         Rate(
-            id=f"c{index}",
             description="Controlled",
             charge="CHARGE_24",
             register_type="CN",
             unit=RateUnit.PER_KWH,
-            raw_unit="cents/kWh",
             price=price,
             is_network=network,
         )
@@ -2131,12 +2101,10 @@ async def test_controlled_period_from_a_later_season_has_its_sensor(
     low_user = find_plan(ANYTIME_PLAN)
     later = next(season for season in low_user.seasons if season.start > date(2026, 10, 15))
     night = Rate(
-        id="c1",
         description="Controlled night",
         charge="CHARGE_LOW",
         register_type="CN",
         unit=RateUnit.PER_KWH,
-        raw_unit="cents/kWh",
         price=9.0,
         is_network=False,
         valid_start=later.start,
@@ -2166,12 +2134,10 @@ async def test_outer_season_is_priced_from_when_it_applies_again(
     outer = max(plan.seasons, key=lambda season: season.end - season.start)
     freezer.move_to(datetime.combine(inner.start + timedelta(days=14), time(), UTC))
     night = Rate(
-        id="c1",
         description="Controlled night",
         charge="CHARGE_LOW",
         register_type="CN",
         unit=RateUnit.PER_KWH,
-        raw_unit="cents/kWh",
         price=9.0,
         is_network=False,
         valid_start=inner.end + timedelta(days=1),

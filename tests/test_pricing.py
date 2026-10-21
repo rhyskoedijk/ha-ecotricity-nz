@@ -418,16 +418,6 @@ async def test_saved_file_leaves_out_unused_personal_details(
         assert serial in saved
 
 
-def test_snapshot_saved_before_missing_charts_were_counted_starts_counting_again() -> None:
-    saved = json.loads(json.dumps(_snapshot_dict(_fixture_snapshot())))
-    del saved["chart_gaps"]
-    del saved["missing_chart_fetches"]
-
-    restored = _snapshot(saved)
-    assert restored.chart_gaps == ()
-    assert restored.missing_chart_fetches == 0
-
-
 def test_snapshot_needs_a_time_zone() -> None:
     saved = _snapshot_dict(_fixture_snapshot())
     saved["fetched_at"] = "2026-06-14T20:15:00"

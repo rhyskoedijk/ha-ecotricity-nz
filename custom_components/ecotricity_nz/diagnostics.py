@@ -46,7 +46,8 @@ async def async_get_config_entry_diagnostics(
                     "id": pricing.plan.id,
                     "code": pricing.plan.code,
                     "description": pricing.plan.description,
-                    "title": pricing.plan.title,
+                    # Not "title", which is redacted to hide the entry title.
+                    "name": pricing.plan.name,
                     "seasons": [asdict(season) for season in pricing.plan.seasons],
                 },
                 "available_plans": [plan.name for plan in pricing.plans.all_plans],

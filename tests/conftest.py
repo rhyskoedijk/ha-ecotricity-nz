@@ -171,6 +171,19 @@ def has_extra_network_buckets(plan: Plan) -> bool:
     )
 
 
+def has_supplier_periods_and_anytime_network(plan: Plan) -> bool:
+    """Retail import rates in more than one period, and only an anytime network import rate.
+
+    The network's rate applies all day, but only the chart places Ecotricity's periods.
+    """
+    for season in plan.seasons:
+        rates = side_rates(plan, season.start, export=False)
+        network = import_rates(plan.network_rates, season.start)
+        if len(rates.supplier) > 1 and not rates.network and network:
+            return True
+    return False
+
+
 def chart_name(plan: Plan, day: date, *, weekend: bool = False, include_gst: bool = False) -> str:
     """Return the file name of a plan's chart for the season that applies on a day."""
     season = season_for(plan, day)

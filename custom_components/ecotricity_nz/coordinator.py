@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
+from functools import partial
 from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntry
@@ -162,8 +163,9 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
 
     Pricing is fetched again only when Ecotricity might have changed it (see `_fetch_reason`). The
     coordinator checks once a day while fetches are working, and backs off from an hour to eight
-    hours between attempts while they fail. Just after each NZ midnight it works out the new day
-    from the saved pricing, without checking or fetching.
+    hours between attempts while they fail. At each half-hour it updates the sensors that change
+    with the time of day, and at NZ midnight it first works out the new day from the saved
+    pricing, without checking or fetching.
     """
 
     config_entry: EcotricityConfigEntry
@@ -197,7 +199,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._fetch_failures = 0
         self._attestation_failures = 0
         self._chart_failures = 0
-        self._unsub_midnight: CALLBACK_TYPE | None = None
+        self._unsub_half_hour: CALLBACK_TYPE | None = None
+        self._half_hour_listeners: list[CALLBACK_TYPE] = []
 
     @property
     def icp(self) -> str:
@@ -211,30 +214,38 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         return self.last_update_success and self._fetch_error is None
 
     @callback
-    def async_start_midnight_refresh(self) -> None:
-        """Work out the new day's prices just after each NZ midnight, from the saved pricing."""
-        tomorrow = dt_util.now(self._local_tz).date() + timedelta(days=1)
-        midnight = datetime.combine(tomorrow, time(0, 0, 5), self._local_tz)
+    def async_add_half_hour_listener(self, update: CALLBACK_TYPE) -> CALLBACK_TYPE:
+        """Call `update` at each half-hour, and return how to stop.
 
-        @callback
-        def _refresh(_now: datetime) -> None:
-            self._unsub_midnight = None
-            self.async_ensure_today()
-            self.async_start_midnight_refresh()
-
-        self._unsub_midnight = async_track_point_in_utc_time(
-            self.hass, _refresh, dt_util.as_utc(midnight)
-        )
+        For sensors that change with the time of day. At NZ midnight, every listener is updated
+        with the new day instead.
+        """
+        self._half_hour_listeners.append(update)
+        return partial(self._half_hour_listeners.remove, update)
 
     @callback
-    def async_ensure_today(self) -> None:
-        """Work out the new day now if midnight has passed and it hasn't been yet.
+    def async_start_half_hour_updates(self) -> None:
+        """Update the half-hour listeners at each half-hour, and the new day at NZ midnight.
 
-        The half-hourly sensors tick at midnight itself, a few seconds before the midnight
-        refresh, so they call this rather than show yesterday's pricing until it runs.
+        NZ midnight is always on a UTC hour, so one timer does both, and a sensor never shows
+        yesterday's pricing at midnight.
         """
-        if self.data is not None and self.data.day != dt_util.now(self._local_tz).date():
-            self._async_new_day()
+        now = dt_util.utcnow()
+        boundary = now.replace(minute=30 if now.minute < 30 else 0, second=0, microsecond=0)  # noqa: PLR2004 - minutes in half an hour
+        if boundary <= now:
+            boundary += timedelta(hours=1)
+
+        @callback
+        def _update(_now: datetime) -> None:
+            self._unsub_half_hour = None
+            if self.data is not None and self.data.day != dt_util.now(self._local_tz).date():
+                self._async_new_day()
+            else:
+                for update in list(self._half_hour_listeners):
+                    update()
+            self.async_start_half_hour_updates()
+
+        self._unsub_half_hour = async_track_point_in_utc_time(self.hass, _update, boundary)
 
     @callback
     def _async_new_day(self) -> None:
@@ -248,10 +259,10 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self.async_update_listeners()
 
     async def async_shutdown(self) -> None:
-        """Cancel the midnight refresh."""
-        if self._unsub_midnight is not None:
-            self._unsub_midnight()
-            self._unsub_midnight = None
+        """Cancel the half-hour updates."""
+        if self._unsub_half_hour is not None:
+            self._unsub_half_hour()
+            self._unsub_half_hour = None
         await super().async_shutdown()
 
     async def _async_update_data(self) -> PricingData:

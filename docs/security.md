@@ -18,10 +18,10 @@ The integration talks to two Ecotricity websites and nothing else. It has no ana
 
 | Destination                                                    | When                             | What's sent                                                                                                                                                                                                                                               |
 | -------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onboarding.ecotricity.co.nz` (public sign-up site)            | At setup, then about weekly      | Your ICP number, plus the network code, price category and meter register codes that this same site returns for your ICP. Requests for public plan, plan name and chart files. A browser-check answer the site requires (see [docs/api.md](docs/api.md)). |
+| `onboarding.ecotricity.co.nz` (public sign-up site)            | At setup, then about weekly      | Your ICP number, plus the network code, price category and meter register codes that this same site returns for your ICP. Requests for public plan, plan name and chart files. A browser-check answer the site requires (see [api.md](api.md)). |
 | `portal.ecotricity.co.nz` (customer portal), only with a login | At setup, then at least daily    | Your account number and password when logging in, then the session cookie. Date ranges for the usage data being imported.                                                                                                                                 |
 
-With both, the integration identifies itself with a User-Agent of `HomeAssistant/<version> ecotricity_nz/<version>`, so Ecotricity can see the requests that come from this integration and which Home Assistant version is running.
+With both, the integration identifies itself with a User-Agent of `HomeAssistant/<version> ecotricity_nz/<version>`, so Ecotricity can see the requests that come from this integration and which Home Assistant version is running. During setup, reauthentication and reconfiguration, the User-Agent is `HomeAssistant ecotricity_nz config flow` instead.
 
 ## What stays visible inside Home Assistant
 

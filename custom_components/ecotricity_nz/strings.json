@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Ecotricity",
-        "description": "Enter the ICP number for the connection. Adding your customer portal login also imports your half-hourly usage.",
+        "description": "Enter the ICP number for your connection; find it on the \"Electricity Usage Details\" section of your bill. If you want to track your half-hourly usage and billing data, you must also provide your customer portal login details below.",
         "data": {
           "icp": "ICP number",
           "account_number": "Customer account number",
@@ -11,13 +11,13 @@
         },
         "data_description": {
           "icp": "The 15-character ICP number from your bill, for example 0000123456AB1C2.",
-          "account_number": "Optional. The account number you log in to the Ecotricity customer portal with.",
-          "password": "Optional. Your Ecotricity customer portal password."
+          "account_number": "Optional. The account number you log in to the Ecotricity customer portal with. If you leave this blank, no usage data will be imported.",
+          "password": "Optional. Your Ecotricity customer portal password. If you leave this blank, no usage data will be imported."
         }
       },
       "plan": {
         "title": "Choose your plan",
-        "description": "Choose the plan this ICP is on. The names match the plans on the Ecotricity website. You can change it later in the integration's options.",
+        "description": "Choose the Ecotricity plan this ICP is currently on. You can change this later in the integration's options.",
         "data": {
           "plan_id": "Plan"
         }
@@ -62,8 +62,8 @@
           "plan_id": "Plan"
         },
         "data_description": {
-          "include_gst": "Add 15% GST to import prices and daily charges, as you're billed. Export credits are always shown as published, because GST isn't added to them for customers who aren't GST-registered.",
-          "plan_id": "The plan this ICP is on, as named on the Ecotricity website. Prices are worked out from this plan."
+          "include_gst": "Add 15% GST to import prices and daily charges, as you're billed. Export credits never include GST.",
+          "plan_id": "The Ecotricity plan this ICP is currently on. Prices are based on this plan."
         }
       }
     }

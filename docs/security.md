@@ -14,7 +14,7 @@ The Ecotricity portal login is optional. Without it, the integration never inter
 
 ## What's sent outside Home Assistant
 
-The integration talks to two Ecotricity websites and nothing else. It has no analytics, telemetry or third-party services.
+The integration talks to two Ecotricity websites and nothing else. It has no analytics, telemetry or third-party services. The bill card is served by Home Assistant itself and only talks to Home Assistant.
 
 | Destination                                                    | When                             | What's sent                                                                                                                                                                                                                                               |
 | -------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -28,6 +28,8 @@ With both, the integration identifies itself with a User-Agent of `HomeAssistant
 - Entity IDs include your ICP number (for example `sensor.icp_0000123456ab1c2_current_import_price`), and so does the device name. Keep that in mind when sharing screenshots, dashboards, automations or logs.
 - Sensors and their attributes include your network, price category, plan and meter details, including the meter's serial number, but not your address.
 - The pricing fetched from Ecotricity is saved in `.storage/ecotricity_nz.<entry_id>.pricing`, so it keeps working offline. It includes your ICP number and meter serial numbers, because sensors show them, but not your address or region, which no sensor uses, so they aren't read from Ecotricity's response at all. It holds no credentials. It's deleted when you delete the entry, and it's included in Home Assistant backups like the rest of `.storage`.
+- The bill card's websocket commands (`ecotricity_nz/bill`, `ecotricity_nz/bill_days`, which counts the days of daily charges in a range, and `ecotricity_nz/icps`, which lists the ICPs set up and their entries' titles for the card's editor) are open to any signed-in Home Assistant user, like the statistics it points to. `ecotricity_nz/bill` returns your ICP number, network name, line loss factor, your plan's rate descriptions and the statistic IDs, but no credentials, meter serials or address.
+- Usage and cost statistics are named with your ICP number and show what you used and spent each hour. They stay in Home Assistant's history, and its backups, until you remove them under **Developer tools > Statistics**, even after the entry is deleted.
 
 ## Reporting a vulnerability
 

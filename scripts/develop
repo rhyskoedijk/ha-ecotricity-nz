@@ -33,4 +33,9 @@ logger:
 YAML
 fi
 
-exec uv run hass --config config --debug
+# Build the frontend before Home Assistant starts, then rebuild it as its source changes.
+npm run build --prefix frontend
+npm run watch --prefix frontend &
+trap 'kill $!' EXIT
+
+uv run hass --config config --debug

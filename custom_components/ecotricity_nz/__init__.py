@@ -15,6 +15,7 @@ from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from .api import OnboardingClient, PortalClient
+from .card import async_register_card
 from .const import (
     CONF_ACCOUNT_NUMBER,
     CONF_PASSWORD,
@@ -30,6 +31,7 @@ from .coordinator import (
 )
 from .services import async_setup_services
 from .store import PricingStore
+from .websocket_api import async_setup_websocket
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -41,8 +43,13 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001 - signature set by Home Assistant
-    """Register the integration's actions, so they exist even while no entry is loaded."""
+    """Register the integration's actions and the bill card, with its websocket command.
+
+    They're registered here so they exist even while no entry is loaded.
+    """
     async_setup_services(hass)
+    async_setup_websocket(hass)
+    await async_register_card(hass)
     return True
 
 
@@ -75,7 +82,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
     pricing.async_start_half_hour_updates()
 
     consumption = (
-        ConsumptionCoordinator(hass, entry, portal, local_tz) if portal is not None else None
+        ConsumptionCoordinator(hass, entry, portal, local_tz, pricing)
+        if portal is not None
+        else None
     )
     entry.runtime_data = EcotricityRuntimeData(
         pricing=pricing, consumption=consumption, local_tz=local_tz

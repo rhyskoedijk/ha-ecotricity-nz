@@ -10,7 +10,7 @@ rules:
   config-flow: done
   dependency-transparency:
     status: done
-    comment: No extra requirements. Pillow, used to read timeframe charts, ships with Home Assistant core.
+    comment: No extra requirements. Pillow, used to read timeframe charts, ships with Home Assistant core. The bill card bundles Lit into its own file at build time, from frontend/package.json.
   docs-actions: done
   docs-high-level-description: done
   docs-installation-instructions: done

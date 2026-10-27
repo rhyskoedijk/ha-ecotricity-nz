@@ -21,11 +21,13 @@ from custom_components.ecotricity_nz.api.timeframes import (
     SLOTS_PER_DAY,
     shown_price,
 )
+from custom_components.ecotricity_nz.costs import cost_keys
 from custom_components.ecotricity_nz.tariff import (
     CONTROLLED_PREFIX,
     EXPORT_PREFIX,
     bucket_names,
     bucket_period,
+    line_key,
     resolve_bucket,
 )
 from tests.conftest import (
@@ -33,6 +35,7 @@ from tests.conftest import (
     chart_file,
     chart_files,
     chart_name,
+    chart_plan,
     chart_reading,
     explained_chart,
     find_plan_where,
@@ -137,3 +140,17 @@ def test_overlapping_seasons_each_find_their_own_chart() -> None:
     assert {chart.name for _, chart in weekday} == kept
     for day, chart in weekday:
         assert chart_name(plan, day) == chart.name
+
+
+@pytest.mark.parametrize("chart", chart_files(), ids=lambda chart: chart.name)
+def test_every_half_hours_bill_lines_are_in_the_plans_cost_keys(chart: Path) -> None:
+    # The cost statistics' lines come from the plan's rates, and the hours' lines from the
+    # half-hours' rates, so each half-hour's lines must be among the plan's.
+    plan, _day = chart_plan(chart)
+    keys = cost_keys(plan)
+    for export, (_rates, slots) in explained_chart(chart).items():
+        lines = keys.export_lines if export else keys.import_lines
+        for slot in slots:
+            for part in slot.components:
+                line = line_key(part, export=export)
+                assert line is None or not part.price or line in lines, (line, part.description)

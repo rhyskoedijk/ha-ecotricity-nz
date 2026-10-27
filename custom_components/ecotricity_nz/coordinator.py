@@ -30,7 +30,7 @@ from .api import (
     PortalIndicator,
     Season,
 )
-from .api.timeframes import ChartReading, read_chart
+from .api.timeframes import ChartReadError, ChartReading, read_chart
 from .const import (
     BACKFILL_PAUSE_SECONDS,
     CONF_ICP,
@@ -52,13 +52,16 @@ from .const import (
     PRICING_RETRY_MAX_INTERVAL,
     RETRY_AFTER_FAILURE,
 )
+from .costs import CostKeys, DayCosts, cost_keys, hourly_costs
 from .statistics import (
     CARBON,
     EXPORT,
     IMPORT,
     Series,
+    StatisticPoint,
     async_import_hours,
     async_last_point,
+    cost_series,
     hourly_totals,
     statistic_id,
 )
@@ -66,10 +69,13 @@ from .store import PricingSnapshot, PricingStore
 from .tariff import (
     Alignment,
     DayPricing,
+    DaySlots,
     PlanDay,
     bucket_names,
     chart_seasons,
     controlled_prices,
+    daily_charges,
+    ended_seasons,
     first_day,
     plan_needs_season,
     price_plan_day,
@@ -78,12 +84,13 @@ from .tariff import (
     season_charts,
     season_explained,
     season_for,
+    season_slots,
     side_rates,
     without_export,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from homeassistant.core import HomeAssistant
 
@@ -205,6 +212,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._chart_failures = 0
         self._unsub_half_hour: CALLBACK_TYPE | None = None
         self._half_hour_listeners: list[CALLBACK_TYPE] = []
+        # Past days priced for the cost statistics, for the snapshot and plan they came from.
+        self._costed: tuple[PricingSnapshot, str, dict[date, DayCosts | None]] | None = None
 
     @property
     def icp(self) -> str:
@@ -216,6 +225,62 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._fetch_requested = True
         await self.async_refresh()
         return self.last_update_success and self._fetch_error is None
+
+    def day_costs(self, day: date) -> DayCosts | None:
+        """Return what a day's usage is priced with, from the saved pricing. Makes no requests.
+
+        None when no pricing is saved, or no published season covers the day: rates without
+        dates of their own apply to every day, so only the seasons tell which days the saved
+        pricing is for. A side whose charts can't be read has no half-hours; one given its one
+        network rate all day is priced that way, as the sensors show it.
+        """
+        snapshot = self._snapshot
+        if snapshot is None:
+            return None
+        plan = self._cost_plan(snapshot)
+        if self._costed is None or self._costed[:2] != (snapshot, plan.id):
+            self._costed = (snapshot, plan.id, {})
+        priced = self._costed[2]
+        if day not in priced:
+            priced[day] = _day_costs(snapshot.charts, plan, day)
+        return priced[day]
+
+    def cost_pricing(self) -> tuple[Plan, IcpDetails] | None:
+        """Return the plan usage is priced with and the ICP, or None with no saved pricing."""
+        if self._snapshot is None:
+            return None
+        return self._cost_plan(self._snapshot), self._snapshot.icp
+
+    def cost_keys(self) -> CostKeys | None:
+        """Return the cost statistic keys the plan's rates give, or None with no saved pricing."""
+        if self._snapshot is None:
+            return None
+        return cost_keys(self._cost_plan(self._snapshot))
+
+    def earliest_priced_day(self, until: date) -> date | None:
+        """Return the first day, up to `until`, whose import the saved pricing can price."""
+        if self._snapshot is None:
+            return None
+        plan = self._cost_plan(self._snapshot)
+        starts = sorted({item.start for item in plan.seasons if item.start <= until})
+        return next(
+            (
+                day
+                for day in starts
+                if (costs := self.day_costs(day)) is not None and costs.import_slots is not None
+            ),
+            None,
+        )
+
+    @property
+    def loss_factor(self) -> float:
+        """Return the ICP's consumption loss factor, which bills apply to Ecotricity's rates."""
+        icp = self._snapshot.icp if self._snapshot else None
+        return (icp.loss_factor_consumption if icp else None) or 1.0
+
+    def _cost_plan(self, snapshot: PricingSnapshot) -> Plan:
+        """Return the plan usage is priced with: the one the sensors price."""
+        return _pricing_plan(self._select_plan(snapshot.plans), snapshot.icp)
 
     @callback
     def async_add_half_hour_listener(self, update: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -453,11 +518,13 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         return dict(self._snapshot.plan_titles) if self._snapshot else {}
 
     async def _async_charts(self, plan: Plan, day: date) -> dict[str, ChartReading]:
-        """Download and read the charts for this season and every published season after it.
+        """Download and read the charts for every published season.
 
         This season's and the next are downloaded at every fetch; later ones only until they've
         been read and explained once, since they're only needed to know which periods the plan
-        uses. A chart that can't be downloaded or read keeps its saved reading, if there is one.
+        uses. Seasons that have ended are downloaded until they've been read once, to price past
+        usage for the cost statistics. A chart that can't be downloaded or read keeps its saved
+        reading, if there is one.
         """
         saved = self._snapshot.charts if self._snapshot else {}
         refresh = {
@@ -466,7 +533,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             for path in season_charts(plan, season)
         }
         charts: dict[str, ChartReading] = {}
-        for season in chart_seasons(plan, day, upcoming=True):
+        for season in [*chart_seasons(plan, day, upcoming=True), *ended_seasons(plan, day)]:
             paths = [path for path in season_charts(plan, season) if path not in charts]
             if not refresh.intersection(paths) and season_explained(saved, plan, season, day):
                 charts.update((path, saved[path]) for path in paths)
@@ -554,9 +621,8 @@ def _plan_periods(plan: Plan, day: date, priced: PlanDay) -> PlanPeriods:
 
     Controlled load needs no charts, so its periods come from every season's rates. A side whose
     charts can't be read today has the periods its rates give (`rate_buckets`), so its sensors
-    stay. So does a period only an ended season had (a winter-only peak, say): its charts are no
-    longer downloaded, so its periods come from its rates, and its sensors don't go when it ends
-    only to come back next year.
+    stay. So does a period only an ended season had (a winter-only peak, say): its periods come
+    from its rates, and its sensors don't go when it ends only to come back next year.
     """
     slots, alignments, pricing = priced.slots, priced.alignments, priced.pricing
     buckets: set[str] = set(pricing.rate_buckets)
@@ -593,7 +659,8 @@ def _plan_periods(plan: Plan, day: date, priced: PlanDay) -> PlanPeriods:
 def _ended_periods(plan: Plan, day: date, alignments: tuple[Alignment, Alignment]) -> set[str]:
     """Return the periods the rates give in every published season that ended before `day`.
 
-    Its charts are no longer downloaded, so the rates are all there is to go on.
+    Its charts may not have been downloaded (they're only kept for the cost statistics), so the
+    rates are used.
     """
     buckets: set[str] = set()
     for item in plan.seasons:
@@ -605,6 +672,22 @@ def _ended_periods(plan: Plan, day: date, alignments: tuple[Alignment, Alignment
             if not rates.is_empty:
                 buckets.update(rate_periods(rates, alignment))
     return buckets
+
+
+def _day_costs(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> DayCosts | None:
+    """Return what a day's usage is priced with, or None if no published season covers it."""
+    season = season_for(plan, day)
+    if season is None:
+        return None
+    sides: list[DaySlots | None] = []
+    for export in (False, True):
+        try:
+            slots, _missing = season_slots(charts, plan, season, day, export=export)
+        except ChartReadError as err:
+            LOGGER.debug("Can't price %s %s: %s", "export" if export else "import", day, err)
+            slots = None
+        sides.append(slots)
+    return DayCosts(sides[0], sides[1], daily_charges(plan, day))
 
 
 def _pricing_plan(plan: Plan, icp: IcpDetails) -> Plan:
@@ -630,6 +713,7 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         entry: EcotricityConfigEntry,
         portal: PortalClient,
         local_tz: tzinfo,
+        pricing: PricingCoordinator,
     ) -> None:
         """Initialise the coordinator."""
         super().__init__(
@@ -640,6 +724,7 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             update_interval=CONSUMPTION_UPDATE_INTERVAL,
         )
         self._portal = portal
+        self._pricing = pricing
         self._local_tz = local_tz
         # How far each series has been read this session, for series with no statistic yet.
         self._scanned_until: dict[Series, datetime] = {}
@@ -729,6 +814,12 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             ),
             default=indicator.data_start,
         )
+        cost_points: dict[str, StatisticPoint | None] = {}
+        keys, cost_resume = await self._async_cost_resume(
+            last_points, cost_points, indicator.data_start, data_end
+        )
+        if cost_resume is not None:
+            resume = min(resume, cost_resume)
         # Always fetch the last complete day too, for the daily summary sensors. Requests start
         # and end at NZ midnight: a response starting partway through the hour repeated when
         # daylight saving ends can't be placed on the right occurrence of it, and a chunk ending
@@ -736,39 +827,139 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         fetch_start = max(indicator.data_start, self._local_midnight(min(resume, last_day_start)))
 
         hours_imported = 0
+        seen: set[Series] = set()
         last_day: list[ConsumptionData] = []
         chunk_start = fetch_start
         while chunk_start < data_end:
             chunk_end = min(self._local_midnight(chunk_start, CONSUMPTION_CHUNK.days), data_end)
             data = await self._portal.async_get_half_hourly(chunk_start, chunk_end)
-            for series, readings in (
-                (IMPORT, data.imported_kwh),
-                (EXPORT, data.exported_kwh),
-                (CARBON, data.carbon_savings_kg),
-            ):
-                if series not in last_points or not readings:
-                    continue
-                last_points[series], added = async_import_hours(
-                    self.hass,
-                    self.icp,
-                    series,
-                    hourly_totals(readings, settled_before),
-                    last_points[series],
-                    settled_before=settled_before,
+            hours_imported += self._import_energy(data, last_points, settled_before, seen)
+            if keys is not None:
+                await self._async_import_costs(
+                    data, keys, cost_points, settled_before, export=EXPORT in last_points
                 )
-                if series is IMPORT:
-                    hours_imported += added
             if chunk_end > last_day_start:
                 last_day.append(data)
             chunk_start = chunk_end
             if chunk_start < data_end:
                 await asyncio.sleep(BACKFILL_PAUSE_SECONDS)
         for series in held:
-            self._scanned_until[series] = data_end
+            if last_points[series] is not None:
+                self._scanned_until.pop(series, None)
+            else:
+                # Readings that weren't imported were all in hours the portal may still fill.
+                self._scanned_until[series] = settled_before if series in seen else data_end
 
         if hours_imported:
             LOGGER.debug("Imported %s hours of consumption", hours_imported)
         return self._summarise(indicator, last_day, last_day_start, data_end, hours_imported)
+
+    def _import_energy(
+        self,
+        data: ConsumptionData,
+        last_points: dict[Series, StatisticPoint | None],
+        settled_before: datetime,
+        seen: set[Series],
+    ) -> int:
+        """Add a chunk's readings to each held series' statistic, and return the import hours.
+
+        Each series with readings in the chunk is added to `seen`.
+        """
+        hours_imported = 0
+        for series, readings in (
+            (IMPORT, data.imported_kwh),
+            (EXPORT, data.exported_kwh),
+            (CARBON, data.carbon_savings_kg),
+        ):
+            if series not in last_points or not readings:
+                continue
+            seen.add(series)
+            last_points[series], added = async_import_hours(
+                self.hass,
+                self.icp,
+                series,
+                hourly_totals(readings, settled_before),
+                last_points[series],
+                settled_before=settled_before,
+            )
+            if series is IMPORT:
+                hours_imported += added
+        return hours_imported
+
+    async def _async_cost_resume(
+        self,
+        last_points: dict[Series, StatisticPoint | None],
+        points: dict[str, StatisticPoint | None],
+        data_start: datetime,
+        data_end: datetime,
+    ) -> tuple[CostKeys | None, datetime | None]:
+        """Return the cost statistic keys and where they carry on from.
+
+        Both are None when nothing can be priced: no import series, no saved pricing, or no day
+        it can price. Every cost statistic is a checkpoint, so they carry on from the one
+        furthest behind, and one that fell behind (or is new) catches up. One without any hours
+        yet starts at the first day the saved pricing can price, rather than reading the
+        portal's whole history again, unless its usage series has been read to the end this
+        session without any readings (see `_scanned_until`), so it isn't read again every day.
+        Their last points go in `points`.
+        """
+        keys = self._pricing.cost_keys() if IMPORT in last_points else None
+        if keys is None:
+            return None, None
+        sides = [(IMPORT, keys.statistic_keys(export=False))]
+        if EXPORT in last_points:
+            sides.append((EXPORT, keys.statistic_keys(export=True)))
+        first_start: datetime | None = None
+        starts: list[datetime] = []
+        for usage, side_keys in sides:
+            for key in sorted(side_keys):
+                point = await async_last_point(self.hass, statistic_id(self.icp, cost_series(key)))
+                points[key] = point
+                if point is not None:
+                    starts.append(point.start + timedelta(hours=1))
+                    continue
+                if last_points.get(usage) is None and usage in self._scanned_until:
+                    continue
+                if first_start is None:
+                    last_day = data_end.astimezone(self._local_tz).date()
+                    if (first := self._pricing.earliest_priced_day(last_day)) is None:
+                        continue
+                    first_start = max(data_start, self._day_start(first))
+                starts.append(first_start)
+        if not starts:
+            return None, None
+        return keys, min(starts)
+
+    async def _async_import_costs(
+        self,
+        data: ConsumptionData,
+        keys: CostKeys,
+        points: dict[str, StatisticPoint | None],
+        settled_before: datetime,
+        *,
+        export: bool,
+    ) -> None:
+        """Price a chunk's readings and add each part's hours to its cost statistic."""
+        costs = hourly_costs(
+            data.imported_kwh,
+            data.exported_kwh if export else (),
+            self._pricing.day_costs,
+            keys,
+            tz=self._local_tz,
+            loss_factor=self._pricing.loss_factor,
+            settled_before=settled_before,
+        )
+        for key, hours in costs.items():
+            series = cost_series(key)
+            if key not in points:
+                points[key] = await async_last_point(self.hass, statistic_id(self.icp, series))
+            points[key], _added = async_import_hours(
+                self.hass, self.icp, series, hours, points[key], settled_before=settled_before
+            )
+
+    def _day_start(self, day: date) -> datetime:
+        """Return the NZ midnight starting a day."""
+        return datetime.combine(day, time.min, self._local_tz)
 
     def _local_midnight(self, instant: datetime, days_later: int = 0) -> datetime:
         """Return the NZ midnight starting the instant's day, or a number of days after it."""

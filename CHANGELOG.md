@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### New features
+
+- **Cost statistics** show what your usage cost each hour, in dollars, split into each part of your bill: Ecotricity's energy rate (including line losses, as your bill charges it), the network's rate, the EA levy, each daily charge, GST, and Ecotricity's and the network's export rates. Stack them in a chart to recreate your bill for any day or month; the README has an example. Totals add up the import costs, the daily charges and the export amounts, and the total electricity cost (import costs, daily charges and GST) and total electricity compensation are there for the Energy dashboard. The total electricity net billed is what your bill comes to, with export credits taken off. Export keeps its sign, so a credit is negative, except in the total electricity compensation, which the Energy dashboard expects to be positive for money received. Costs are worked out from your plan's saved pricing, so they're backfilled to the start of the current pricing year (usually 1 April), not as far back as your usage goes. They need your portal login.
+
+- **Bill card**: a dashboard card that lays out your costs like your Ecotricity bill, with network, energy and other charges, each rate's kWh (and line losses), rate and amount, and the total excluding GST, the GST and the total including it, as your bill does, whatever the **Include GST** option. Add an energy date picker with the same `collection_key` and it shows whatever day, week, month or range you pick. With more than one ICP set up, choose one with the card's `icp` option. It has a visual editor, and options for the billing period start day (when there's no date picker), a compact layout, the heading colour and lines with no charges. It comes with the integration, so there's nothing else to install; the README has an example.
+- **Bill line statistics**: each rate on your plan also gets statistics of what it charged and the kWh it was charged on, like the lines on your bill, so peak and off-peak usage can be told apart in charts.
+
+### Improvements
+
+- The time-of-use charts of the pricing year's seasons that have ended are now downloaded once each, to work out the cost of past usage.
+
+### Bug fixes
+
+- A usage series whose first readings arrived with a half-hour missing (such as export on a new solar install) skipped those readings for good once the portal filled the gap. They're now read again and imported.
+
 ## 0.4.0 (2026-10-21)
 
 Time-of-use pricing only worked on a handful of networks; on most, it was either unavailable or inaccurate. This release reads the exact prices printed under Ecotricity's time-of-use charts instead of working them out from the height of the bars, and has been checked against every chart Ecotricity publishes on every network as of October 2026.

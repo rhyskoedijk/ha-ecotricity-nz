@@ -9,6 +9,10 @@ Because nothing before the checkpoint is read again, recent hours are only impor
 earlier hour is complete. An hour with a missing half-hour holds the checkpoint back until the
 portal fills it in, or until it's old enough to count as settled, when it's imported as it stands
 so a permanent gap can't stop the import.
+
+The same readings are priced into hourly cost statistics, one for each part of the bill (see
+costs.py). An hour whose day can't be priced is a gap like any other: a recent one holds the
+cost statistics back, and an old one is skipped.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from homeassistant.util.unit_conversion import EnergyConverter, MassConverter
 
 from .api.parsers import FEATURE_CARBON, FEATURE_EXPORT, FEATURE_IMPORT
 from .const import DOMAIN
+from .costs import COST_PRECISION, ENERGY_PRECISION, cost_label, is_line_energy
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -43,6 +48,8 @@ if TYPE_CHECKING:
 
 HOUR = timedelta(hours=1)
 READINGS_PER_HOUR = 2
+# Prices are published in New Zealand dollars.
+COST_UNIT = "NZD"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,11 +66,13 @@ class Series:
 
     key: str
     """The statistic ID suffix, for example "energy_imported"."""
-    feature: str
-    """The portal feature ID the readings come from."""
+    feature: str | None
+    """The portal feature ID the readings come from, or None for a cost worked out from them."""
     label: str
     unit: str
-    unit_class: str
+    unit_class: str | None
+    precision: int = 4
+    """Decimal places the running sum is kept to."""
 
 
 IMPORT = Series(
@@ -87,6 +96,23 @@ CARBON = Series(
     UnitOfMass.KILOGRAMS,
     MassConverter.UNIT_CLASS,
 )
+
+
+def cost_series(key: str) -> Series:
+    """Return the series for one part of the hourly cost, such as "import_cost_network".
+
+    A bill line's kWh (`is_line_energy`) is an energy series instead.
+    """
+    if is_line_energy(key):
+        return Series(
+            key,
+            None,
+            cost_label(key),
+            UnitOfEnergy.KILO_WATT_HOUR,
+            EnergyConverter.UNIT_CLASS,
+            ENERGY_PRECISION,
+        )
+    return Series(key, None, cost_label(key), COST_UNIT, None, COST_PRECISION)
 
 
 def statistic_id(icp: str, series: Series) -> str:
@@ -159,7 +185,7 @@ def async_import_hours(  # noqa: PLR0913 - writing a series needs all of these
             continue
         if newest is not None and hour > max(newest.start + HOUR, settled_before):
             break
-        running = round(running + value, 4)
+        running = round(running + value, series.precision)
         rows.append(StatisticData(start=hour, state=value, sum=running))
         newest = StatisticPoint(start=hour, sum=running)
     if rows:

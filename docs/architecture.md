@@ -26,12 +26,17 @@ flowchart TB
         PS[("store.py<br/>saved pricing")]
         CCO["ConsumptionCoordinator<br/>daily, rechecks until new data"]
         TA["tariff.py"]
+        CO["costs.py<br/>hourly costs"]
         ST["statistics.py"]
         SE["sensor.py"]
         IM["image.py<br/>TOU chart"]
         DG["diagnostics.py"]
         SV["services.py<br/>refresh action"]
+        WS["websocket_api.py<br/>bill layout"]
+        CA["card.py<br/>serves the card"]
     end
+
+    CARD["Bill card<br/>(frontend/, in the browser)"]
 
     REC[("Recorder<br/>long-term statistics")]
     EN["Energy dashboard"]
@@ -52,6 +57,8 @@ flowchart TB
     TA --> PCO
     PC -- "half-hourly readings" --> CCO
     CCO --> ST --> REC --> EN
+    PCO -- "a past day's prices" --> CCO
+    CO --> CCO
     PCO --> SE
     PCO --> IM
     OB -. "chart PNG, fetched by HA" .-> IM
@@ -61,6 +68,10 @@ flowchart TB
     CCO --> DG
     SV -. "refresh now" .-> PCO
     SV -. "refresh now" .-> CCO
+    PCO -- "plan, ICP" --> WS
+    WS -- "lines, statistic IDs" --> CARD
+    REC -- "each statistic's change" --> CARD
+    CA -. "serves" .-> CARD
 ```
 
 The `custom_components/ecotricity_nz/api/` package is a small client library. It knows nothing about Home Assistant, which keeps it testable on its own and lets it move to PyPI later, as the Home Assistant guidelines prefer.
@@ -99,7 +110,7 @@ flowchart TD
     L --> N["Periods: Ecotricity's, the network's,<br/>or both when they don't line up"]
 ```
 
-The pricing coordinator keeps fetching separate from working out prices. A fetch downloads the ICP details, plans (with their seasons and rates), plan names, and the chart readings for every published season that hasn't ended. `store.py` saves all of it to `.storage/ecotricity_nz.<entry_id>.pricing`. Each day's prices and windows are worked out from that saved copy with no requests: rates and seasons carry their own dates, and `DaySlots` covers weekdays and weekends. So once a season's pricing has been fetched, everything keeps working through restarts and without an internet connection, into the next season too if Ecotricity had published it.
+The pricing coordinator keeps fetching separate from working out prices. A fetch downloads the ICP details, plans (with their seasons and rates), plan names, and the chart readings for every published season. Seasons that have ended are only downloaded until they've been read once, to price past usage for the cost statistics (see [Costs](#costs)). `store.py` saves all of it to `.storage/ecotricity_nz.<entry_id>.pricing`. Each day's prices and windows are worked out from that saved copy with no requests: rates and seasons carry their own dates, and `DaySlots` covers weekdays and weekends. So once a season's pricing has been fetched, everything keeps working through restarts and without an internet connection, into the next season too if Ecotricity had published it.
 
 The coordinator has one timer for the time of day, at every half-hour (`async_start_half_hour_updates`). It updates the half-hourly sensors, such as the current price and period, which register with `async_add_half_hour_listener`. At NZ midnight it works out the new day from the saved pricing first and updates every entity instead, so no sensor shows yesterday's pricing. Neither is a coordinator refresh, and neither fetches. Separately, it checks once a day (`PRICING_CHECK_INTERVAL`), counted from when the entry loaded, so installs don't all fetch at midnight on the 1st. A check only fetches when `_fetch_reason` gives a reason:
 
@@ -119,7 +130,7 @@ Each side (import and export) then gets its periods (`plan_alignment`, across to
 - If the price only depends on Ecotricity's period, that's the period. Where Ecotricity has one rate all day and the price depends on the network's period (the battery plans' import), the network's.
 - Otherwise the side is split. The period sensor shows the overall period, the one whose own price is nearest the half-hour's price (`price_side`), and a supplier and a network period sensor show each one's own periods.
 
-The plan's periods are worked out over every season, not only today's, so sensors don't come and go with the seasons. Upcoming seasons count once their charts are read. A season that has ended keeps its periods from its rates (its charts are no longer downloaded) for as long as the plan still lists it, so a winter-only peak's price sensor isn't removed in October. Plans list export rates whatever the ICP's registers, so for an ICP with no export (`EG`) register the coordinator prices the plan without its per-kWh export rates (`without_export`): it has no export periods or sensors, and its export charts are never checked. Whenever a refresh turns up a period that has no price sensor yet (because a new season added a shoulder rate, or a different plan was chosen in the options), or a side becomes split, the sensor platform adds the sensors. When the plan no longer has a period, or a side lines up again, they're removed from the entity registry, so only the plan's own prices and periods are listed. Until every season's charts can be read, nothing is removed, and the price and split period sensors already in the registry (from before a restart, say) are still provided. The period sensors' options follow the same periods.
+The plan's periods are worked out over every season, not only today's, so sensors don't come and go with the seasons. Upcoming seasons count once their charts are read. A season that has ended keeps its periods from its rates (its charts, if they were downloaded, are only used for costs) for as long as the plan still lists it, so a winter-only peak's price sensor isn't removed in October. Plans list export rates whatever the ICP's registers, so for an ICP with no export (`EG`) register the coordinator prices the plan without its per-kWh export rates (`without_export`): it has no export periods or sensors, and its export charts are never checked. Whenever a refresh turns up a period that has no price sensor yet (because a new season added a shoulder rate, or a different plan was chosen in the options), or a side becomes split, the sensor platform adds the sensors. When the plan no longer has a period, or a side lines up again, they're removed from the entity registry, so only the plan's own prices and periods are listed. Until every season's charts can be read, nothing is removed, and the price and split period sensors already in the registry (from before a restart, say) are still provided. The period sensors' options follow the same periods.
 
 The current price, current period and next period change sensors (each for import and export) are updated by the coordinator's half-hour timer, so they change when the window does rather than at the next poll. The next period change is the next change of period or price, so it also catches a price change within one period on a split side, and looks no further than the next season change, because a new season can bring new windows.
 
@@ -144,6 +155,8 @@ sequenceDiagram
         P-->>C: import, export, carbon
         C->>C: sum hours, stopping at a recent gap
         C->>R: add hourly statistics after the last hour
+        C->>C: price each half-hour from the saved pricing
+        C->>R: add hourly cost statistics after their last hour
         Note over C: pause 2s between chunks
     end
     C-->>C: totals for the last complete day
@@ -151,11 +164,45 @@ sequenceDiagram
 
 Portal data arrives a day or two late, so recording it as sensor state would put every reading at the wrong time. Instead the readings become external statistics (`ecotricity_nz:<icp>_energy_imported`, `_energy_exported` and `_carbon_savings`), which carry their own timestamps and plug straight into the Energy dashboard.
 
-The last imported hour of each statistic is its checkpoint, and each sync continues from the earliest of them, so a statistic added later catches up on the full history. Only the series the portal says it holds are tracked, so an ICP with no export never forces a full re-read. If the portal lists a series but returns no readings for it, the coordinator remembers how far it has read that series, so it's read in full once per Home Assistant start rather than on every sync. Requests always start and end at NZ midnight, even when resuming partway through a day, and hours already imported are skipped. Midnight never falls inside a daylight saving change, so every response starts with an hour whose occurrence is known, and no hour is split between two chunks. Each chunk is written as soon as it's fetched, so an interrupted backfill carries on from where it stopped on the next run. Because the checkpoint never moves backwards, the import stops at the first hour that's missing or short of a half-hour, and later hours wait until the portal fills it in. That keeps the running sum complete. A gap more than seven days older than the portal's latest data is treated as settled and imported as it stands, so a reading the portal never supplies can't hold up everything after it.
+The last imported hour of each statistic is its checkpoint, and each sync continues from the earliest of them, so a statistic added later catches up on the full history. Only the series the portal says it holds are tracked, so an ICP with no export never forces a full re-read. If the portal lists a series but returns no readings for it, the coordinator remembers how far it has read that series, so it's read in full once per Home Assistant start rather than on every sync. If a series without a statistic does have readings, but only in recent hours still missing a half-hour, it's only remembered as read up to the last seven days, so those hours are read again once the portal fills them in. Requests always start and end at NZ midnight, even when resuming partway through a day, and hours already imported are skipped. Midnight never falls inside a daylight saving change, so every response starts with an hour whose occurrence is known, and no hour is split between two chunks. Each chunk is written as soon as it's fetched, so an interrupted backfill carries on from where it stopped on the next run. Because the checkpoint never moves backwards, the import stops at the first hour that's missing or short of a half-hour, and later hours wait until the portal fills it in. That keeps the running sum complete. A gap more than seven days older than the portal's latest data is treated as settled and imported as it stands, so a reading the portal never supplies can't hold up everything after it.
 
 The portal takes in new meter data once a day, at a time that isn't known yet. The coordinator imports once a day, and when an import adds no new hours it switches to checking every 3 hours (`CONSUMPTION_RECHECK_INTERVAL`). A recheck only calls `analysis/initData`, and returns the previous summary while the portal's data range is unchanged. As soon as the range moves, a full import runs and the 24-hour interval resumes from then, so the daily import settles just after the portal's own. While rechecking, a full import still runs once a day, in case the portal has filled in an earlier gap.
 
 The coordinator always fetches the last complete day, even when it's already imported, to fill the "latest day" sensors.
+
+### Costs
+
+The same readings are priced into hourly cost statistics, one per part of the bill (`costs.py`). For each half-hour, `PricingCoordinator.day_costs` gives the day's half-hours (`DaySlots`, from `season_slots`, the same way today is priced) and daily charges, worked out from the saved pricing with no requests. Each half-hour's usage is multiplied by every part of its slot's price: Ecotricity's rate (times the ICP's consumption loss factor, as bills charge it), the network's rate and each levy for import, and Ecotricity's and the network's rate for export, signed as published. Each daily charge item is split evenly over the hours of its NZ day, which has 23 or 25 hours when daylight saving starts or ends, and goes with the import hours. GST is its own statistic, on import and daily charges only. Parts are named by the same keys as the price sensors' attributes (`component_key`, `daily_charge_key`), so the statistics are `ecotricity_nz:<icp>_import_cost_supplier`, `_import_cost_network`, `_import_cost_ea_levy`, `_daily_charge_metering`, `_export_supplier`, `_gst` and so on, plus totals worked out from them: `_import_cost_total` and `_daily_charge_total` (each side's parts added up, excluding GST), `_export_total`, and for the Energy dashboard `_total_electricity_cost` (import parts, daily charges and GST) and `_total_electricity_compensation` (the export total with its sign flipped, as the Energy dashboard counts money received as positive and takes it off the cost), and `_total_electricity_net_billed`, the cost plus the export total. The net needs both sides, so with export readings, a recent hour whose export isn't priced yet waits like a missing reading. Every key the plan's rates can give (`cost_keys`) gets a value in each priced hour, zero where it doesn't apply, so a part charged only in some seasons doesn't leave gaps.
+
+Only days a published season covers can be priced: rates without dates of their own apply to every day, so the seasons say which days the saved pricing is for. An hour whose day can't be priced is left out, like a missing reading, so a recent one holds the cost statistics back and one over seven days old is skipped. Every cost statistic is its own checkpoint, and each sync carries on from the one furthest behind, so a part that stopped early (the net billed total waiting on export, say) catches up without the others being written twice. A cost statistic with no hours yet (on the first run, after upgrading, or a new part of the plan) starts at the first day the saved pricing can price, `earliest_priced_day`, rather than at the start of the portal's data. Plans list the whole pricing year's seasons, so to price the year's earlier seasons the pricing coordinator downloads their charts once each and keeps them while the plan lists them. These charts never count as missing or unreadable for today's pricing, so they raise no fetch, retry or repair issue.
+
+Each part of the import and export cost is also split into bill lines, one per rate of Ecotricity's or the network's: `line_<side>_<supplier|network>_<code>` in NZD and `..._energy` in kWh, keyed by `line_key` in `tariff.py` from the rate's bucket. A price part (`PriceComponent`) carries its rate's bucket, so a half-hour's usage goes on the line of the rate that actually charged it, even where Ecotricity's and the network's periods differ, and anytime rates (which aren't in the slot's buckets) get their own line. `cost_keys` lists every line the plan's rates give, from the same function, and like the parts, every line gets a value in each priced hour. Levies and daily charges are already one statistic each, so they're used as their own lines.
+
+### Bill card
+
+The bill card is a Lit web component in `frontend/`, bundled by esbuild into `custom_components/ecotricity_nz/frontend/` and served by `card.py` from `/ecotricity_nz/ecotricity-bill-card.js`, which loads it on every dashboard (`add_extra_js_url`). The URL carries a hash of the file, so an update gets a new URL, and browsers revalidate it rather than caching it.
+
+Home Assistant loads extra modules alongside its own app, sometimes before it. The app installs a scoped custom element registry polyfill that replaces `window.customElements`, and anything defined in the native registry before then can't be found ("Custom element not found"). So the bundle's entry (`frontend/src/index.ts`) waits until the app has defined `<home-assistant>`, then imports the card, whose Lit classes esbuild evaluates only then.
+
+```mermaid
+sequenceDiagram
+    participant D as Energy date picker
+    participant C as Bill card
+    participant W as ecotricity_nz/bill
+    participant R as Recorder
+    C->>W: which lines, and their statistics?
+    W-->>C: sections, what each line is, statistic IDs, loss factor
+    C->>W: ecotricity_nz/bill_days for the range
+    W-->>C: days of daily charges imported
+    D-->>C: range (subscribed through collection_key)
+    loop every statistic
+        C->>R: recorder/statistic_during_period (change)
+        R-->>C: change over the range
+    end
+    Note over C: works out each line's quantity, rate and amount (bill.ts)
+```
+
+The card finds the date picker's collection on the websocket connection (`hass.connection["_" + collection_key]`, where the frontend keeps it), subscribes to it, and reads every statistic again when the range changes or the collection refreshes. Options that change what's fetched (`icp`, `config_entry_id`, `collection_key`, `billing_period_start_day`) make the card fetch again; the others only change how the fetched values are shown, so the bill is worked out as it's drawn and the editor doesn't refetch on every change. The card's visual editor (`editor.ts`, loaded only when it's opened) is an `ha-form`, like the built-in cards' editors, and lists the ICPs set up from `ecotricity_nz/icps`. The bill commands take an optional `icp` (any case) or `config_entry_id`, and with neither use the only loaded entry, so a card only names its ICP when more than one is set up. The layout comes from `websocket_api.py`, which builds it from the saved plan (`bill_lines`) with no requests, so the card knows nothing about plans. Plans word the same rate differently from network to network ("Uncontrolled - Off Peak", "Off Peak Usage"), so each line is described by what it is: a daily charge by who charges it (network, metering or supplier), a levy by its key, and usage by side and period (the period sensors' keys, from `bucket_period`). The card names it from those, consistently: "Daily charge - Ecotricity", "Import - Off-peak", "EA levy", with the same period names as the period sensors. Only something it has no name for falls back to the integration's period name (`bucket_name`) or the plan's description. The energy section is headed "[Ecotricity]" and the network section with the network's name. The card asks for whole hours (`wholeHours` in `bill.ts`): the recorder reads any part of an hour at either end of a range from 5-minute statistics, which external statistics don't have, and the date picker ends a day at 23:59:59.999, so its last hour would count as nothing. A rate is the line's amount over its kWh (plus losses, for Ecotricity's import) or the days charged. Daily charges are only spread over hours whose usage is priced, so a range reaching past the latest import has fewer days of them than it spans; `ecotricity_nz/bill_days` counts them from the daily charge total's hours with `charged_days` in `costs.py`, which gives each hour its share of its NZ day (23 to 25 hours), exactly as `hourly_costs` spreads the charges. So every rate on the card matches its sensor. Like a bill, lines exclude GST whatever the entry's **Include GST** option, which is for the sensors: the command sends `gst_rate` and marks each line GST is charged on (everything but export), and the card adds the total excluding GST, the GST on those lines, and the total including it.
 
 ## Signing in to the onboarding site
 

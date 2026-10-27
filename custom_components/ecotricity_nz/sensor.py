@@ -28,19 +28,20 @@ from .tariff import (
     CONTROLLED_PREFIX,
     EXPORT_PREFIX,
     Alignment,
-    ComponentKind,
-    DailyCharge,
     PriceComponent,
     SidePricing,
     Slot,
     TouPeriod,
     bucket_name,
     bucket_period,
+    component_key,
+    daily_charge_key,
     day_windows,
     next_change,
     next_season_change,
     period_for_bucket,
     resolve_bucket,
+    slug,
 )
 
 if TYPE_CHECKING:
@@ -306,9 +307,7 @@ def _plan_sensors(
     """Return how to create each sensor the plan's periods call for, by unique ID."""
     periods = pricing.data.periods
     wanted: dict[str, Callable[[], SensorEntity]] = {
-        f"{icp}_{_PRICE_KEY_PREFIX}{_slug(bucket)}": partial(
-            BucketPriceSensor, pricing, icp, bucket
-        )
+        f"{icp}_{_PRICE_KEY_PREFIX}{slug(bucket)}": partial(BucketPriceSensor, pricing, icp, bucket)
         for bucket in periods.buckets
     }
     for export, alignment in ((False, periods.import_alignment), (True, periods.export_alignment)):
@@ -335,7 +334,7 @@ def _registered_plan_sensors(
     """
     price_prefix = f"{icp}_{_PRICE_KEY_PREFIX}"
     buckets = {resolve_bucket(rate) for rate in pricing.data.plan.rates if not rate.is_levy}
-    plan_buckets = {_slug(bucket): bucket for bucket in buckets}
+    plan_buckets = {slug(bucket): bucket for bucket in buckets}
     split = {f"{icp}_{key}": side for side, key in _SPLIT_PERIOD_KEYS.items()}
     sensors: dict[str, Callable[[], SensorEntity]] = {}
     for registry_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
@@ -343,9 +342,9 @@ def _registered_plan_sensors(
         if registry_entry.domain != SENSOR_DOMAIN:
             continue
         if unique_id.startswith(price_prefix):
-            slug = unique_id.removeprefix(price_prefix)
+            key = unique_id.removeprefix(price_prefix)
             # A bucket with no rate of its own (anytime, say) is a charge code, so upper case.
-            bucket = plan_buckets.get(slug, slug.upper())
+            bucket = plan_buckets.get(key, key.upper())
             sensors[unique_id] = partial(BucketPriceSensor, pricing, icp, bucket)
         elif unique_id in split:
             export, party = split[unique_id]
@@ -394,7 +393,7 @@ class _PricingEntity(EcotricityEntity[PricingCoordinator], SensorEntity):
             if not part.price:
                 # A zero part (a network export rate of 0c, say) adds nothing to the price.
                 continue
-            key = _component_key(part)
+            key = component_key(part)
             parts[key] = parts.get(key, 0.0) + part.price
         return {key: self._to_nzd(cents, export=export) for key, cents in parts.items()}
 
@@ -443,7 +442,7 @@ class DailyChargeSensor(_PricingEntity):
         for charge in self.coordinator.data.pricing.daily_charges:
             if not charge.price:
                 continue
-            key = _daily_charge_key(charge)
+            key = daily_charge_key(charge)
             parts[key] = parts.get(key, 0.0) + charge.price
         return {key: self._to_nzd(cents) for key, cents in parts.items()}
 
@@ -464,7 +463,7 @@ class BucketPriceSensor(_PricingEntity):
             coordinator,
             icp,
             SensorEntityDescription(
-                key=f"{_PRICE_KEY_PREFIX}{_slug(bucket)}",
+                key=f"{_PRICE_KEY_PREFIX}{slug(bucket)}",
                 translation_key=f"{period.value if period else 'named'}_{direction}_price",
             ),
         )
@@ -826,24 +825,6 @@ class ConsumptionSensor(EcotricityEntity[ConsumptionCoordinator], SensorEntity):
         }
 
 
-def _daily_charge_key(charge: DailyCharge) -> str:
-    """Return a stable attribute key for a daily charge item.
-
-    The network's charges are network_rate. Of Ecotricity's items, the metering fee is shown on
-    its own (metering_rate), like the EA levy on import prices, and the admin fee is
-    Ecotricity's own charge (supplier_rate). Any other item gets a key from its description,
-    so a new kind of charge is never hidden inside another.
-    """
-    if charge.is_network:
-        return "network_rate"
-    description = charge.description.lower()
-    if "meter" in description:
-        return "metering_rate"
-    if "admin" in description:
-        return "supplier_rate"
-    return _slug(charge.description)
-
-
 def _group(bucket: str) -> str:
     """Return which group a bucket belongs to: import, export or controlled."""
     if bucket.startswith(EXPORT_PREFIX):
@@ -851,21 +832,3 @@ def _group(bucket: str) -> str:
     if bucket.startswith(CONTROLLED_PREFIX):
         return "controlled"
     return "import"
-
-
-def _component_key(part: PriceComponent) -> str:
-    """Return a stable attribute key for a price part.
-
-    Keys don't include the period, so they stay the same as the time of day changes:
-    supplier_rate, network_rate, and ea_levy (other levies get a key from their description).
-    """
-    if part.kind is ComponentKind.SUPPLIER:
-        return "supplier_rate"
-    if part.kind is ComponentKind.NETWORK:
-        return "network_rate"
-    key = _slug(part.description)
-    return "ea_levy" if key in ("ea_levy", "electricity_authority_levy") else key
-
-
-def _slug(text: str) -> str:
-    return "".join(char if char.isalnum() else "_" for char in text.lower()).strip("_")

@@ -204,6 +204,8 @@ class PriceComponent:
     kind: ComponentKind
     description: str
     price: float
+    bucket: str = ""
+    """The rate's bucket code, with its group's prefix (see `resolve_bucket`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +379,7 @@ def side_rates(plan: Plan, day: date, *, export: bool) -> SideRates:
     supplier: dict[str, tuple[PriceComponent, ...]] = {}
     network: dict[str, tuple[PriceComponent, ...]] = {}
     for rate in rates:
-        part = _component(rate)
+        part = rate_component(rate)
         if rate.is_levy:
             # Levies apply to every kWh imported, never to export.
             if not export:
@@ -409,14 +411,28 @@ def without_export(plan: Plan) -> Plan:
     )
 
 
-def _component(rate: Rate) -> PriceComponent:
+def rate_component(rate: Rate) -> PriceComponent:
+    """Return a rate as a part of a price."""
     if rate.is_levy:
         kind = ComponentKind.LEVY
     elif rate.is_network:
         kind = ComponentKind.NETWORK
     else:
         kind = ComponentKind.SUPPLIER
-    return PriceComponent(kind, rate.description, rate.price)
+    return PriceComponent(kind, rate.description, rate.price, resolve_bucket(rate))
+
+
+def line_key(part: PriceComponent, *, export: bool) -> str | None:
+    """Return the key of the bill line a price part is charged on, or None for a levy.
+
+    A bill has a line for each of Ecotricity's and the network's rates, for example
+    line_import_network_charge_high. Levies are one line already, and have no bucket.
+    """
+    if part.kind is ComponentKind.LEVY or not part.bucket:
+        return None
+    side = "export" if export else "import"
+    code = part.bucket.removeprefix(EXPORT_PREFIX if export else "")
+    return f"line_{side}_{part.kind}_{slug(code)}"
 
 
 def _slot(candidate: _Candidate) -> Slot:
@@ -679,7 +695,7 @@ def controlled_prices(
         if rate.applies_on(day) and rate.unit is RateUnit.PER_KWH and rate.is_controlled
     ]
     levies = tuple(
-        _component(rate)
+        rate_component(rate)
         for rate in plan.rates
         if rate.applies_on(day) and rate.unit is RateUnit.PER_KWH and rate.is_levy
     )
@@ -688,7 +704,7 @@ def controlled_prices(
         if rate.is_levy:
             continue
         bucket = resolve_bucket(rate)
-        buckets[bucket] = (*buckets.get(bucket, ()), _component(rate))
+        buckets[bucket] = (*buckets.get(bucket, ()), rate_component(rate))
     anytime = CONTROLLED_PREFIX + ANYTIME
     if anytime in buckets and len(buckets) > 1:
         always = buckets.pop(anytime)
@@ -723,11 +739,7 @@ def price_day(
         rates = side_rates(plan, day, export=export)
         if slots is None and not rates.is_empty:
             rate_buckets.update(rate_periods(rates, alignment))
-    daily = tuple(
-        DailyCharge(rate.description, rate.price, is_network=rate.is_network)
-        for rate in plan.rates
-        if rate.applies_on(day) and rate.unit is RateUnit.PER_DAY
-    )
+    daily = daily_charges(plan, day)
     controlled, controlled_components = controlled_prices(plan, day)
     return DayPricing(
         import_side=price_side(import_slots, alignments[0]) if import_slots else None,
@@ -737,6 +749,52 @@ def price_day(
         daily_charges=daily,
         rate_buckets=rate_buckets,
     )
+
+
+def daily_charges(plan: Plan, day: date) -> tuple[DailyCharge, ...]:
+    """Return the plan's fixed daily charges on a day."""
+    return tuple(
+        DailyCharge(rate.description, rate.price, is_network=rate.is_network)
+        for rate in plan.rates
+        if rate.applies_on(day) and rate.unit is RateUnit.PER_DAY
+    )
+
+
+def component_key(part: PriceComponent) -> str:
+    """Return a stable key for a price part.
+
+    Keys don't include the period, so they stay the same as the time of day changes:
+    supplier_rate, network_rate, and ea_levy (other levies get a key from their description).
+    """
+    if part.kind is ComponentKind.SUPPLIER:
+        return "supplier_rate"
+    if part.kind is ComponentKind.NETWORK:
+        return "network_rate"
+    key = slug(part.description)
+    return "ea_levy" if key in ("ea_levy", "electricity_authority_levy") else key
+
+
+def daily_charge_key(charge: DailyCharge) -> str:
+    """Return a stable key for a daily charge item.
+
+    The network's charges are network_rate. Of Ecotricity's items, the metering fee is shown on
+    its own (metering_rate), like the EA levy on import prices, and the admin fee is
+    Ecotricity's own charge (supplier_rate). Any other item gets a key from its description,
+    so a new kind of charge is never hidden inside another.
+    """
+    if charge.is_network:
+        return "network_rate"
+    description = charge.description.lower()
+    if "meter" in description:
+        return "metering_rate"
+    if "admin" in description:
+        return "supplier_rate"
+    return slug(charge.description)
+
+
+def slug(text: str) -> str:
+    """Return a lower-case key for text, with every other character as an underscore."""
+    return "".join(char if char.isalnum() else "_" for char in text.lower()).strip("_")
 
 
 def season_for(plan: Plan, day: date) -> Season | None:
@@ -801,6 +859,18 @@ def chart_seasons(plan: Plan, day: date, *, upcoming: bool) -> list[Season | Non
     change = next_season_change(plan, day)
     following = season_for(plan, change) if change is not None else None
     return [item for item in (season, following) if item is not None]
+
+
+def ended_seasons(plan: Plan, day: date) -> list[Season]:
+    """Return the published seasons that ended before `day`, for pricing past days.
+
+    A plan whose charts don't depend on the season has none: its one set of charts covers them.
+    """
+    if not plan_needs_season(plan):
+        return []
+    return sorted(
+        (item for item in plan.seasons if item.end < day), key=lambda item: (item.start, item.end)
+    )
 
 
 def season_charts(plan: Plan, season: Season | None) -> list[str]:

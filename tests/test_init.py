@@ -39,7 +39,7 @@ from custom_components.ecotricity_nz.api import (
     RateUnit,
     Season,
 )
-from custom_components.ecotricity_nz.api.parsers import parse_icp
+from custom_components.ecotricity_nz.api.parsers import parse_icp, parse_values
 from custom_components.ecotricity_nz.api.timeframes import (
     ChartReading,
     LegendEntry,
@@ -70,6 +70,7 @@ from custom_components.ecotricity_nz.tariff import (
     resolve_bucket,
     season_for,
     side_rates,
+    slug,
 )
 from tests.conftest import (
     ANYTIME_PLAN,
@@ -89,6 +90,7 @@ from tests.conftest import (
     has_extra_network_buckets,
     has_overlapping_seasons,
     import_rates,
+    load_json_fixture,
     load_network_fixture,
     plan_id,
     season_only_period,
@@ -446,7 +448,10 @@ async def test_consumption_imports_statistics(
 
     # The names match the daily sensors, which is how they're listed in the Energy dashboard.
     metadata = await get_instance(hass).async_add_executor_job(get_metadata, hass)
-    assert {stat_id: meta["name"] for stat_id, (_, meta) in metadata.items()} == {
+    energy = {statistic_id(TEST_ICP, series) for series in (IMPORT, EXPORT, CARBON)}
+    assert {
+        stat_id: meta["name"] for stat_id, (_, meta) in metadata.items() if stat_id in energy
+    } == {
         statistic_id(TEST_ICP, IMPORT): f"Ecotricity {TEST_ICP} imported",
         statistic_id(TEST_ICP, EXPORT): f"Ecotricity {TEST_ICP} exported",
         statistic_id(TEST_ICP, CARBON): f"Ecotricity {TEST_ICP} carbon savings",
@@ -1103,7 +1108,7 @@ async def test_kept_price_sensors_get_their_buckets_back_from_the_plan(
         entity_registry.async_get_or_create(
             "sensor",
             DOMAIN,
-            f"{TEST_ICP}_price_{sensor_module._slug(resolve_bucket(rate))}",
+            f"{TEST_ICP}_price_{slug(resolve_bucket(rate))}",
             config_entry=config_entry,
         )
 
@@ -1159,7 +1164,7 @@ async def test_price_sensor_for_a_period_only_an_ended_season_has_is_kept(
     bucket, season = found
     freezer.move_to(datetime.combine(season.end, time(12), NZ))
     await _setup(hass, config_entry, {CONF_PLAN_ID: plan.id})
-    unique_id = f"{TEST_ICP}_price_{sensor_module._slug(bucket)}"
+    unique_id = f"{TEST_ICP}_price_{slug(bucket)}"
     entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
     assert entity_id is not None
     entity_registry.async_update_entity(entity_id, name="My peak price")
@@ -2113,26 +2118,6 @@ async def test_entity_categories(
     }
 
 
-def test_daily_charge_keys() -> None:
-    from custom_components.ecotricity_nz.sensor import _daily_charge_key  # noqa: PLC0415
-    from custom_components.ecotricity_nz.tariff import DailyCharge  # noqa: PLC0415
-
-    assert _daily_charge_key(DailyCharge("Daily Network Charges", 90, is_network=True)) == (
-        "network_rate"
-    )
-    assert _daily_charge_key(DailyCharge("Metering Fee", 35, is_network=False)) == ("metering_rate")
-    assert (
-        _daily_charge_key(
-            DailyCharge("Admin & climate positive certification", 30, is_network=False)
-        )
-        == "supplier_rate"
-    )
-    # A kind of charge not seen before keeps its own key.
-    assert _daily_charge_key(DailyCharge("Smart Home Bundle", 20, is_network=False)) == (
-        "smart_home_bundle"
-    )
-
-
 async def _enabled_price(
     hass: HomeAssistant, entry: MockConfigEntry, entity_registry: er.EntityRegistry, key: str
 ) -> str:
@@ -2393,6 +2378,45 @@ async def test_series_listed_without_readings_is_not_reread(
     start, _ = mock_portal.async_get_half_hourly.await_args.args
     assert mock_portal.async_get_half_hourly.await_count == calls + 1
     assert start == datetime(2026, 4, 5, 0, 0, tzinfo=NZ)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_new_series_with_only_incomplete_hours_is_imported_once_complete(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Carbon savings start with a single half-hour, a day before the portal's latest, so that
+    # day isn't fetched again for the daily sensors. Its hour is incomplete and recent, so it
+    # waits.
+    freezer.move_to(WINTER_PEAK)
+    indicator = mock_portal.async_get_indicator.return_value
+    mock_portal.async_get_indicator.return_value = replace(
+        indicator, data_end=datetime(2026, 4, 7, 0, 0, tzinfo=NZ)
+    )
+    half_hourly = mock_portal.async_get_half_hourly.side_effect
+    partial = [True]
+
+    async def first_carbon_only(start: datetime, end: datetime) -> Any:
+        data = await half_hourly(start, end)
+        return replace(data, carbon_savings_kg=data.carbon_savings_kg[:1]) if partial[0] else data
+
+    mock_portal.async_get_half_hourly.side_effect = first_carbon_only
+    await _setup(hass, portal_config_entry)
+    await async_wait_recording_done(hass)
+    assert not await _stats(hass, statistic_id(TEST_ICP, CARBON))
+
+    # Once the portal has the rest, the next sync reads those hours again and imports them.
+    partial[0] = False
+    await portal_config_entry.runtime_data.consumption.async_refresh()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+    values = parse_values(load_json_fixture("portal_values_dst_end.json"), NZ)
+    expected = sum(reading.value for reading in values.carbon_savings_kg)
+    assert (await _last_stat(hass, statistic_id(TEST_ICP, CARBON)))["sum"] == pytest.approx(
+        expected
+    )
 
 
 @pytest.mark.usefixtures("mock_onboarding")

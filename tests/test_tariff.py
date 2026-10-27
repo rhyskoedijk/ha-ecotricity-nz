@@ -23,6 +23,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
 )
 from custom_components.ecotricity_nz.tariff import (
     Alignment,
+    DailyCharge,
     DaySlots,
     SideRates,
     Slot,
@@ -31,6 +32,7 @@ from custom_components.ecotricity_nz.tariff import (
     bucket_names,
     bucket_period,
     chart_seasons,
+    daily_charge_key,
     day_slots,
     day_windows,
     explain,
@@ -1079,3 +1081,20 @@ def test_plan_without_export_keeps_import_and_daily_rates() -> None:
     assert [rate for rate in plan.rates if rate not in stripped.rates] == [
         rate for rate in plan.rates if rate.is_export and rate.unit is RateUnit.PER_KWH
     ]
+
+
+def test_daily_charge_keys() -> None:
+    assert daily_charge_key(DailyCharge("Daily Network Charges", 90, is_network=True)) == (
+        "network_rate"
+    )
+    assert daily_charge_key(DailyCharge("Metering Fee", 35, is_network=False)) == ("metering_rate")
+    assert (
+        daily_charge_key(
+            DailyCharge("Admin & climate positive certification", 30, is_network=False)
+        )
+        == "supplier_rate"
+    )
+    # A kind of charge not seen before keeps its own key.
+    assert daily_charge_key(DailyCharge("Smart Home Bundle", 20, is_network=False)) == (
+        "smart_home_bundle"
+    )

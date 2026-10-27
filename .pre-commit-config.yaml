@@ -30,6 +30,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: frontend-typecheck
+        name: frontend type check
+        entry: npm run typecheck --prefix frontend
+        language: system
+        files: ^frontend/(src|test)/.*\.ts$|^frontend/tsconfig\.json$
+        pass_filenames: false
       - id: translations-match
         name: translations/en.json matches strings.json
         entry: cmp custom_components/ecotricity_nz/strings.json custom_components/ecotricity_nz/translations/en.json

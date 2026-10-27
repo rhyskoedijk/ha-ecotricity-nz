@@ -6,3 +6,7 @@ cd "$(dirname "$0")/.."
 
 uv sync
 uv run pre-commit install
+
+# Build the frontend.
+npm ci --prefix frontend
+npm run build --prefix frontend

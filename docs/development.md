@@ -6,6 +6,7 @@ This page explains how to build and test the integration locally, for contributo
 
 - Python 3.14 or later. `.python-version` pins the minor version, so uv uses 3.14 locally and in CI even when a newer Python is installed.
 - [uv](https://docs.astral.sh/uv/) package and project manager.
+- Node.js (the version in `frontend/.nvmrc`) and npm, for the bill card.
 
 ## Setup
 
@@ -13,7 +14,7 @@ This page explains how to build and test the integration locally, for contributo
 scripts/setup
 ```
 
-This installs Home Assistant, the test harness and the tools into `.venv`, and installs the pre-commit hooks.
+This installs Home Assistant, the test harness and the tools into `.venv`, installs the pre-commit hooks, and installs and builds the bill card.
 
 ## Checks
 
@@ -23,6 +24,14 @@ uv run pytest --cov --cov-report=term-missing  # code coverage
 uv run ruff format . && uv run ruff check .    # formatting and linting
 uv run mypy custom_components                  # type checking (strict)
 uv run pre-commit run --all-files              # git hook checks
+```
+
+The bill card has its own checks, run from `frontend/`:
+
+```bash
+npm run typecheck   # TypeScript, strict
+npm test            # vitest: bill.ts's logic, and the card rendered in happy-dom
+npm run build       # bundle into custom_components/ecotricity_nz/frontend/
 ```
 
 CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
@@ -53,7 +62,11 @@ scripts/develop
 
 This creates a `config/` directory (git-ignored), links the integration into `config/custom_components`, writes a minimal `configuration.yaml`, and starts Home Assistant. The first start takes a minute or two while Home Assistant installs its own runtime packages. Open http://localhost:8123, create a user, then go to Settings > Devices & services > Add integration > Ecotricity NZ.
 
-Code changes need a restart: stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> and run `scripts/develop` again.
+Code changes need a restart: stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> and run `scripts/develop` again. The bill card is the exception: `scripts/develop` rebuilds it as its source changes, so reloading the dashboard shows the change.
+
+### The bill card
+
+The card's source is `frontend/src`: `index.ts` is the bundle's entry, which waits for Home Assistant's app before loading the card (see [architecture.md](architecture.md#bill-card)), `bill.ts` works out the bill from statistics, with no DOM or Home Assistant, and `ecotricity-bill-card.ts` is the Lit element. esbuild bundles both, with Lit, into one file in `custom_components/ecotricity_nz/frontend/`, which is git-ignored: CD builds it for each release, and `card.py` logs a warning and skips the card when it hasn't been built. Its UI text is in English in the card itself, since `strings.json` only reaches the integration's backend.
 
 The first portal import backfills the whole history in the background, which can take a few minutes on an account with years of data. Watch for it in the log, then check Developer tools > Statistics for `ecotricity_nz:` entries.
 
@@ -63,7 +76,7 @@ Any one of these works:
 
 - Copy `custom_components/ecotricity_nz` into the `custom_components` folder of your Home Assistant config directory, then restart.
 - Download `ha_ecotricity_nz.zip` from a GitHub release and unzip it into `custom_components/ecotricity_nz`.
-- In HACS, add this repository as a custom repository, then pick a branch or pre-release from the download dialog.
+- In HACS, add this repository as a custom repository, then pick a branch or pre-release from the download dialog. A branch has no built bill card, so it's left out until you build it (`npm run build --prefix frontend`) and copy `custom_components/ecotricity_nz/frontend` across.
 
 ## Live smoke test
 
@@ -182,6 +195,6 @@ The git tag is the only place the version is set. `manifest.json` and `pyproject
 
 1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section.
 2. Create a GitHub release with a tag like `0.2.0` (no `v` prefix).
-3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which HACS installs.
+3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, builds the bill card, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which HACS installs.
 
 Nothing is committed, pushed or released without the maintainer's approval.

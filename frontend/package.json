@@ -1,0 +1,22 @@
+{
+  "name": "ecotricity-bill-card",
+  "private": true,
+  "description": "A dashboard card that shows Ecotricity NZ's cost statistics as a bill.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --minify --target=es2022 --outfile=../custom_components/ecotricity_nz/frontend/ecotricity-bill-card.js",
+    "watch": "npm run build -- --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "happy-dom": "21.0.4",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

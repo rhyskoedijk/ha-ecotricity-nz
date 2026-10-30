@@ -19,12 +19,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A commit on master: the repository's only release (1.0.0) predates hassfest's current checks.
       - uses: home-assistant/actions/hassfest@cd6f3635a740c84d8a14f6121a90068b8ece6bf6 # master
 
   hacs:
     name: HACS
     runs-on: ubuntu-latest
     steps:
+      # A commit on main, which HACS recommends and which is ahead of its latest release (22.5.0).
       - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
           category: integration

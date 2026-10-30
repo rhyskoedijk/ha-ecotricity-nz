@@ -10,7 +10,7 @@
 export type SectionKind = "network" | "energy" | "other";
 
 /** What a line charges for. */
-export type LineKind = "daily" | "usage" | "levy";
+type LineKind = "daily" | "usage" | "levy";
 
 /** One line of the bill, as the `ecotricity_nz/bill` websocket command describes it. */
 export interface LayoutLine {
@@ -44,7 +44,7 @@ export interface BillLayout {
 /** Each statistic's change over the bill's range, null where it has no data. */
 export type Changes = ReadonlyMap<string, number | null>;
 
-export interface BillLine {
+interface BillLine {
   label: string;
   /** What it's charged on: kWh used, or days. Any losses are charged on top. */
   quantity: number;
@@ -143,7 +143,7 @@ export function statisticIds(layout: BillLayout): string[] {
 }
 
 /** Which parts of the bill to show. */
-export interface BillOptions {
+interface BillOptions {
   /** Whether to list the plan's lines that charged nothing in the range, too. */
   showEmptyLines?: boolean;
 }

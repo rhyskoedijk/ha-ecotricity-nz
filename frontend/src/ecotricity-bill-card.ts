@@ -17,6 +17,7 @@ import {
 
 import {
   buildBill,
+  type Bill,
   formatAmount,
   formatQuantity,
   formatRate,
@@ -115,6 +116,8 @@ export class EcotricityBillCard extends LitElement {
   private _loading = false;
   /** Counts fetches, so a slow one doesn't overwrite a newer range's bill. */
   private _fetches = 0;
+  /** The bill worked out from `_data`, kept so a `hass` update alone doesn't rebuild it. */
+  private _bill?: Bill;
 
   /** Return the visual editor, loaded only when it's opened. */
   static async getConfigElement(): Promise<HTMLElement> {
@@ -147,7 +150,11 @@ export class EcotricityBillCard extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    if (this.hass && this._config) {
+    if (this._layout) {
+      // Moved in the page, such as when the dashboard's view changes: follow the range again,
+      // as leaving stopped it.
+      this._followRange();
+    } else if (this.hass && this._config) {
       void this._start();
     }
   }
@@ -158,6 +165,14 @@ export class EcotricityBillCard extends LitElement {
   }
 
   protected override willUpdate(changed: PropertyValues): void {
+    if (changed.has("_data") || changed.has("_layout") || changed.has("_config")) {
+      this._bill =
+        this._data && this._layout
+          ? buildBill(this._layout, this._data.changes, this._data.days, {
+              showEmptyLines: this._config?.show_empty_lines,
+            })
+          : undefined;
+    }
     if (changed.has("_config")) {
       // The heading bars read this variable, so a theme can set it for every card too.
       const color = this._config?.header_color;
@@ -213,6 +228,7 @@ export class EcotricityBillCard extends LitElement {
   }
 
   private _followRange(): void {
+    this._stopListening();
     const key = this._config?.collection_key;
     if (!key) {
       const now = new Date();
@@ -329,13 +345,7 @@ export class EcotricityBillCard extends LitElement {
     if (this._error) {
       return html`<p class="message">${this._error}</p>`;
     }
-    const config = this._config;
-    const bill =
-      this._data && this._layout
-        ? buildBill(this._layout, this._data.changes, this._data.days, {
-            showEmptyLines: config?.show_empty_lines,
-          })
-        : undefined;
+    const bill = this._bill;
     if (!bill || !this._layout) {
       return html`<p class="message">Loading…</p>`;
     }

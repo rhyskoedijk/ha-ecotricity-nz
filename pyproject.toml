@@ -14,6 +14,7 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
+    "home-assistant-frontend==20260930.3",
 ]
 
 [tool.uv]
@@ -60,6 +61,8 @@ ignore = [
 # Parsers take raw JSON, so their inputs are typed Any. Models leave them fully typed.
 "custom_components/ecotricity_nz/api/parsers.py" = ["ANN401"]
 "scripts/**" = ["INP001", "T201", "D"]
+# Claude Code skill scripts are standalone tools that print their reports.
+".claude/**" = ["INP001", "T201", "D"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["custom_components.ecotricity_nz"]

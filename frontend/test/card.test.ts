@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CARD_TYPE, EcotricityBillCard, type EnergyCollection, type HomeAssistant } from "../src/ecotricity-bill-card";
+import {
+  CARD_TYPE,
+  EcotricityBillCard,
+  validateConfig,
+  type EnergyCollection,
+  type HomeAssistant,
+} from "../src/ecotricity-bill-card";
 import type { BillLayout } from "../src/bill";
 import { CHANGES, LAYOUT } from "./fixtures";
 
@@ -313,6 +319,40 @@ describe("ecotricity-bill-card", () => {
     expect(() => card.setConfig({ type: `custom:${CARD_TYPE}`, collection_key: "bill" })).toThrow(
       'collection_key must start with "energy_"',
     );
+  });
+
+  it("accepts every option it can use", () => {
+    expect(() =>
+      validateConfig({ type: `custom:${CARD_TYPE}`, collection_key: "energy_bill", billing_period_start_day: 28 }),
+    ).not.toThrow();
+    expect(() => validateConfig({ type: `custom:${CARD_TYPE}` })).not.toThrow();
+  });
+
+  it("keeps following the date picker after it's moved in the page", async () => {
+    // The dashboard detaches and re-attaches cards, such as when its view changes.
+    const collection = new FakeCollection();
+    const { hass, requests } = fakeHass({ _energy_bill: collection });
+    const card = await mount({ collection_key: "energy_bill" }, hass);
+
+    card.remove();
+    document.body.append(card);
+    await settle(card);
+    expect(collection.subscribers).toBe(1);
+
+    collection.setPeriod(new Date("2026-08-31T12:00:00Z"), new Date("2026-09-30T10:59:59.999Z"));
+    await settle(card);
+    expect(requests.at(-1)?.fixed_period.start_time).toBe("2026-08-31T12:00:00.000Z");
+  });
+
+  it("doesn't work the bill out again when only hass changes", async () => {
+    const { hass } = fakeHass({ _energy_bill: new FakeCollection() });
+    const card = await mount({ collection_key: "energy_bill" }, hass);
+    const bill = (card as unknown as { _bill: unknown })._bill;
+    expect(bill).toBeDefined();
+
+    card.hass = { ...hass };
+    await settle(card);
+    expect((card as unknown as { _bill: unknown })._bill).toBe(bill);
   });
 
   it("is listed in the card picker", () => {

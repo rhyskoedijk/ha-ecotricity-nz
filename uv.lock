@@ -664,11 +664,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.7.22"
+version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz", hash = "sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55", size = 138112, upload-time = "2026-07-22T03:35:12.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz", hash = "sha256:a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd", size = 136225, upload-time = "2026-10-23T11:36:16.478Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl", hash = "sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775", size = 136983, upload-time = "2026-07-22T03:35:11.276Z" },
+    { url = "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl", hash = "sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1", size = 135082, upload-time = "2026-10-23T11:36:14.763Z" },
 ]
 
 [[package]]
@@ -1227,6 +1227,7 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "home-assistant-frontend" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest-homeassistant-custom-component" },
@@ -1237,6 +1238,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "home-assistant-frontend", specifier = "==20260930.3" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.372" },
@@ -1331,6 +1333,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bc/6f/914fd8086f502748907751766e26e3f7fe5204347a679703ee9954e55e4d/home_assistant_bluetooth-2.0.0.tar.gz", hash = "sha256:3febd16b194812b156024d9bc8ce8ec7622cdd8d159047cac504cc77ca034ea1", size = 7604, upload-time = "2025-07-09T18:01:47.541Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/3e/2ed9e59da8fc26c43cbd9d6abbd27217138a31c608b1d334cc5e680e4069/home_assistant_bluetooth-2.0.0-py3-none-any.whl", hash = "sha256:8d7c2ac48c303adacad73cb6cdfe7710f2fccd2a367d4c3106acf301b0d22b91", size = 7907, upload-time = "2025-07-09T18:01:46.506Z" },
+]
+
+[[package]]
+name = "home-assistant-frontend"
+version = "20260930.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/4f/5ec5703f59ad64d55aa5841b009e0a01e3760ef69a20003d92da477ab134/home_assistant_frontend-20260930.3.tar.gz", hash = "sha256:b973eb275bd82f767221ab78190f165390760c71523fd9d3e715c56524d01447", size = 109966678, upload-time = "2026-10-09T09:45:35.594Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/52/878321f34f4cff19e771ea4460e4447eba2a270bd7171f4c1ac7b8260c89/home_assistant_frontend-20260930.3-py3-none-any.whl", hash = "sha256:700acb1eda07b03cf104e037310575c4626ed4ba56868a80f56851d661bf1c1e", size = 110733872, upload-time = "2026-10-09T09:45:28.76Z" },
 ]
 
 [[package]]

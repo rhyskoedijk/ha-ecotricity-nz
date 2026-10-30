@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from homeassistant.components.recorder.statistics import get_last_statistics, get_metadata
+from homeassistant.components.recorder.statistics import (
+    get_last_statistics,
+    get_metadata,
+    statistics_during_period,
+)
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.recorder import get_instance
 from pytest_homeassistant_custom_component.components.recorder.common import (
@@ -17,9 +21,19 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.ecotricity_nz import coordinator as coordinator_module
-from custom_components.ecotricity_nz.api import EcotricityConnectionError, Plan
+from custom_components.ecotricity_nz.api import (
+    ConsumptionData,
+    EcotricityConnectionError,
+    IntervalReading,
+    Plan,
+)
 from custom_components.ecotricity_nz.api.parsers import parse_values
-from custom_components.ecotricity_nz.const import DOMAIN, GST_FACTOR, ISSUE_TOU_CHART
+from custom_components.ecotricity_nz.const import (
+    CONF_PLAN_ID,
+    DOMAIN,
+    GST_FACTOR,
+    ISSUE_TOU_CHART,
+)
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.costs import (
     DAILY_CHARGE_TOTAL,
@@ -47,11 +61,13 @@ from tests.conftest import (
     ANYTIME_PLAN,
     NZ,
     TEST_ICP,
+    TIME_OF_USE_PLAN,
     WINTER_PEAK,
     chart_file,
     explained_chart,
     find_plan,
     load_json_fixture,
+    plan_id,
     season_chart_name,
 )
 
@@ -340,3 +356,181 @@ async def test_cost_statistic_that_fell_behind_the_others_catches_up(
     sums = await _sums(hass)
     for key, value in expected.items():
         assert sums.get(key, 0.0) == pytest.approx(value), key
+
+
+def _day_readings(day: date, kwh: float = 0.5) -> tuple[IntervalReading, ...]:
+    """Return a reading for every half-hour of an NZ day, stepping in UTC across DST changes."""
+    start = datetime.combine(day, time.min, NZ).astimezone(UTC)
+    end = datetime.combine(day + timedelta(days=1), time.min, NZ).astimezone(UTC)
+    readings = []
+    while start < end:
+        readings.append(IntervalReading(start, start + timedelta(minutes=30), kwh))
+        start += timedelta(minutes=30)
+    return tuple(readings)
+
+
+def _serve(mock_portal: MagicMock, *days: date) -> None:
+    """Have the portal hold import readings for these NZ days, and nothing else."""
+    readings = tuple(reading for day in days for reading in _day_readings(day))
+    first = datetime.combine(min(days), time.min, NZ)
+    last = datetime.combine(max(days) + timedelta(days=1), time.min, NZ)
+    mock_portal.async_get_indicator.return_value = replace(
+        mock_portal.async_get_indicator.return_value, data_start=first, data_end=last
+    )
+
+    async def half_hourly(start: datetime, end: datetime) -> ConsumptionData:
+        return ConsumptionData(
+            imported_kwh=tuple(reading for reading in readings if start <= reading.start < end)
+        )
+
+    mock_portal.async_get_half_hourly.side_effect = half_hourly
+
+
+async def _hours(hass: HomeAssistant, key: str, start: datetime) -> list[Any]:
+    """Return each hour of a statistic from `start`, with its change."""
+    stat_id = statistic_id(TEST_ICP, IMPORT if key == IMPORT.key else cost_series(key))
+    rows = await get_instance(hass).async_add_executor_job(
+        statistics_during_period, hass, start, None, {stat_id}, "hour", None, {"change"}
+    )
+    return list(rows.get(stat_id, []))
+
+
+def _daily_total(plan: Plan, day: date) -> float:
+    return sum(charge.price for charge in daily_charges(plan, day)) / 100
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_usage_before_the_pricing_year_gets_no_costs(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A first backfill reads the portal's whole history, which starts before any published
+    # season. Those days' usage is imported, but they can't be priced.
+    freezer.move_to(WINTER_PEAK)
+    plan = find_plan(ANYTIME_PLAN)
+    first = min(season.start for season in plan.seasons)
+    before = first - timedelta(days=1)
+    _serve(mock_portal, before, first)
+
+    await _setup(hass, portal_config_entry)
+
+    since = datetime.combine(before, time.min, NZ).astimezone(UTC)
+    energy = await _hours(hass, IMPORT.key, since)
+    assert datetime.fromtimestamp(energy[0]["start"], UTC) == since
+    costs = await _hours(hass, TOTAL_ELECTRICITY_COST, since)
+    priced_from = datetime.combine(first, time.min, NZ).astimezone(UTC)
+    assert datetime.fromtimestamp(costs[0]["start"], UTC) == priced_from
+    daily = await _hours(hass, DAILY_CHARGE_TOTAL, since)
+    assert sum(row["change"] for row in daily) == pytest.approx(_daily_total(plan, first))
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_day_daylight_saving_starts_is_imported_and_priced_in_23_hours(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    day = date(2026, 9, 27)
+    freezer.move_to(datetime(2026, 9, 29, 20, 0, tzinfo=UTC))
+    _serve(mock_portal, day)
+
+    await _setup(hass, portal_config_entry)
+
+    since = datetime.combine(day, time.min, NZ).astimezone(UTC)
+    energy = await _hours(hass, IMPORT.key, since)
+    assert len(energy) == 23
+    assert sum(row["change"] for row in energy) == pytest.approx(46 * 0.5)
+    daily = await _hours(hass, DAILY_CHARGE_TOTAL, since)
+    assert len(daily) == 23
+    assert sum(row["change"] for row in daily) == pytest.approx(
+        _daily_total(find_plan(ANYTIME_PLAN), day)
+    )
+
+
+_ONBOARDING_CALLS = ("async_get_icp", "async_get_plans", "async_get_plan_titles", "async_get_chart")
+
+
+@pytest.mark.usefixtures("mock_portal")
+async def test_costs_are_worked_out_from_saved_pricing_with_no_requests(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    indicator = mock_portal.async_get_indicator.return_value
+    # Nothing to import while the entry sets up.
+    mock_portal.async_get_indicator.return_value = replace(
+        indicator, data_start=None, data_end=None
+    )
+    await _setup(hass, portal_config_entry)
+    assert await _sums(hass) == {}
+
+    # Offline: a request to the onboarding site would fail.
+    calls = {name: getattr(mock_onboarding, name).await_count for name in _ONBOARDING_CALLS}
+    for name in _ONBOARDING_CALLS:
+        getattr(mock_onboarding, name).side_effect = EcotricityConnectionError("offline")
+    mock_portal.async_get_indicator.return_value = indicator
+    assert await portal_config_entry.runtime_data.consumption.async_fetch_now()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    assert {name: getattr(mock_onboarding, name).await_count for name in _ONBOARDING_CALLS} == calls
+    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factor(portal_config_entry))
+    assert (await _sums(hass))[TOTAL_ELECTRICITY_COST] == pytest.approx(
+        expected[TOTAL_ELECTRICITY_COST]
+    )
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_choosing_another_plan_prices_later_usage_with_it(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Hours already priced keep their costs; only later usage uses the new plan.
+    day = date(2026, 6, 15)
+    freezer.move_to(datetime(2026, 6, 17, 20, 0, tzinfo=UTC))
+    _serve(mock_portal, day)
+    await _setup(hass, portal_config_entry)
+    before = await _sums(hass)
+    assert before[TOTAL_ELECTRICITY_COST]
+
+    new_plan = find_plan(TIME_OF_USE_PLAN)
+    hass.config_entries.async_update_entry(
+        portal_config_entry,
+        options={**portal_config_entry.options, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
+    )
+    # As the options flow does when it saves.
+    assert await hass.config_entries.async_reload(portal_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+    # Reloaded with the new plan, the day already priced isn't priced again. Lines only the new
+    # plan has are new statistics, which catch up from the first day the pricing covers.
+    reloaded = await _sums(hass)
+    assert {key: reloaded[key] for key in before} == before
+
+    later = day + timedelta(days=1)
+    _serve(mock_portal, day, later)
+    assert await portal_config_entry.runtime_data.consumption.async_fetch_now()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    # The next day's usage, 0.5 kWh every half-hour, is priced at the new plan's rates.
+    season = season_for(new_plan, later)
+    assert season is not None
+    _rates, slots = explained_chart(chart_file(season_chart_name(new_plan, season)))[False]
+    loss = _loss_factor(portal_config_entry)
+    supplier = sum(
+        0.5 * part.price * loss / 100
+        for slot in slots
+        for part in slot.components
+        if part.kind is ComponentKind.SUPPLIER
+    )
+    after = await _sums(hass)
+    assert after["import_cost_supplier"] - before["import_cost_supplier"] == pytest.approx(supplier)

@@ -257,10 +257,10 @@ class _Legend:
         columns = [
             x
             for x in range(first, last + 1)
-            if any(int(self._pixels[x, y]) < 255 for y in range(top, bottom))  # type: ignore[arg-type] # noqa: PLR2004 - white
+            if any(int(self._pixels[x, y]) < 255 for y in range(top, bottom))  # type: ignore[arg-type] # noqa: PLR2004 - a greyscale pixel is an int, though Pillow types it as any pixel; 255 is white
         ]
         rows = tuple(
-            tuple(255 - int(self._pixels[x, y]) for x in range(columns[0], columns[-1] + 1))  # type: ignore[arg-type]
+            tuple(255 - int(self._pixels[x, y]) for x in range(columns[0], columns[-1] + 1))  # type: ignore[arg-type]  # a greyscale pixel is an int
             for y in range(top, bottom)
         )
         while rows and not any(rows[-1]):
@@ -431,7 +431,7 @@ def _bar_heights(image: Image.Image) -> list[tuple[int, int]] | None:
     assert pixels is not None  # noqa: S101 - load() only returns None for unloaded images
 
     def coloured(x: int, y: int) -> bool:
-        pixel: tuple[int, int, int] = pixels[x, y]  # type: ignore[assignment]
+        pixel: tuple[int, int, int] = pixels[x, y]  # type: ignore[assignment]  # an RGB pixel is a 3-tuple
         return _is_import(pixel) or _is_export(pixel)
 
     rows = [y for y in range(height) if any(coloured(x, y) for x in range(0, width, 2))]
@@ -458,7 +458,7 @@ def _bar_heights(image: Image.Image) -> list[tuple[int, int]] | None:
     for bar in bars:
         x = bar[len(bar) // 2]
         column: list[tuple[int, int, int]] = [
-            pixels[x, y]  # type: ignore[misc]
+            pixels[x, y]  # type: ignore[misc]  # an RGB pixel is a 3-tuple
             for y in range(top, bottom + 1)
         ]
         imports = [y for y, pixel in enumerate(column) if _is_import(pixel)]
@@ -530,7 +530,8 @@ def read_chart(data: bytes) -> ChartReading:
     try:
         with Image.open(io.BytesIO(data)) as raw:
             image = raw.convert("RGB")
-    except (UnidentifiedImageError, OSError) as err:
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as err:
+        # Pillow refuses an image too large to be a chart before decoding it.
         raise ChartReadError(f"Timeframe chart is not a readable image: {err}") from err
 
     columns = _read_text(image.convert("L"))

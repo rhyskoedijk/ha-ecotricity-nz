@@ -27,6 +27,7 @@ export interface FormField {
 const LABELS: Partial<Record<keyof BillCardConfig, string>> = {
   title: "Title",
   icp: "ICP",
+  config_entry_id: "Config entry ID",
   collection_key: "Date picker collection key",
   billing_period_start_day: "Billing period start day",
   compact: "Compact",
@@ -41,9 +42,9 @@ export const DEFAULTS: Partial<BillCardConfig> = {
   show_empty_lines: false,
 };
 
-
 const HELPERS: Partial<Record<keyof BillCardConfig, string>> = {
   icp: "Which ICP's bill to show.",
+  config_entry_id: "The ID of the integration entry to show, instead of an ICP.",
   collection_key:
     "The collection_key of an Energy date picker card on this dashboard, starting energy_. " +
     "Leave it empty to show the current billing period.",
@@ -62,6 +63,10 @@ export function editorSchema(icps: readonly IcpChoice[], config: BillCardConfig)
       options.push({ value: config.icp, label: config.icp });
     }
     fields.push({ name: "icp", selector: { select: { mode: "dropdown", options } } });
+  }
+  // An alternative to the ICP, for YAML. Shown once set, so it can be changed or cleared.
+  if (config.config_entry_id) {
+    fields.push({ name: "config_entry_id", selector: { text: {} } });
   }
   fields.push(
     { name: "collection_key", selector: { text: {} } },

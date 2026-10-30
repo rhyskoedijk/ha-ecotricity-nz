@@ -162,7 +162,7 @@ async def test_consumption_page_errors(
         await _client(hass).async_get_indicator()
 
 
-async def test_error_body_is_logged(
+async def test_error_is_logged_without_its_body(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     caplog: pytest.LogCaptureFixture,
@@ -172,13 +172,15 @@ async def test_error_body_is_logged(
     aioclient_mock.post(
         f"{PORTAL}analysis/initData",
         status=HTTPStatus.SERVICE_UNAVAILABLE,
-        text="Service temporarily unavailable",
+        text="Account 123456 is temporarily unavailable",
     )
     caplog.set_level("DEBUG", logger="custom_components.ecotricity_nz.api.portal")
 
     with pytest.raises(EcotricityConnectionError):
         await _client(hass).async_get_indicator()
-    assert "Service temporarily unavailable" in caplog.text
+    # The status is logged, but not the page, which can show the customer's account.
+    assert "analysis/initData returned HTTP 503" in caplog.text
+    assert "123456" not in caplog.text
 
 
 async def test_half_hourly_request(

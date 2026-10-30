@@ -641,8 +641,8 @@ def _own_slots(slots: DaySlots, alignment: Alignment) -> dict[str, Slot]:
         found = _most_common(
             slot for slot in every if slot.supplier == bucket and slot.network == bucket
         ) or _most_common(slot for slot in every if bucket in (slot.supplier, slot.network))
-        if found is not None:
-            own[bucket] = found
+        assert found is not None  # noqa: S101 - every bucket was taken from a slot
+        own[bucket] = found
     # A season where neither has periods (one price all day) falls back to Ecotricity's.
     return own or {slot.supplier: slot for slot in every}
 

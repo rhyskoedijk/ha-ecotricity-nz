@@ -14,7 +14,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
 
-from custom_components.ecotricity_nz.api import RateUnit
+from custom_components.ecotricity_nz.api import Rate, RateUnit
 from custom_components.ecotricity_nz.const import (
     CONF_ICP,
     CONF_INCLUDE_GST,
@@ -44,6 +44,8 @@ from tests.conftest import (
     TIME_OF_USE_PLAN,
     WINTER_PEAK,
     find_plan,
+    find_plan_where,
+    has_capacity_charge,
     plan_id,
 )
 
@@ -159,6 +161,30 @@ def test_rates_in_one_bucket_share_one_line_named_by_its_period() -> None:
     lines = [line for line in bill_lines(plan) if line.key == key]
     assert len(lines) == 1
     assert lines[0].period == bucket_period(rate_component(rate).bucket, bucket_names(plan))
+
+
+def test_bill_has_no_line_for_capacity_charges_or_export_levies() -> None:
+    # A capacity charge is per kVA of the connection, which isn't published, and levies are
+    # only charged on import, so neither can be a line.
+    plan = find_plan_where(has_capacity_charge)
+    capacity = [rate for rate in plan.rates if rate.unit is RateUnit.OTHER and rate.price]
+    assert capacity
+    export_levy = Rate(
+        description="EA Levy",
+        charge="CHARGE_24",
+        register_type="EG",
+        unit=RateUnit.PER_KWH,
+        price=0.2,
+        is_network=False,
+    )
+    lines = bill_lines(replace(plan, retail_rates=(*plan.retail_rates, export_levy)))
+
+    names = {line.name for line in lines}
+    assert not names & {rate.description for rate in capacity}
+    assert not [line for line in lines if line.kind == "levy" and line.part != "ea_levy"]
+    assert len([line for line in lines if line.kind == "levy"]) == len(
+        {rate.description for rate in plan.rates if rate.is_levy and not rate.is_export}
+    )
 
 
 @pytest.mark.usefixtures("mock_onboarding")

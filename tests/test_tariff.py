@@ -21,6 +21,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
     LegendEntry,
     shown_price,
 )
+from custom_components.ecotricity_nz.costs import charged_days
 from custom_components.ecotricity_nz.tariff import (
     Alignment,
     DailyCharge,
@@ -33,6 +34,7 @@ from custom_components.ecotricity_nz.tariff import (
     bucket_period,
     chart_seasons,
     daily_charge_key,
+    daily_charges,
     day_slots,
     day_windows,
     explain,
@@ -223,6 +225,41 @@ def test_next_season_change_with_overlapping_seasons() -> None:
     assert next_season_change(plan, date(2026, 1, 1)) == standard.start
 
 
+def test_season_change_at_the_new_year() -> None:
+    # Seasons can change between 31 December and 1 January.
+    plan = find_plan(TIME_OF_USE_PLAN)
+    december, january = date(2026, 12, 31), date(2027, 1, 1)
+    before, after = season_for(plan, december), season_for(plan, january)
+    assert before is not None
+    assert after is not None
+    assert (before.end, after.start) == (december, january)
+
+    assert next_season_change(plan, december) == january
+    assert first_day(plan, after, december) == january
+    assert chart_seasons(plan, december, upcoming=False) == [before, after]
+
+
+def test_leap_day_is_priced_like_any_other() -> None:
+    year = Season("All-Year Rates", date(2027, 4, 1), date(2028, 3, 31))
+    daily = _rate(
+        description="Daily Charge",
+        unit=RateUnit.PER_DAY,
+        price=90.0,
+        valid_start=year.start,
+        valid_end=year.end,
+    )
+    plan = replace(_plan(daily, _supplier("CHARGE_24", 20.0)), seasons=(year,))
+    leap = date(2028, 2, 29)
+
+    assert season_for(plan, leap) == year
+    assert next_season_change(plan, leap) == date(2028, 4, 1)
+    assert [charge.price for charge in daily_charges(plan, leap)] == [90.0]
+    assert charged_days(
+        [datetime(2028, 2, 28, 11, 0, tzinfo=UTC) + timedelta(hours=hour) for hour in range(24)],
+        NZ,
+    ) == pytest.approx(1)
+
+
 @pytest.mark.parametrize(
     ("rate", "bucket"),
     [
@@ -326,6 +363,12 @@ def test_bucket_name_fallbacks(rates: list[Rate], bucket: str, name: str, period
 
     assert bucket_name(bucket, names) == name
     assert bucket_period(bucket, names) == period
+
+
+def test_bucket_without_a_charge_code_or_name_is_named_from_its_description() -> None:
+    # A rate with no charge code is bucketed by its description (see `resolve_bucket`).
+    assert bucket_name("EG_NIGHT BOOST", {}) == "Night boost"
+    assert bucket_period("EG_NIGHT BOOST", {}) == "night_boost"
 
 
 def test_price_combines_supplier_and_network_rates_from_different_periods() -> None:

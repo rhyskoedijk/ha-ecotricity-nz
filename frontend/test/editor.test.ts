@@ -51,10 +51,11 @@ describe("editorSchema", () => {
 
 describe("every option", () => {
   it("is in the editor", () => {
-    expect(names(editorSchema([HOME, FLAT], CONFIG)).sort()).toEqual(
+    expect(names(editorSchema([HOME, FLAT], { ...CONFIG, config_entry_id: "abc" })).sort()).toEqual(
       [
         "title",
         "icp",
+        "config_entry_id",
         "collection_key",
         "billing_period_start_day",
         "compact",
@@ -62,6 +63,13 @@ describe("every option", () => {
         "header_color",
       ].sort(),
     );
+  });
+});
+
+describe("config entry ID", () => {
+  it("is only offered once a config sets it, as it's an alternative to the ICP", () => {
+    expect(names(editorSchema([HOME, FLAT], CONFIG))).not.toContain("config_entry_id");
+    expect(names(editorSchema([HOME], { ...CONFIG, config_entry_id: "abc" }))).toContain("config_entry_id");
   });
 });
 

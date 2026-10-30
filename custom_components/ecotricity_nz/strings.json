@@ -20,6 +20,9 @@
         "description": "Choose the Ecotricity plan this ICP is currently on. You can change this later in the integration's options.",
         "data": {
           "plan_id": "Plan"
+        },
+        "data_description": {
+          "plan_id": "The plans Ecotricity offers for this ICP, by the names on its website. Prices are based on the plan you choose."
         }
       },
       "reauth_confirm": {
@@ -28,6 +31,10 @@
         "data": {
           "account_number": "Customer account number",
           "password": "Portal password"
+        },
+        "data_description": {
+          "account_number": "The account number you log in to the Ecotricity customer portal with.",
+          "password": "Your Ecotricity customer portal password."
         }
       },
       "reconfigure": {
@@ -36,6 +43,10 @@
         "data": {
           "account_number": "Customer account number",
           "password": "Portal password"
+        },
+        "data_description": {
+          "account_number": "The account number you log in to the Ecotricity customer portal with. Leave it blank to stop importing usage data.",
+          "password": "Your Ecotricity customer portal password. Leave it blank to stop importing usage data."
         }
       }
     },

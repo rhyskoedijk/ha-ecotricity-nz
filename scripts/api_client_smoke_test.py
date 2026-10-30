@@ -33,6 +33,7 @@ from custom_components.ecotricity_nz.tariff import (
     day_windows,
     price_plan_day,
     season_charts,
+    without_export,
 )
 
 if TYPE_CHECKING:
@@ -144,7 +145,9 @@ async def main() -> int:
                     )
 
         today = datetime.now(NZ).date()
-        _print_pricing(plan, today, await _async_read_charts(onboarding, plan, today))
+        # As the integration does, an ICP without an export register is priced without export.
+        priced = plan if icp.has_export else without_export(plan)
+        _print_pricing(priced, today, await _async_read_charts(onboarding, priced, today))
     return 0
 
 

@@ -16,6 +16,8 @@ scripts/setup
 
 This installs Home Assistant, the test harness and the tools into `.venv`, installs the pre-commit hooks, and installs and builds the bill card.
 
+The integration depends on Home Assistant's `frontend` component, to serve the bill card, and the test harness doesn't install the package it needs, so `home-assistant-frontend` is a dev dependency of its own. When bumping `pytest-homeassistant-custom-component`, set it to the version in that Home Assistant's `package_constraints.txt`; without it, no test can set the integration up.
+
 ## Checks
 
 ```bash

@@ -228,7 +228,7 @@ async def main() -> int:
     """Build the fixture folder for one network."""
     # Print each line as it happens, even when the output goes to a file or pipe, so a long
     # paced run shows its progress and its end.
-    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]  # stdout is a TextIOWrapper, typed as TextIO
     args = _arguments()
     networks = json.loads(CATEGORIES.read_text(encoding="utf-8"))["networks"]
     pace = Paced(args.delay)

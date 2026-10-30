@@ -387,3 +387,116 @@ def test_plan_titles_skip_bad_entries() -> None:
 def test_plan_titles_rejects_bad_payloads(payload: object) -> None:
     with pytest.raises(EcotricityResponseError):
         parse_plan_titles(payload)
+
+
+def test_icp_without_metering_or_a_recorded_capacity() -> None:
+    # Registry fields can be missing, empty, or set to the registry's "not set" dates.
+    payload = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    content = payload["content"]
+    content["metering"]["allMeteringComponents"]["MeteringComponent"] = ""
+    content["metering"]["certificationExpiryDate"] = "9999-12-31"
+    del content["network"]["generationCapacityKW"]
+    content["pricing"]["myLossFactorCode"]["lossFactorConsumption"] = ""
+
+    icp = parse_icp(payload)
+
+    assert icp.channels == ()
+    assert icp.meter_type is None
+    assert icp.certification_expiry is None
+    assert icp.generation_capacity_kw is None
+    assert icp.loss_factor_consumption is None
+
+
+@pytest.mark.parametrize("expiry", ["1900-01-01", "9999-12-31T00:00:00.000+12:00"])
+def test_registry_not_set_dates_are_none(expiry: str) -> None:
+    payload = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    payload["content"]["metering"]["certificationExpiryDate"] = expiry
+
+    assert parse_icp(payload).certification_expiry is None
+
+
+def test_meter_with_an_empty_smart_flag_is_not_known_to_be_smart() -> None:
+    payload = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    for component in payload["content"]["metering"]["allMeteringComponents"]["MeteringComponent"]:
+        component["amiFlag"] = ""
+
+    assert parse_icp(payload).smart_meter is None
+
+
+def test_icp_without_its_number_is_an_unexpected_response() -> None:
+    payload = load_network_fixture(DEFAULT_NETWORK, "icp.json")
+    del payload["content"]["network"]["icpNumber"]
+
+    with pytest.raises(EcotricityResponseError, match="Unexpected ICP response"):
+        parse_icp(payload)
+
+
+def test_rate_with_an_unreadable_date_has_no_date() -> None:
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    rate = raw["content"][0]["default"]["network_rates"][0]
+    rate["valid_start"] = "n/a"
+
+    assert parse_plan_list(raw).default.network_rates[0].valid_start is None
+
+
+def test_plan_without_seasons_whose_rates_name_none_has_an_unnamed_season() -> None:
+    raw, dated = _all_year_plan_list()
+    for rate in dated:
+        rate["season"] = None
+
+    (season,) = parse_plan_list(raw).default.seasons
+
+    assert season == Season(name="", start=date(2026, 4, 1), end=date(2027, 3, 31))
+
+
+def test_indicator_skips_ranges_it_cant_place() -> None:
+    payload = {
+        "currentIndicator": {
+            "indicatorID": "ind",
+            "features": {
+                # Not a single from/to pair.
+                "A": [{"measuredValueRange": {"2026-09-01T00:00:00.000+02:00": "x", "y": "z"}}],
+                # Starts in the hour skipped when daylight saving starts.
+                "B": [
+                    {
+                        "measuredValueRange": {
+                            "2026-09-27T02:30:00.000+02:00": "2026-09-28T00:00:00.000+02:00"
+                        }
+                    }
+                ],
+            },
+        }
+    }
+
+    indicator = parse_indicator(payload, NZ)
+
+    assert indicator.features == {"B"}
+    assert indicator.data_start is None
+    assert indicator.data_end is None
+
+
+@pytest.mark.parametrize(
+    "features", [["not", "an", "object"], {"F": ["not an object"]}, {"F": "not a list"}]
+)
+def test_indicator_skips_features_that_arent_objects(features: object) -> None:
+    indicator = parse_indicator(
+        {"currentIndicator": {"indicatorID": "ind", "features": features}}, NZ
+    )
+
+    assert indicator.features == frozenset()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"indicatorValueResponses": ["not an object"]},
+        {"indicatorValueResponses": [{"featureValueResponses": ["not an object"]}]},
+        {
+            "indicatorValueResponses": [
+                {"featureValueResponses": [{"featureID": "F", "values": ["not an object"]}]}
+            ]
+        },
+    ],
+)
+def test_values_skip_items_that_arent_objects(payload: object) -> None:
+    assert parse_values(payload, NZ) == ConsumptionData()

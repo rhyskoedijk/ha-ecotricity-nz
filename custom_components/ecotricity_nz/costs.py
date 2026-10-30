@@ -131,7 +131,11 @@ def is_line_energy(key: str) -> bool:
 
 
 def cost_label(key: str) -> str:
-    """Return a statistic's name from its key, for example "import cost (ea levy)"."""
+    """Return a statistic's name from its key, for example "import cost (ea levy)".
+
+    Raises ValueError for a key `cost_keys` can't give, so a new kind of key can't slip through
+    without a name.
+    """
     if (name := _TOTAL_LABELS.get(key)) is not None:
         return name
     if key.startswith(LINE_PREFIX):
@@ -146,7 +150,7 @@ def cost_label(key: str) -> str:
     ):
         if key.startswith(prefix):
             return f"{group} ({key.removeprefix(prefix).replace('_', ' ')})"
-    return key.replace("_", " ")
+    raise ValueError(f"Not a cost statistic key: {key}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +249,9 @@ def hourly_costs(  # noqa: PLR0913 - pricing a reading needs all of these
         hours_in_day = _hours_in_day(local_day, tz)
         daily = 0.0
         for charge in charges.daily_charges if charges else ():
+            if not charge.price:
+                # Like `cost_keys`, an item priced at nothing has no statistic.
+                continue
             share = charge.price / hours_in_day
             key = daily_key(charge)
             parts[key] = parts.get(key, 0.0) + share

@@ -38,7 +38,8 @@ class Rate:
     """Meter register this rate applies to. EG means export (generation)."""
     unit: RateUnit
     price: float
-    """Price in cents (per kWh or per day), excluding GST. Export rates are negative."""
+    """Price in cents (per kWh or per day), excluding GST. An export credit is negative, and an
+    export charge (which some networks make) positive."""
     is_network: bool
     season: str | None = None
     valid_start: date | None = None

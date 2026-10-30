@@ -13,7 +13,7 @@ Base URL `https://onboarding.ecotricity.co.nz`. This is the Angular sign-up app.
 | Monthly estimate | `/cgi-bin/RESTMONTHLYESTIMATE/monthlyestimate/` |
 | Sign-up session  | `/cgi-bin/RESTUSER/user/`                       |
 
-The integration only reads ICP details, plans and timeframe charts.
+The integration only reads ICP details, plans and timeframe charts. Every request carries the headers the web app sends: `Accept: application/json, text/plain, */*` (`image/png` for charts), and `Origin` and `Referer` set to the site.
 
 The monthly estimate service returns `"Please Call"` for residential ICPs, so it's unused.
 
@@ -58,7 +58,7 @@ The site rate-limits by IP. It was observed when about 200 plan list and chart r
 
 The response's `content[0]` holds `default` (the plan the site suggests), `alternative` and `plan_list`. Each plan has:
 
-- `retail_rates` and `network_rates`, each a list of `{charge, charge_description, register_type, unit, price, valid_start, valid_end, season}`. Prices are cents excluding GST. Units are `cents/kWh` or `cents/d`, except Scanpower's and Powerco's "Capacity Charges", which are `cents/kVA/d`. Nothing in the plan list or ICP details is known to give the kVA (the ICP's `chargeableCapacity` was `0.00` on the captured ICP), so the integration leaves these out of the daily charge. Export rates have `register_type` `EG` and negative prices. Network rates carry a `priceplan_id` key, which is how the web app tells them apart.
+- `retail_rates` and `network_rates`, each a list of `{charge, charge_description, register_type, unit, price, valid_start, valid_end, season}`. Prices are cents excluding GST. Units are `cents/kWh` or `cents/d`, except Scanpower's and Powerco's "Capacity Charges", which are `cents/kVA/d`. Nothing in the plan list or ICP details is known to give the kVA (the ICP's `chargeableCapacity` was `0.00` on the captured ICP), so the integration leaves these out of the daily charge. Export rates have `register_type` `EG`. They're usually negative, as credits, but a network can charge for export: Northpower's network export rates are 1c. Network rates carry a `priceplan_id` key, which is how the web app tells them apart.
 - `seasons`, a list of `{season, start, end}`. These populate the site's season dropdown ("Seasonal Rates 04/2026 - 09/2026"). Plans whose rates are the same all year can have an empty list (every rate is "All-Year Rates" from 1 April to 31 March the following year). The web app then shows every rate and builds the chart URL from a pricing year written into its own code. The integration gives such a plan a season for each date range of its rates instead, named after their season (`_rates_season` in `parsers.py`), which gives the same dates without depending on the web app's code. Each range is kept apart, so when next year's rates are published before this year ends, each year still gets its own chart.
 - `timeframes_chart_wd` and `timeframes_chart_we`, paths to the weekday and weekend charts described below.
 
@@ -163,10 +163,10 @@ The analysis endpoints only work after a page containing the analysis widget has
 
 ### JSON endpoints
 
-All are called with `X-Requested-With: XMLHttpRequest`.
+All are called with `X-Requested-With: XMLHttpRequest`, `Accept: application/json, text/javascript, */*; q=0.01`, and `Origin` and `Referer` set to the portal, as the web app sends them. An error status is logged at debug level without its body, which can show account details.
 
 - `POST analysis/initData` with `{"fetchCurrentIndicator": true, "fetchLastImport": true, ...}` returns `currentIndicator` with `indicatorID`, `displayName` (the ICP), `lastImportDate`, and, for each feature, `measuredValueRange`, the range of data held.
-- `POST analysis/valueRequest` with `dateType: "INDIVIDUAL"` accepts any range. Each feature request names a `featureID`, a `granularityType` (`HALF_HOUR`, `DAY`, `MONTH`, `YEAR`) and `aggregationType: "SUM"`. Values come back as `{"value", "measuringPeriod": {"from": "to"}}`.
+- `POST analysis/valueRequest` with `dateType: "INDIVIDUAL"` accepts any range. The body is `{"dateType", "userTimeZone": "Pacific/Auckland", "indicatorValueRequests": [{"valueRange": {"from": "to"}, "indicatorID", "indicatorType": "INDICATOR_GROUP", "index": 0, "featureValueRequests": [...]}]}`, where `indicatorID` comes from `initData` and the range is written as described under [Timestamps](#timestamps). Each feature request names a `featureID`, a `granularityType` (`HALF_HOUR`, `DAY`, `MONTH`, `YEAR`), `aggregationType: "SUM"` and an empty `filterByIndicatorAttributesMap`. Values come back as `{"value", "measuringPeriod": {"from": "to"}}`.
 
 | Feature ID                                                    | Meaning         | Unit |
 | ------------------------------------------------------------- | --------------- | ---- |
@@ -184,7 +184,7 @@ Every portal timestamp carries a `+02:00` or `+01:00` offset, which is Europe/Be
 
 So the offset is discarded and the wall-clock time is read as `Pacific/Auckland`. Request ranges are sent the way the web app sends them: NZ wall-clock time with the Berlin offset for that date attached. The integration only asks for ranges that start and end at NZ midnight.
 
-When NZ daylight saving ends, the wall-clock hour from 2am to 3am happens twice. The parser assigns the second occurrence to the later fold, so readings keep moving forward. That only works when a response starts before the repeated hour, which is one reason requests start at midnight. The fixture for that day shows the portal works out end times with wall-clock arithmetic: the first 02:30 reading ends at "02:00".
+When NZ daylight saving ends, the wall-clock hour from 2am to 3am happens twice. The parser assigns the second occurrence to the later fold, so readings keep moving forward. That only works when a response starts before the repeated hour, which is one reason requests start at midnight. The fixture for that day assumes the portal works out end times with wall-clock arithmetic, as its other timestamps suggest, so the first 02:30 reading ends at "02:00".
 
 When daylight saving starts, 2am to 3am is skipped. The same arithmetic would label the 01:30 reading as ending at 02:00, a time that never happened, so an end time that doesn't exist (or isn't after the start) is replaced by the start plus the reading's wall-clock length, or half an hour. A reading whose start doesn't exist is dropped. Neither daylight saving change has been checked against a real capture yet.
 

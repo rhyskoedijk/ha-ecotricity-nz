@@ -275,3 +275,63 @@ def test_entry_slots() -> None:
     entry = LegendEntry(start=420, end=570, text="-28.34")
     assert entry.slots == range(14, 19)
     assert LegendEntry(start=0, end=30, text="-2", clipped=True).price is None
+
+
+def test_image_too_large_to_be_a_chart_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pillow refuses a decompression bomb before decoding it; that's an unreadable chart too.
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+    image = io.BytesIO()
+    Image.new("L", (100, 100), 255).save(image, format="PNG")
+
+    with pytest.raises(ChartReadError, match="not a readable image"):
+        read_chart(image.getvalue())
+
+
+def test_blank_glyphs_are_as_different_as_can_be() -> None:
+    assert glyph_distance(((0, 0),), ((0, 0),)) == 1.0
+
+
+def test_one_cell_line_keeps_its_pitch() -> None:
+    runs = [(0, 4), (1, 3)]
+    assert timeframes._line_cells(runs, 2, 10) == {0: runs}
+
+
+def test_pitch_that_doesnt_fit_the_line_is_kept() -> None:
+    # A refit more than a tenth away from the heading's pitch is a misread, so it isn't used.
+    runs = [(0, 0), (0, 0), (34, 34)]
+    assert timeframes._line_cells(runs, 0, 10) == {0: runs[:2], 3: runs[2:]}
+
+
+def test_text_above_the_legend_is_skipped() -> None:
+    # A line of digits above the headings, such as an axis label, isn't the legend.
+    def label(image: Image.Image) -> None:
+        digits = image.crop((10, 555, 60, 571))
+        ImageDraw.Draw(image).rectangle((0, 0, image.width, 30), fill="white")
+        image.paste(digits, (10, 5))
+
+    expected = read_chart(_chart())
+    assert read_chart(_edited(_chart(), label)) == expected
+
+
+def test_ink_before_a_columns_first_cell_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ink the cell fit places before a column's first character is left out of its text.
+    expected = read_chart(_chart())
+    line_cells = timeframes._line_cells
+
+    def with_stray(
+        runs: list[tuple[int, int]], origin: float, pitch: float
+    ) -> dict[int, list[tuple[int, int]]]:
+        cells = line_cells(runs, origin, pitch)
+        return {-1: cells[min(cells)], **cells}
+
+    monkeypatch.setattr(timeframes, "_line_cells", with_stray)
+    assert read_chart(_chart()) == expected
+
+
+def test_text_before_a_window_rejected() -> None:
+    with pytest.raises(ChartReadError, match="unexpected text"):
+        timeframes._entries(["x 12am - 12am : 21.00c"])
+
+
+def test_chart_without_bars_has_no_bar_heights() -> None:
+    assert timeframes._bar_heights(Image.new("RGB", (100, 100), "white")) is None

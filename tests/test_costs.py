@@ -45,6 +45,8 @@ from tests.conftest import (
     explained_chart,
     find_chart_where,
     find_plan,
+    find_plan_where,
+    has_capacity_charge,
     has_mixed_periods,
 )
 
@@ -383,6 +385,47 @@ def test_cost_keys_come_from_the_plans_rates() -> None:
     assert any(key.startswith("daily_charge_") for key in keys.import_keys)
 
 
+def test_capacity_charges_have_no_cost_statistic() -> None:
+    # Charged per kVA of the connection, which isn't published, so they can't be priced.
+    plan = find_plan_where(has_capacity_charge)
+    keys = cost_keys(plan)
+    capacity = [rate for rate in plan.rates if rate.unit is RateUnit.OTHER and rate.price]
+    assert capacity
+    for rate in capacity:
+        daily = "daily_charge_" + rate.description.lower().replace(" ", "_")
+        assert not any(key.startswith(daily) for key in keys.statistic_keys(export=False))
+
+
+def test_daily_charge_priced_at_nothing_has_no_statistic() -> None:
+    free = DailyCharge("Free Admin Fee", 0.0, is_network=False)
+    priced = {DAY: DayCosts(_all_day(SUPPLIER), None, (*DAILY, free))}
+    costs = _costs(_readings(DAY), days=priced)
+
+    assert "daily_charge_supplier" not in costs
+    assert sum(costs[DAILY_CHARGE_TOTAL].values()) == pytest.approx(
+        sum(charge.price for charge in DAILY) / 100
+    )
+
+
+def test_export_without_export_statistics_is_left_out() -> None:
+    # Export rates priced at nothing give no export statistics, though the half-hours are priced.
+    free = PriceComponent(ComponentKind.SUPPLIER, "Export", 0.0)
+    priced = {DAY: DayCosts(_all_day(SUPPLIER), _all_day(free), ())}
+    keys = CostKeys(import_keys=KEYS.import_keys, export_keys=frozenset())
+    costs = hourly_costs(
+        _readings(DAY),
+        _readings(DAY),
+        priced.get,
+        keys,
+        tz=NZ,
+        loss_factor=1.0,
+        settled_before=SETTLED,
+    )
+
+    assert not EXPORT_TOTALS & costs.keys()
+    assert costs[TOTAL_ELECTRICITY_NET_BILLED] == costs[TOTAL_ELECTRICITY_COST]
+
+
 def test_cost_labels() -> None:
     assert cost_label("import_cost_ea_levy") == "import cost (ea levy)"
     assert cost_label("daily_charge_metering") == "daily charge (metering)"
@@ -398,6 +441,11 @@ def test_cost_labels() -> None:
     energy = "line_import_network_charge_high" + LINE_ENERGY_SUFFIX
     assert is_line_energy(energy)
     assert cost_label(energy) == "line (import network charge high) energy"
+
+
+def test_key_that_isnt_a_cost_statistic_has_no_label() -> None:
+    with pytest.raises(ValueError, match="Not a cost statistic key"):
+        cost_label("energy_imported")
 
 
 def _hours(day: date) -> list[datetime]:

@@ -63,6 +63,22 @@ async def test_user_without_credentials_picks_plan(hass: HomeAssistant) -> None:
     assert result["result"].unique_id == TEST_ICP
 
 
+async def test_plans_are_listed_by_their_internal_names_when_their_names_cant_be_fetched(
+    hass: HomeAssistant, mock_onboarding: MagicMock
+) -> None:
+    # The plan names are a separate file, so failing to fetch them doesn't stop setup.
+    mock_onboarding.async_get_plan_titles.side_effect = EcotricityConnectionError("down")
+    flow_id = await _start(hass)
+
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_ICP: TEST_ICP})
+
+    assert result["step_id"] == "plan"
+    selector = result["data_schema"].schema[CONF_PLAN_ID]
+    labels = {option["label"] for option in selector.config["options"]}
+    plans = mock_onboarding.async_get_plans.return_value.all_plans
+    assert labels == {plan.description for plan in plans}
+
+
 async def test_user_with_credentials(hass: HomeAssistant, mock_portal: MagicMock) -> None:
     flow_id = await _start(hass)
 

@@ -43,7 +43,7 @@ function useRegistry(registry: unknown): void {
 it("defines the card in the registry the app installs, however early it's loaded", async () => {
   // Loaded with the frontend, before the app has started.
   const native = window.customElements;
-  await import("../src/index");
+  const { APP_ELEMENT } = await import("../src/index");
   // However long the app takes, the card waits for it.
   await new Promise((resolve) => setTimeout(resolve, 200));
   expect(native.get(CARD_TYPE)).toBeUndefined();
@@ -51,7 +51,7 @@ it("defines the card in the registry the app installs, however early it's loaded
   // The app installs its registry, then defines itself.
   const scoped = new ScopedRegistry(native);
   useRegistry(scoped);
-  scoped.define("home-assistant", class extends HTMLElement {});
+  scoped.define(APP_ELEMENT, class extends HTMLElement {});
   for (let i = 0; i < 10 && !scoped.get(CARD_TYPE); i++) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }

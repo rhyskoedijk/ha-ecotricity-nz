@@ -12,6 +12,7 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -33,9 +34,11 @@ from custom_components.ecotricity_nz.const import (
     PRICING_RETRY_INTERVAL,
     PRICING_RETRY_MAX_INTERVAL,
 )
+from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.store import (
     STORAGE_VERSION,
     PricingSnapshot,
+    PricingStore,
     _snapshot,
     _snapshot_dict,
 )
@@ -50,8 +53,11 @@ from tests.conftest import (
     WINTER_PEAK,
     chart_file,
     chart_name,
+    chart_reading,
+    find_chart_where,
     find_plan,
     find_plan_where,
+    has_clipped_price,
     has_overlapping_seasons,
     load_json_fixture,
     load_network_fixture,
@@ -358,7 +364,11 @@ def _fixture_snapshot() -> PricingSnapshot:
         ),
         fetched_at=datetime(2026, 6, 14, 20, 15, tzinfo=UTC),
         plan_titles=titles,
-        charts={"/chart.png": read_chart(chart.read_bytes())},
+        charts={
+            "/chart.png": read_chart(chart.read_bytes()),
+            # A price cut off at the image's edge keeps its digits and an estimate.
+            "/clipped.png": chart_reading(find_chart_where(has_clipped_price)),
+        },
         charts_plan_id=plan_id(TIME_OF_USE_PLAN),
         chart_gaps=("Export today in 2026-06-01",),
         missing_chart_fetches=2,
@@ -369,6 +379,11 @@ def test_snapshot_round_trip() -> None:
     snapshot = _fixture_snapshot()
     # Through JSON, as Home Assistant's store saves it.
     assert snapshot.charts
+    clipped = snapshot.charts["/clipped.png"]
+    assert any(
+        entry.clipped and entry.estimate is not None
+        for entry in (*clipped.import_entries, *clipped.export_entries)
+    )
     saved = json.loads(json.dumps(_snapshot_dict(snapshot)))
     assert _snapshot(saved) == snapshot
 
@@ -474,6 +489,24 @@ async def test_failed_fetches_back_off(
     mock_onboarding.async_get_plans.side_effect = None
     await coordinator.async_refresh()
     assert coordinator.update_interval == PRICING_CHECK_INTERVAL
+
+
+async def test_failed_fetch_without_saved_pricing_says_when_to_retry(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_onboarding: MagicMock
+) -> None:
+    # With nothing saved to fall back on, the update fails, and says to retry after the same
+    # backoff as the coordinator's own interval.
+    config_entry.add_to_hass(hass)
+    _go_offline(mock_onboarding)
+    coordinator = PricingCoordinator(
+        hass, config_entry, mock_onboarding, NZ, PricingStore(hass, config_entry.entry_id)
+    )
+
+    for wait in (PRICING_RETRY_INTERVAL, 2 * PRICING_RETRY_INTERVAL):
+        with pytest.raises(UpdateFailed) as failed:
+            await coordinator._async_update_data()
+        assert failed.value.retry_after == wait.total_seconds()
+        assert coordinator.update_interval == wait
 
 
 async def test_failed_refresh_action_doesnt_keep_backing_off(

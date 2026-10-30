@@ -661,7 +661,7 @@ class CurrentPeriodSensor(_HalfHourlyEntity):
 
     @property
     def options(self) -> list[str]:
-        """Return only the periods the plan uses, today or in any upcoming season."""
+        """Return only the periods the plan uses: today, in a later season or in an ended one."""
         group = "export" if self._export else "import"
         plan_periods = self.coordinator.data.periods
         buckets = {

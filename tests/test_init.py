@@ -1227,6 +1227,30 @@ async def test_icp_without_an_export_register_has_no_export_periods(
     assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
 
+async def test_icp_without_an_export_register_has_no_export_periods_once_a_season_ends(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Periods from seasons that have ended count from their rates, but not export rates the ICP
+    # can't be charged.
+    plan = find_plan(SOLAR_PLAN)
+    ended = min(plan.seasons, key=lambda season: season.start)
+    freezer.move_to(datetime.combine(ended.end + timedelta(days=15), time(12), NZ))
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(
+        icp, channels=tuple(channel for channel in icp.channels if channel.register_code != "EG")
+    )
+
+    await _setup(hass, config_entry, {CONF_PLAN_ID: plan.id})
+
+    data = config_entry.runtime_data.pricing.data
+    assert data.day > ended.end
+    assert data.periods.buckets
+    assert not any(bucket.startswith(EXPORT_PREFIX) for bucket in data.periods.buckets)
+
+
 @pytest.mark.usefixtures("mock_onboarding")
 async def test_removed_half_hourly_sensor_stops_updating(
     hass: HomeAssistant,
@@ -2130,6 +2154,50 @@ async def _enabled_price(
     state = hass.states.get(entity_id)
     assert state is not None, key
     return state.state
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_enabled_period_price_sensor_follows_pricing_updates(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    entity_registry: er.EntityRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A peak or off-peak sensor has a fixed name, so an update only changes its state.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    state = await _enabled_price(hass, config_entry, entity_registry, "charge_high")
+    name = hass.states.get(f"{PREFIX}_peak_import_price")
+    assert name is not None
+
+    hass.config_entries.async_update_entry(
+        config_entry, options={**config_entry.options, CONF_INCLUDE_GST: False}
+    )
+    config_entry.runtime_data.pricing.async_update_listeners()
+    await hass.async_block_till_done()
+
+    updated = hass.states.get(f"{PREFIX}_peak_import_price")
+    assert updated is not None
+    assert float(updated.state) == pytest.approx(float(state) / GST_FACTOR, abs=1e-4)
+    assert updated.name == name.name
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_new_day_at_nz_midnight_on_new_years_eve(
+    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    # 31 December 11pm NZDT is 10am UTC; the year changes in NZ well before it does in UTC.
+    freezer.move_to(datetime(2026, 12, 31, 10, 50, tzinfo=UTC))
+    await _setup(hass, config_entry)
+    coordinator = config_entry.runtime_data.pricing
+    assert coordinator.data.day == date(2026, 12, 31)
+
+    freezer.move_to(datetime(2026, 12, 31, 11, 0, tzinfo=UTC))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert coordinator.data.day == date(2027, 1, 1)
+    assert coordinator.data.season == season_for(coordinator.data.plan, date(2027, 1, 1))
 
 
 async def test_controlled_load(

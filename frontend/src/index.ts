@@ -11,7 +11,7 @@
 
 export const APP_ELEMENT = "home-assistant";
 
-export async function loadWhenReady(): Promise<void> {
+async function loadWhenReady(): Promise<void> {
   await customElements.whenDefined(APP_ELEMENT);
   await import("./ecotricity-bill-card");
 }

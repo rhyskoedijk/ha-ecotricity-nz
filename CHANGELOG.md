@@ -12,6 +12,7 @@
 ### Improvements
 
 - The time-of-use charts of the pricing year's seasons that have ended are now downloaded once each, to work out the cost of past usage.
+- The plan, sign-in-again and reconfigure steps now explain each field, as setup already did.
 
 ### Bug fixes
 

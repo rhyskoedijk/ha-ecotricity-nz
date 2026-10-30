@@ -32,8 +32,6 @@ LOGIN_REJECTED_PATH = "start"
 # Analysis calls need the consumption page to have been loaded in the session first.
 ANALYSIS_PREFIX = "analysis/"
 CONSUMPTION_PAGE = "consumptionDetails"
-# How much of an error response body to include in debug logs.
-ERROR_EXCERPT_LENGTH = 300
 _LOGGER = logging.getLogger(__name__)
 # The portal redirects to the start page, or refuses, once a session has expired.
 _SESSION_EXPIRED_STATUSES = frozenset(
@@ -250,8 +248,13 @@ class PortalClient:
                 if response.status in _SESSION_EXPIRED_STATUSES:
                     raise _SessionExpiredError
                 if response.status >= HTTPStatus.BAD_REQUEST:
-                    excerpt = (await response.text(errors="replace"))[:ERROR_EXCERPT_LENGTH]
-                    _LOGGER.debug("Portal %s returned HTTP %s: %s", path, response.status, excerpt)
+                    # Not the body: a logged-in portal's error page can show account details.
+                    _LOGGER.debug(
+                        "Portal %s returned HTTP %s (%s)",
+                        path,
+                        response.status,
+                        response.headers.get("Content-Type", "no content type"),
+                    )
                     raise EcotricityConnectionError(
                         f"Portal {path} returned HTTP {response.status}"
                     )

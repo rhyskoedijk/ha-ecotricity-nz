@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from http import HTTPStatus
 
@@ -96,6 +97,28 @@ async def test_token_is_minted_and_cached(
     _, _, body, _ = aioclient_mock.mock_calls[1]
     assert body["answer"] == solve_challenge(CHALLENGE)
     assert body["cid"] == "abc123"
+
+
+async def test_concurrent_requests_share_one_token(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    # A request waiting for the lock uses the token the one before it minted.
+    aioclient_mock.get(CHALLENGE_URL, json=CHALLENGE)
+    aioclient_mock.post(TOKEN_URL, json={"token": "tok", "expires": 2_000})
+    manager = _manager(hass, Clock(1_000))
+    request = manager._async_request
+
+    async def slow_request(*args: object) -> object:
+        # Give the other request a chance to start while this one is minting.
+        await asyncio.sleep(0)
+        return await request(*args)  # type: ignore[arg-type]
+
+    manager._async_request = slow_request  # type: ignore[method-assign]
+
+    tokens = await asyncio.gather(manager.async_get_token(), manager.async_get_token())
+
+    assert tokens == ["tok", "tok"]
+    assert aioclient_mock.call_count == 2
 
 
 async def test_token_refreshes_near_expiry(

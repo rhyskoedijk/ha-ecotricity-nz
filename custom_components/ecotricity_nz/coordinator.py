@@ -951,7 +951,8 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         )
         for key, hours in costs.items():
             series = cost_series(key)
-            if key not in points:
+            if key not in points:  # pragma: no cover - every key comes from `cost_keys`
+                # Never write a statistic without its last point, or its sum would restart.
                 points[key] = await async_last_point(self.hass, statistic_id(self.icp, series))
             points[key], _added = async_import_hours(
                 self.hass, self.icp, series, hours, points[key], settled_before=settled_before

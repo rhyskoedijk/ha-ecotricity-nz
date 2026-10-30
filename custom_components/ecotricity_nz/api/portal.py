@@ -29,6 +29,9 @@ PORTAL_URL = "https://portal.ecotricity.co.nz"
 PORTAL_PATH = "/powercommerce/eco/fo/portal/"
 LOGIN_SUCCESS_PATH = "home"
 LOGIN_REJECTED_PATH = "start"
+# The portal has briefly sent correct logins back to the start page, so a rejected login is tried
+# once more after this many seconds before the credentials are taken to be wrong.
+LOGIN_RETRY_DELAY = 10
 # Analysis calls need the consumption page to have been loaded in the session first.
 ANALYSIS_PREFIX = "analysis/"
 CONSUMPTION_PAGE = "consumptionDetails"
@@ -145,6 +148,15 @@ class PortalClient:
         return wall.replace(tzinfo=self._server_tz).isoformat(timespec="milliseconds")
 
     async def _async_login(self) -> None:
+        if await self._async_login_attempt():
+            return
+        _LOGGER.debug("Portal login was rejected, trying again in %s seconds", LOGIN_RETRY_DELAY)
+        await asyncio.sleep(LOGIN_RETRY_DELAY)
+        if not await self._async_login_attempt():
+            raise AuthError("The portal rejected the account number or password")
+
+    async def _async_login_attempt(self) -> bool:
+        """Log in once, returning False if the portal sends the login back to the start page."""
         self._session.cookie_jar.clear()
         self._logged_in = False
         self._analysis_ready = False
@@ -169,13 +181,14 @@ class PortalClient:
             raise EcotricityConnectionError(f"Portal login failed: {err}") from err
         target = URL(location).path.rstrip("/").rsplit("/", 1)[-1]
         if status in _REDIRECT_STATUSES and target == LOGIN_REJECTED_PATH:
-            raise AuthError("The portal rejected the account number or password")
+            return False
         # Anything else, such as a maintenance page, says nothing about the credentials.
         if status not in _REDIRECT_STATUSES or target != LOGIN_SUCCESS_PATH:
             raise EcotricityConnectionError(
                 f"Portal login returned HTTP {status} without the expected redirect"
             )
         self._logged_in = True
+        return True
 
     async def _async_call(
         self, method: str, path: str, body: Mapping[str, Any] | None = None

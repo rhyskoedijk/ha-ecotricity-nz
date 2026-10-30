@@ -16,6 +16,7 @@
 
 ### Bug fixes
 
+- A portal login the portal briefly rejected asked you to sign in again, even though your password was right. A rejected login is now tried once more after 10 seconds before Home Assistant asks.
 - A usage series whose first readings arrived with a half-hour missing (such as export on a new solar install) skipped those readings for good once the portal filled the gap. They're now read again and imported.
 
 ## 0.4.0 (2026-10-21)

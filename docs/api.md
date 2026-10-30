@@ -155,7 +155,9 @@ Base URL `https://portal.ecotricity.co.nz/powercommerce/eco/fo/portal/`. It's a 
 
 1. `GET` the base URL to get a `JSESSIONID` cookie (path `/powercommerce/eco/fo`).
 2. `POST loginProcess` with form fields `login` (the customer account number) and `password`.
-3. Success redirects (302) to `.../portal/home`. Failure redirects to `.../portal/start`. The redirect is to plain `http://`, so the client checks the `Location` header rather than following it. Only a redirect to `/start` is treated as rejected credentials; any other response (an error status, a 200, or a redirect elsewhere) is treated as the portal being unavailable, so an outage doesn't trigger reauthentication.
+3. Success redirects (302) to `.../portal/home`. Failure redirects to `.../portal/start`. The redirect is to plain `http://`, so the client checks the `Location` header rather than following it. A redirect to `/start` is tried once more after 10 seconds, with a new session, and only treated as rejected credentials if the second attempt is sent back too. On 30 October 2026 the portal sent a correct login back to `/start`, then accepted the same login minutes later. Any other response (an error status, a 200, or a redirect elsewhere) is treated as the portal being unavailable, so an outage doesn't trigger reauthentication.
+
+The web page's Login button first posts the same form fields to `loginWidget.json` with AJAX, which answers with JSON (`fielderrors` and `globalerrors` for a failed login), and only submits the form to `loginProcess` if that succeeds. The client skips that step: as of 30 October 2026, `loginProcess` on its own still logs in.
 
 An expired session answers JSON requests with a redirect or with the HTML start page. The client logs in again once. If the same answer comes back straight after a successful login, the credentials are clearly fine, so it's treated as the portal being unavailable rather than an authentication error, and doesn't trigger reauthentication.
 

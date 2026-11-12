@@ -37,6 +37,7 @@ from custom_components.ecotricity_nz.const import (
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.costs import (
     DAILY_CHARGE_TOTAL,
+    EXPORT_GST,
     EXPORT_TOTAL,
     GST,
     IMPORT_COST_TOTAL,
@@ -53,9 +54,13 @@ from custom_components.ecotricity_nz.costs import (
 from custom_components.ecotricity_nz.statistics import COST_UNIT, IMPORT, cost_series, statistic_id
 from custom_components.ecotricity_nz.tariff import (
     ComponentKind,
+    DaySlots,
+    billed_plan,
     daily_charges,
     line_key,
+    rebill,
     season_for,
+    side_rates,
 )
 from tests.conftest import (
     ANYTIME_PLAN,
@@ -64,9 +69,11 @@ from tests.conftest import (
     TIME_OF_USE_PLAN,
     WINTER_PEAK,
     chart_file,
+    default_plan_where,
     explained_chart,
     find_plan,
     load_json_fixture,
+    needs_network_category_change,
     plan_id,
     season_chart_name,
 )
@@ -105,11 +112,15 @@ async def _sums(hass: HomeAssistant) -> dict[str, float]:
     return sums
 
 
-def _expected(plan: Plan, day: date, loss_factor: float) -> dict[str, float]:
+def _expected(
+    plan: Plan, day: date, loss_factor: float, billed: Plan | None = None
+) -> dict[str, float]:
     """Return what the portal fixture's day costs, part by part, from the plan's own charts.
 
     Each half-hour is priced with its rates as the season's chart explains them. Ecotricity's
-    import rates are charged on usage plus losses; GST is added to import and daily charges.
+    import rates are charged on usage plus losses; GST is added to import, daily charges and export.
+    With `billed`, the plan as it's billed (see `billed_plan`), its network rates are used instead
+    of the chart's.
     """
     season = season_for(plan, day)
     assert season is not None
@@ -119,6 +130,8 @@ def _expected(plan: Plan, day: date, loss_factor: float) -> dict[str, float]:
     totals: dict[str, float] = defaultdict(float)
     for export, readings in ((False, values.imported_kwh), (True, values.exported_kwh)):
         _rates, slots = sides[export]
+        if billed is not None:
+            slots = rebill(DaySlots(slots, slots), side_rates(billed, day, export=export)).weekday
         for reading in readings:
             local = reading.start.astimezone(NZ)
             for part in slots[local.hour * 2 + local.minute // 30].components:
@@ -132,6 +145,7 @@ def _expected(plan: Plan, day: date, loss_factor: float) -> dict[str, float]:
                     totals[line + LINE_ENERGY_SUFFIX] += reading.value
     energy = sum(value for key, value in totals.items() if key.startswith("import_cost_"))
     # Every line the plan has gets a statistic, zero where it never applied.
+    plan = billed or plan
     keys = cost_keys(plan)
     for line in keys.import_lines | keys.export_lines:
         totals[line] += 0.0
@@ -148,8 +162,9 @@ def _expected(plan: Plan, day: date, loss_factor: float) -> dict[str, float]:
     totals[GST] = (energy + daily) * (GST_FACTOR - 1)
     totals[TOTAL_ELECTRICITY_COST] = (energy + daily) * GST_FACTOR
     totals[EXPORT_TOTAL] = exported
-    totals[TOTAL_ELECTRICITY_COMPENSATION] = -exported
-    totals[TOTAL_ELECTRICITY_NET_BILLED] = totals[TOTAL_ELECTRICITY_COST] + exported
+    totals[EXPORT_GST] = exported * (GST_FACTOR - 1)
+    totals[TOTAL_ELECTRICITY_COMPENSATION] = -exported * GST_FACTOR
+    totals[TOTAL_ELECTRICITY_NET_BILLED] = totals[TOTAL_ELECTRICITY_COST] + exported * GST_FACTOR
     return dict(totals)
 
 
@@ -184,6 +199,42 @@ async def test_usage_is_priced_into_hourly_cost_statistics(
     await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
     assert await _sums(hass) == sums
+
+
+@pytest.mark.usefixtures("mock_portal")
+async def test_plan_for_another_category_is_costed_with_the_icps_network_rates(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The network bills the ICP's registered category, not the one the plan was published with.
+    freezer.move_to(WINTER_PEAK)
+    plans = mock_onboarding.async_get_plans.return_value
+    plan = default_plan_where(
+        lambda plan: (
+            needs_network_category_change(plan)
+            and plan.timeframe_chart_weekday is not None
+            and any(season.contains(PORTAL_DAY) for season in plan.seasons)
+        )
+    )
+    billed = billed_plan(plan, plans.all_plans, plan.price_category)
+    portal_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        portal_config_entry, options={**portal_config_entry.options, CONF_PLAN_ID: plan.id}
+    )
+    assert await hass.config_entries.async_setup(portal_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    loss_factor = _loss_factor(portal_config_entry)
+    expected = _expected(plan, PORTAL_DAY, loss_factor, billed)
+    sums = await _sums(hass)
+    for key, value in expected.items():
+        assert sums.get(key, 0.0) == pytest.approx(value), key
+    advertised = _expected(plan, PORTAL_DAY, loss_factor)
+    network = "import_cost_network"
+    assert sums[network] != pytest.approx(advertised[network])
 
 
 @pytest.mark.usefixtures("mock_portal")

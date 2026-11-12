@@ -104,8 +104,6 @@ class BillLine:
     """Whether it's charged on the usage plus line losses."""
     order: int
     """Daily charges first, then import, then export, as the bill lists them."""
-    gst: bool = True
-    """Whether GST is charged on it: on imports and daily charges, never on export."""
 
 
 @callback
@@ -187,7 +185,6 @@ def _line(rate: Rate, names: dict[str, str]) -> BillLine | None:
         usage=key + LINE_ENERGY_SUFFIX,
         losses=part.kind is ComponentKind.SUPPLIER and not rate.is_export,
         order=2 if rate.is_export else 1,
-        gst=not rate.is_export,
     )
 
 
@@ -203,8 +200,8 @@ def ws_bill(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
     """Return the bill's lines and the statistics each is worked out from.
 
     With no config entry given, the only loaded one is used. Like a bill, lines exclude GST and
-    GST is added at the end, whatever the entry's option for its sensors: `gst_rate` is the rate
-    charged on the lines marked `gst`.
+    GST is added at the end, on the total with export credits taken off, whatever the entry's
+    options for its sensors: `gst_rate` is the rate charged.
     """
     entry = _entry_for(hass, connection, msg)
     if entry is None:
@@ -235,7 +232,6 @@ def ws_bill(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
                 "statistic_id": stat(line.key),
                 "usage_statistic_id": usage,
                 "losses": line.losses,
-                "gst": line.gst,
             }
         )
     connection.send_result(

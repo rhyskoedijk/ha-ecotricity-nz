@@ -14,7 +14,9 @@ CONF_ICP: Final = "icp"
 CONF_ACCOUNT_NUMBER: Final = "account_number"
 CONF_PASSWORD: Final = "password"  # noqa: S105 - a config key, not a secret
 CONF_PLAN_ID: Final = "plan_id"
-CONF_INCLUDE_GST: Final = "include_gst"
+# The import option's key is from before export had its own, so existing entries keep it.
+CONF_INCLUDE_GST_IMPORT: Final = "include_gst"
+CONF_INCLUDE_GST_EXPORT: Final = "include_gst_export"
 
 DEFAULT_INCLUDE_GST: Final = True
 GST_FACTOR: Final = 1.15
@@ -60,6 +62,8 @@ SERVICE_REFRESH: Final = "refresh"
 ISSUE_ATTESTATION: Final = "attestation_failed"
 ISSUE_TOU_CHART: Final = "tou_chart_unreadable"
 ISSUE_PLAN_NOT_FOUND: Final = "plan_not_found"
+ISSUE_NETWORK_CATEGORY: Final = "network_category_mismatch"
+ISSUE_NETWORK_CATEGORY_UNPRICED: Final = "network_category_unpriced"
 
 # 10 digits, 2 letters (network), 3 alphanumeric checksum characters.
 ICP_PATTERN: Final = re.compile(r"^\d{10}[A-Z]{2}[A-Z0-9]{3}$")

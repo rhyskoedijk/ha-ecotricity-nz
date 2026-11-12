@@ -18,10 +18,10 @@ describe("buildBill", () => {
   it("keeps the bill's sections and lines in order", () => {
     expect(bill.sections.map((section) => section.kind)).toEqual(["network", "energy", "other"]);
     expect(bill.sections[0]?.lines.map((line) => line.label)).toEqual([
-      "Daily charge - Network",
-      "Import - Off-peak",
-      "Import - Peak",
-      "Export - Peak",
+      "Daily Charges",
+      "Import - Off-peak Usage",
+      "Import - Peak Usage",
+      "Export - Peak Usage",
     ]);
   });
 
@@ -89,8 +89,8 @@ describe("buildBill", () => {
     const trimmed = buildBill(LAYOUT, quiet, 1);
     expect(trimmed.sections.map((section) => section.kind)).toEqual(["network", "other"]);
     expect(trimmed.sections[1]?.lines.map((line) => line.label)).toEqual([
-      "EA levy",
-      "Daily charge - Ecotricity",
+      "Electricity Authority (EA) Levy",
+      "Daily Charges - Ecotricity",
     ]);
   });
 
@@ -102,21 +102,22 @@ describe("buildBill", () => {
   it("shows each line without GST, whatever the integration's option", () => {
     // The plan's own rates, as the fixture's statistics were charged at.
     const lines = bill.sections.flatMap((section) => section.lines);
-    expect(lines.find((line) => line.label === "Import - Anytime")?.rate).toBeCloseTo(0.18);
-    expect(lines.find((line) => line.label === "EA levy")?.rate).toBeCloseTo(0.002);
-    expect(lines.find((line) => line.label === "Daily charge - Network")?.rate).toBeCloseTo(1.5951);
+    expect(lines.find((line) => line.label === "Import - Anytime Usage")?.rate).toBeCloseTo(0.18);
+    expect(lines.find((line) => line.label === "Electricity Authority (EA) Levy")?.rate).toBeCloseTo(0.002);
+    expect(lines.find((line) => line.label === "Daily Charges")?.rate).toBeCloseTo(1.5951);
   });
 
-  it("adds GST once, on imports and daily charges but not export", () => {
-    const taxed = bill.sections
-      .flatMap((section) => section.lines)
-      .filter((line) => !line.label.startsWith("Export"))
-      .reduce((total, line) => total + line.amount, 0);
-    expect(bill.gst).toBeCloseTo(taxed * 0.15);
-    expect(bill.total).toBeCloseTo(bill.charges + bill.gst);
-    // A bill of only export credits has no GST.
-    const exportOnly = new Map([...CHANGES].map(([id, value]) => [id, id.includes("export") ? value : 0]));
-    expect(buildBill(LAYOUT, exportOnly, 1).gst).toBe(0);
+  it("adds GST once, on the total with export credits taken off", () => {
+    expect(bill.gst).toBeCloseTo(bill.charges * 0.15);
+    expect(bill.total).toBeCloseTo(bill.charges * 1.15);
+    // A bill of only export credits has negative GST, adding to the credit.
+    const exportOnly = buildBill(
+      LAYOUT,
+      new Map([...CHANGES].map(([id, value]) => [id, id.includes("export") ? value : 0])),
+      1,
+    );
+    expect(exportOnly.charges).toBeLessThan(0);
+    expect(exportOnly.gst).toBeCloseTo(exportOnly.charges * 0.15);
   });
 
   it("has a total of nothing with no statistics", () => {
@@ -133,15 +134,15 @@ describe("lineLabel", () => {
 
   it("names every line the same way, whatever the network calls it", () => {
     expect(all.map(lineLabel)).toEqual([
-      "Daily charge - Network",
-      "Import - Off-peak",
-      "Import - Peak",
-      "Export - Peak",
-      "Import - Anytime",
-      "Export - Off-peak",
-      "EA levy",
-      "Daily charge - Metering",
-      "Daily charge - Ecotricity",
+      "Daily Charges",
+      "Import - Off-peak Usage",
+      "Import - Peak Usage",
+      "Export - Peak Usage",
+      "Import - Anytime Usage",
+      "Export - Off-peak Usage",
+      "Electricity Authority (EA) Levy",
+      "Daily Charges - Metering",
+      "Daily Charges - Ecotricity",
     ]);
     // None of the plan's own wording shows.
     for (const line of all) {
@@ -151,15 +152,15 @@ describe("lineLabel", () => {
 
   it("names periods the way the integration's period sensors do", () => {
     const usage = all[1]!;
-    expect(lineLabel({ ...usage, period: "super_off_peak" })).toBe("Import - Super off-peak");
-    expect(lineLabel({ ...usage, period: "shoulder_peak" })).toBe("Import - Shoulder peak");
+    expect(lineLabel({ ...usage, period: "super_off_peak" })).toBe("Import - Super off-peak Usage");
+    expect(lineLabel({ ...usage, period: "shoulder_peak" })).toBe("Import - Shoulder peak Usage");
   });
 
   it("keeps the integration's or plan's name for what it has no name for", () => {
     const [daily, usage] = all;
-    expect(lineLabel({ ...usage!, period: "charge_9", name: "Charge 9" })).toBe("Import - Charge 9");
+    expect(lineLabel({ ...usage!, period: "charge_9", name: "Charge 9" })).toBe("Import - Charge 9 Usage");
     expect(lineLabel({ ...daily!, part: "connection_fee", name: "Connection Fee" })).toBe(
-      "Daily charge - Connection Fee",
+      "Daily Charges - Connection Fee",
     );
     const levy = all.find((line) => line.kind === "levy")!;
     expect(lineLabel({ ...levy, part: "carbon_levy", name: "Carbon Levy" })).toBe("Carbon Levy");
@@ -183,7 +184,7 @@ describe("bill options", () => {
       (section) => section.lines,
     );
     expect(shown.length).toBeGreaterThan(hidden.length);
-    const empty = shown.find((line) => line.label === "Daily charge - Ecotricity");
+    const empty = shown.find((line) => line.label === "Daily Charges - Ecotricity");
     expect(empty).toMatchObject({ amount: 0, rate: null });
   });
 });

@@ -69,11 +69,13 @@
       "init": {
         "title": "Ecotricity options",
         "data": {
-          "include_gst": "Include GST in prices",
+          "include_gst": "Include GST in import prices",
+          "include_gst_export": "Include GST in export prices",
           "plan_id": "Plan"
         },
         "data_description": {
-          "include_gst": "Add 15% GST to import prices and daily charges, as you're billed. Export credits never include GST.",
+          "include_gst": "Add 15% GST to import prices and daily charges, as you're billed.",
+          "include_gst_export": "Add 15% GST to export prices. Ecotricity charges GST on your bill's total, so export credits are worth 15% more than the published rate.",
           "plan_id": "The Ecotricity plan this ICP is currently on. Prices are based on this plan."
         }
       }
@@ -288,6 +290,14 @@
     "plan_not_found": {
       "title": "Your Ecotricity plan is no longer listed",
       "description": "The plan chosen for this ICP isn't among the plans Ecotricity currently lists for it, so prices are being worked out from {default} instead. Choose your plan again in the integration's options."
+    },
+    "network_category_mismatch": {
+      "title": "Ecotricity plan and network price category don't match for ICP {icp}",
+      "description": "Ecotricity lists your plan ({plan}) prices with your network's {plan_category} category rates, but you're currently being charged using {icp_category} category rates. This means you are not paying the advertised rates as they appear on the Ecotricity website. Normally your network would move your ICP to the correct price category when you join Ecotricity, but the registry data for your ICP does not currently reflect this.\n\nIt is recommended that you **contact Ecotricity and request your ICP be moved from {icp_category} to {plan_category}** so that you are billed the correct advertised rates shown on their website. This request usually takes 4 to 6 weeks to be actioned, and this repair notice will automatically go away once the correct price category is shown for your ICP."
+    },
+    "network_category_unpriced": {
+      "title": "Network prices for {plan} may not match your bill",
+      "description": "Ecotricity lists {plan} with the network's {plan_category} rates, but the registry has your ICP on {icp_category}, and the network charges that category's rates. None of the plans Ecotricity lists for your ICP has the {icp_category} rates, so prices are still worked out with the {plan_category} ones and the network part of your bill may differ. Ask Ecotricity to have your ICP moved to {plan_category}, or choose a plan for {icp_category} in the integration's options."
     }
   },
   "services": {

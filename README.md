@@ -50,7 +50,8 @@ Next, choose your plan from the plans Ecotricity offers for your ICP. Ecotricity
 
 Once it's set up, these can be changed under <kbd>Options</kbd> (the cog on the integration):
 
-- **Include GST in prices**: on by default. Adds GST to import prices and daily charges; export prices never include it.
+- **Include GST in import prices**: on by default. Adds GST to import prices and daily charges.
+- **Include GST in export prices**: on by default. Adds GST to export prices. Ecotricity's bills charge GST on the total after export credits are taken off, so a credit is worth 15% more than the published rate.
 - **Plan**: the Ecotricity plan your ICP is on. Change it here if you switch plans.
 
 To change or remove your portal login later, use <kbd>Reconfigure</kbd> on the integration. If the portal starts rejecting the saved login, Home Assistant asks you to sign in again.
@@ -111,7 +112,7 @@ These describe your electricity connection and integration settings. They're lis
 | Network export loss factor     | Your connection's line loss factor for export. Only created if your ICP has an export register.                                                                                                                                                                       |                                         |
 | Pricing category               | Your network pricing category, such as "Residential Time of Use".                                                                                                                                                                                | `code`                                  |
 | Meter                          | Your meter serial number.                                                                                                                                                                                                                        | `type`, `smart`, `certification_expiry` |
-| Plan                           | Your current Ecotricity plan. Its `tou_error` attribute says why the time-of-use hours can't be read, and is empty when they can.                                                                                                                | `internal_name`, `code`, `tou_error`    |
+| Plan                           | Your current Ecotricity plan. Its `expected_network_price_category` attribute is the network price category the plan is published for, and `actual_network_price_category` is the one your ICP is registered on, which the network bills. `network_price_category_change_required` is true when they differ, as Ecotricity's site flags with "Network Capacity Change Required", and network prices then use the actual one (see Troubleshooting). Its `tou_error` attribute says why the time-of-use hours can't be read, and is empty when they can. | `internal_name`, `internal_code`, `expected_network_price_category`, `actual_network_price_category`, `network_price_category_change_required`, `tou_error` |
 | Pricing season                 | The current pricing season and its dates.                                                                                                                                                                                                        | `start`, `end`, `published`             |
 | Registered generation capacity | The solar or other generation your network has approved, in kW. Only created when the network has recorded a capacity, and added without a restart if one is recorded later; some record zero even for connections with generation (e.g. solar). |                                         |
 | Last meter data update         | When Ecotricity's portal last received new readings from your meter.                                                                                                                                                                             |                                         |
@@ -147,13 +148,14 @@ Each half-hour of usage is also priced with the rates that applied to it, and th
 | `ecotricity_nz:<icp>_import_cost_total`              | Ecotricity &lt;ICP&gt; import cost total              | All the import costs above added up, excluding GST.                                                                                             |
 | `ecotricity_nz:<icp>_export_network`                 | Ecotricity &lt;ICP&gt; export (network)               | The network's export rate. The export statistics are only created if your ICP has an export register.                                           |
 | `ecotricity_nz:<icp>_export_supplier`                | Ecotricity &lt;ICP&gt; export (supplier)              | Ecotricity's export rate.                                                                                                                       |
-| `ecotricity_nz:<icp>_export_total`                   | Ecotricity &lt;ICP&gt; export total                   | All the export amounts above added up.                                                                                                          |
-| `ecotricity_nz:<icp>_gst`                            | Ecotricity &lt;ICP&gt; GST                            | GST on the import costs and daily charges. Export has no GST.                                                                                   |
-| `ecotricity_nz:<icp>_total_electricity_compensation` | Ecotricity &lt;ICP&gt; total electricity compensation | The export total with its sign flipped, so a credit is positive, as the Energy dashboard expects. No GST.                                       |
+| `ecotricity_nz:<icp>_export_total`                   | Ecotricity &lt;ICP&gt; export total                   | All the export amounts above added up, excluding GST.                                                                                           |
+| `ecotricity_nz:<icp>_export_gst`                     | Ecotricity &lt;ICP&gt; export GST                     | GST on the export total. Your bill charges GST on its total after export credits, so on a credit it's negative and adds to the credit.          |
+| `ecotricity_nz:<icp>_gst`                            | Ecotricity &lt;ICP&gt; GST                            | GST on the import costs and daily charges.                                                                                                      |
+| `ecotricity_nz:<icp>_total_electricity_compensation` | Ecotricity &lt;ICP&gt; total electricity compensation | The export total and its GST with the sign flipped, so a credit is positive, as the Energy dashboard expects.                                   |
 | `ecotricity_nz:<icp>_total_electricity_cost`         | Ecotricity &lt;ICP&gt; total electricity cost         | Everything you're charged for using electricity: the import costs, daily charges and GST. For the Energy dashboard.                             |
-| `ecotricity_nz:<icp>_total_electricity_net_billed`   | Ecotricity &lt;ICP&gt; total electricity net billed   | What your bill comes to: the total electricity cost plus the export total, so export credits are taken off.                                     |
+| `ecotricity_nz:<icp>_total_electricity_net_billed`   | Ecotricity &lt;ICP&gt; total electricity net billed   | What your bill comes to: the total electricity cost plus the export total and its GST, so export credits are taken off.                         |
 
-Every part is excluding GST, and GST is its own statistic, so adding up every part and GST gives your bill's total, whatever the **Include GST** option says. The totals add up the parts for you; don't stack them with the parts, or they're counted twice. The total electricity net billed is the bill's total. Like the price sensors, export keeps its sign, so a credit is negative and is drawn below zero in a chart, and a network that charges for export shows a positive cost.
+Every part is excluding GST, and GST is its own statistic for each side, so adding up every part, the GST and the export GST gives your bill's total, whatever the **Include GST** options say. The totals add up the parts for you; don't stack them with the parts, or they're counted twice. The total electricity net billed is the bill's total. Like the price sensors, export keeps its sign, so a credit is negative and is drawn below zero in a chart, and a network that charges for export shows a positive cost.
 
 Costs are worked out from the pricing the integration has saved, so they only go back as far as that pricing does: the start of the current pricing year (usually 1 April). To price the earlier seasons of the year, the integration downloads their time-of-use charts once each. Usage from before then isn't given costs. Costs wait for a day whose prices can't be worked out yet (its chart can't be read, say) the same way usage waits for a missing reading.
 
@@ -176,8 +178,8 @@ Usage data is imported from the Ecotricity customer portal once a day. If an imp
 1. Go to **Settings > Dashboards > Energy**.
 2. Under **Grid consumption**, add **Ecotricity &lt;ICP&gt; imported** as your energy import sensor.
 3. If you export, add **Ecotricity &lt;ICP&gt; exported** as your energy export sensor.
-4. To see costs, choose **Use an entity tracking the total costs** for the import, and pick **Ecotricity &lt;ICP&gt; total electricity cost**. It includes the daily charges and GST, so the dashboard's cost matches your bill.
-5. If you export, choose **Use an entity tracking the total received money** for the export, and pick **Ecotricity &lt;ICP&gt; total electricity compensation**. Unlike the other cost statistics, it's positive for a credit, as the Energy dashboard counts money received as positive and takes it off your costs.
+4. To see costs, choose **Use an entity tracking the total costs** for the import, and pick **Ecotricity &lt;ICP&gt; total electricity cost**. It includes the daily charges and GST, so with the compensation below, the dashboard's cost matches your bill.
+5. If you export, choose **Use an entity tracking the total received money** for the export, and pick **Ecotricity &lt;ICP&gt; total electricity compensation**. Unlike the other cost statistics, it's positive for a credit, as the Energy dashboard counts money received as positive and takes it off your costs. It includes the GST your bill adds to export credits.
 
 Usage will appears a day or two after it happens, depending on when Ecotricity receives and processes your meter data.
 
@@ -261,6 +263,8 @@ entities:
     name: Export credit
   - entity: ecotricity_nz:0000123456ab1c2_gst
     name: GST
+  - entity: ecotricity_nz:0000123456ab1c2_export_gst
+    name: Export GST
 ```
 
 For this month's total of each part, use a `statistic` card for each one with `stat_type: change` and a calendar `period` of `month`, like the usage cards above.
@@ -309,13 +313,13 @@ cards:
     collection_key: energy_bill
 ```
 
-Lines are named the same way on every network, whatever your plan calls its rates: **Daily charge - Network**, **Import - Off-peak**, **Export - Peak**, **EA levy** and so on, with the same period names as the integration's sensors.
+Lines are named the same way on every network, whatever your plan calls its rates: **Daily Charges** (the network's), **Daily Charges - Ecotricity**, **Import - Off-peak Usage**, **Export - Peak Usage**, **Electricity Authority (EA) Levy** and so on, with the same period names as the integration's sensors.
 
 Each line shows its units, `@`, its unit price and its amount, so units times price gives the amount. Ecotricity charges its energy rate on your usage plus line losses, so that line shows the losses next to its usage (for example **7.30 kWh, plus 0.40 kWh losses**), and its amount is both at the unit price.
 
 Daily charges count only the days whose usage has been imported, since that's when they're charged: a month that's only been imported to the 23rd shows 23 days, at the same daily rate as the **Daily charge** sensor.
 
-Rates are averages over the range, so they can differ a little from your bill's when a rate changed partway through it. Lines your plan has but that charged nothing in the range are left out. Like your bill, every line excludes GST, whatever the integration's **Include GST** option (which is for the sensors): the card adds up the total charges excluding GST, then shows the GST on the imports and daily charges (export credits have none) and the total including it. Credits are shown in brackets.
+Rates are averages over the range, so they can differ a little from your bill's when a rate changed partway through it. Lines your plan has but that charged nothing in the range are left out. Like your bill, every line excludes GST, whatever the integration's **Include GST** options (which are for the sensors): the card adds up the total charges excluding GST, with export credits taken off, then shows the GST on that total and the total including it. When your credits outweigh your charges, the GST is a credit too, as on your bill. Credits are shown in brackets.
 
 ## Using it in automations
 
@@ -372,6 +376,7 @@ automation:
 
 - **No usage data**: make sure you can log in at https://portal.ecotricity.co.nz, then check the **Last meter data update** sensor. New accounts may have no data for a few days.
 - **Wrong prices**: check the **Plan** sensor shows the plan you're on, and change it in the options if not. If Ecotricity stops listing your plan for your ICP, a repair notice asks you to choose again.
+- **Network charges don't match the plan's advertised prices**: Ecotricity lists low-user plans with the network's low-user rates and standard plans with its standard rates, and expects to have the network move your ICP to the plan's category when you join. Until the network does, it charges your ICP's registered category (the **Pricing category** sensor), so the integration prices your plan with that category's network rates and a repair notice says so. The **Plan** sensor's `expected_network_price_category` and `actual_network_price_category` attributes show the two side by side, and `network_price_category_change_required` is true while they differ. If you expected the plan's advertised network charges, ask Ecotricity to have your ICP moved; the notice goes once the registry shows the move.
 - **Bill card missing or stuck on loading**: refresh the browser page after updating the integration. If it says there's no energy date picker, add an `energy-date-selection` card to the same dashboard with the same `collection_key`. Its lines start appearing after the next usage import.
 - For anything else, turn on debug logging for the integration, reproduce the problem, and open an issue with the log and the downloaded diagnostics (they hide your ICP, login and address).
 

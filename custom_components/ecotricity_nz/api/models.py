@@ -44,6 +44,10 @@ class Rate:
     season: str | None = None
     valid_start: date | None = None
     valid_end: date | None = None
+    price_category: str | None = None
+    """The network price category a network rate is for. A plan's network rates are for the
+    category the plan needs, which can differ from the ICP's (a low-user plan's are for the
+    low-user category). None for retail rates, or when the API doesn't say."""
 
     @property
     def is_export(self) -> bool:
@@ -103,6 +107,9 @@ class Plan:
     timeframe_chart_weekend: str | None = None
     title: str | None = None
     """The name customers see on the website (for example "Low ecoSOLAR"), when known."""
+    chart_network_rates: tuple[Rate, ...] | None = None
+    """The network rates the plan's charts were drawn with, when they aren't the ones it's priced
+    with (see `billed_plan` in tariff.py). Never parsed or saved."""
 
     @property
     def name(self) -> str:

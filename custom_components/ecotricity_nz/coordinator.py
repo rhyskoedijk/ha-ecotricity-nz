@@ -42,6 +42,8 @@ from .const import (
     DOMAIN,
     FAILURE_ISSUE_THRESHOLD,
     ISSUE_ATTESTATION,
+    ISSUE_NETWORK_CATEGORY,
+    ISSUE_NETWORK_CATEGORY_UNPRICED,
     ISSUE_PLAN_NOT_FOUND,
     ISSUE_TOU_CHART,
     LOGGER,
@@ -71,12 +73,14 @@ from .tariff import (
     DayPricing,
     DaySlots,
     PlanDay,
+    billed_plan,
     bucket_names,
     chart_seasons,
     controlled_prices,
     daily_charges,
     ended_seasons,
     first_day,
+    network_category,
     plan_needs_season,
     price_plan_day,
     price_side,
@@ -280,7 +284,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
 
     def _cost_plan(self, snapshot: PricingSnapshot) -> Plan:
         """Return the plan usage is priced with: the one the sensors price."""
-        return _pricing_plan(self._select_plan(snapshot.plans), snapshot.icp)
+        return _pricing_plan(self._select_plan(snapshot.plans), snapshot.plans, snapshot.icp)
 
     @callback
     def async_add_half_hour_listener(self, update: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -449,7 +453,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             plans=plans,
             fetched_at=now,
             plan_titles=titles,
-            charts=await self._async_charts(_pricing_plan(plan, icp), day),
+            charts=await self._async_charts(_pricing_plan(plan, plans, icp), day),
             charts_plan_id=plan.id,
         )
         data = self._price_day(snapshot, day)
@@ -571,7 +575,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                     self._clear_issue(ISSUE_TOU_CHART)
                 return data
         season = season_for(plan, day)
-        pricing_plan = _pricing_plan(plan, snapshot.icp)
+        pricing_plan = _pricing_plan(plan, snapshot.plans, snapshot.icp)
+        self._check_network_category(plan, pricing_plan, snapshot.icp)
         priced = price_plan_day(snapshot.charts, pricing_plan, day)
         slots = priced.slots
         for error in slots.missing:
@@ -600,6 +605,38 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         )
         self._priced = (snapshot, day, data)
         return data
+
+    def _check_network_category(self, plan: Plan, pricing_plan: Plan, icp: IcpDetails) -> None:
+        """Raise a repair issue when the plan is published for another network price category.
+
+        The network charges the ICP's registered category, so the plan is priced with that
+        category's rates (see `billed_plan`) and its advertised network prices are wrong until
+        the ICP is moved.
+        """
+        advertised = network_category(plan)
+        if advertised is None or advertised == icp.price_category:
+            self._clear_issue(ISSUE_NETWORK_CATEGORY)
+            self._clear_issue(ISSUE_NETWORK_CATEGORY_UNPRICED)
+            return
+        placeholders = {
+            "plan": plan.name,
+            "plan_category": advertised,
+            "icp_category": icp.price_category,
+        }
+        if pricing_plan.chart_network_rates is not None:
+            self._clear_issue(ISSUE_NETWORK_CATEGORY_UNPRICED)
+            self._raise_issue(ISSUE_NETWORK_CATEGORY, {**placeholders, "icp": icp.icp})
+        else:
+            LOGGER.warning(
+                "%s is published with %s network rates, and none of the listed plans has the "
+                "ICP's %s rates, so it's priced with the %s rates",
+                plan.code,
+                advertised,
+                icp.price_category,
+                advertised,
+            )
+            self._clear_issue(ISSUE_NETWORK_CATEGORY)
+            self._raise_issue(ISSUE_NETWORK_CATEGORY_UNPRICED, placeholders)
 
     def _raise_issue(self, issue_id: str, placeholders: dict[str, str] | None = None) -> None:
         ir.async_create_issue(
@@ -690,9 +727,14 @@ def _day_costs(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> Day
     return DayCosts(sides[0], sides[1], daily_charges(plan, day))
 
 
-def _pricing_plan(plan: Plan, icp: IcpDetails) -> Plan:
-    """Return the plan as it's priced for the ICP, without export rates if it can't export."""
-    return plan if icp.has_export else without_export(plan)
+def _pricing_plan(plan: Plan, plans: PlanList, icp: IcpDetails) -> Plan:
+    """Return the plan as it's priced for the ICP.
+
+    Its network rates are the ICP's registered price category's, which the network charges, and
+    it has no export rates if the ICP can't export.
+    """
+    billed = billed_plan(plan, plans.all_plans, icp.price_category)
+    return billed if icp.has_export else without_export(billed)
 
 
 class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):

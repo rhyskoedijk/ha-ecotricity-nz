@@ -104,8 +104,8 @@ describe("ecotricity-bill-card", () => {
     const shown = text(card);
     expect(shown).toContain("Network Charges [Example Lines]");
     expect(shown).toContain("Energy Charges [Ecotricity]");
-    expect(shown).toContain("Import - Off-peak");
-    expect(shown).toContain("Daily charge - Ecotricity");
+    expect(shown).toContain("Import - Off-peak Usage");
+    expect(shown).toContain("Daily Charges - Ecotricity");
     expect(shown).not.toContain("Uncontrolled");
     expect(shown).toContain("Other Charges");
     expect(shown).toContain("1 days");
@@ -119,16 +119,16 @@ describe("ecotricity-bill-card", () => {
       );
       return [...(row?.querySelectorAll("td") ?? [])].map((cell) => cell.textContent?.trim());
     };
-    expect(cells("Import - Anytime")).toEqual([
-      "Import - Anytime",
+    expect(cells("Import - Anytime Usage")).toEqual([
+      "Import - Anytime Usage",
       "7.30 kWh",
       "plus 0.40 kWh losses",
       "@",
       "0.18 $ per kWh",
       "$1.39",
     ]);
-    expect(cells("Daily charge - Network")).toEqual([
-      "Daily charge - Network",
+    expect(cells("Daily Charges")).toEqual([
+      "Daily Charges",
       "1 days",
       "",
       "@",
@@ -143,7 +143,7 @@ describe("ecotricity-bill-card", () => {
     );
     expect(footer.map((row) => row?.replace(/ \(?\$.*$/, ""))).toEqual([
       "Total Charges",
-      "Charges",
+      "Electricity Charges",
       "GST",
       "Total",
     ]);

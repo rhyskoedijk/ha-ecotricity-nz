@@ -38,7 +38,8 @@ from .api import (
 from .const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_EXPORT,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PASSWORD,
     CONF_PLAN_ID,
     DEFAULT_INCLUDE_GST,
@@ -199,7 +200,11 @@ class EcotricityConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=f"Ecotricity {self._data[CONF_ICP]}",
             data=self._data,
-            options={CONF_INCLUDE_GST: DEFAULT_INCLUDE_GST, **(options or {})},
+            options={
+                CONF_INCLUDE_GST_IMPORT: DEFAULT_INCLUDE_GST,
+                CONF_INCLUDE_GST_EXPORT: DEFAULT_INCLUDE_GST,
+                **(options or {}),
+            },
         )
 
     async def _async_validate(self, icp: str, credentials: Mapping[str, str]) -> dict[str, str]:
@@ -285,10 +290,8 @@ class EcotricityOptionsFlow(OptionsFlowWithReload):
             return self.async_create_entry(data={**entry.options, **user_input})
 
         schema: dict[probatio.Marker, Any] = {
-            probatio.Required(
-                CONF_INCLUDE_GST,
-                default=entry.options.get(CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST),
-            ): bool,
+            probatio.Required(option, default=entry.options.get(option, DEFAULT_INCLUDE_GST)): bool
+            for option in (CONF_INCLUDE_GST_IMPORT, CONF_INCLUDE_GST_EXPORT)
         }
         # Plans come from the running coordinator, which only exists while the entry is loaded.
         data = entry.runtime_data.pricing.data if entry.state is ConfigEntryState.LOADED else None

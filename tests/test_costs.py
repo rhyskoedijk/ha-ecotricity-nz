@@ -10,6 +10,7 @@ import pytest
 from custom_components.ecotricity_nz.api import IntervalReading, RateUnit
 from custom_components.ecotricity_nz.costs import (
     DAILY_CHARGE_TOTAL,
+    EXPORT_GST,
     EXPORT_TOTAL,
     EXPORT_TOTALS,
     GST,
@@ -142,7 +143,7 @@ def test_loss_factor_applies_to_supplier_import_only() -> None:
         assert with_losses[key][hour] == pytest.approx(without[key][hour])
 
 
-def test_gst_is_added_to_import_and_daily_charges_but_not_export() -> None:
+def test_gst_is_added_to_import_daily_charges_and_export() -> None:
     costs = _costs(_readings(DAY), _readings(DAY), PRICED)
 
     hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
@@ -153,8 +154,13 @@ def test_gst_is_added_to_import_and_daily_charges_but_not_export() -> None:
     assert costs[GST][hour] == pytest.approx((energy + daily) * 0.15)
     # Everything charged for using electricity, for the Energy dashboard.
     assert costs[TOTAL_ELECTRICITY_COST][hour] == pytest.approx((energy + daily) * 1.15)
-    # Export is the published rate, with no GST added and nothing taken off GST.
-    assert costs["export_supplier"][hour] == pytest.approx(2 * EXPORT_CREDIT.price / 100)
+    # Export parts exclude GST, like import's. Its GST is its own statistic, adding to the credit
+    # as bills charge GST on the net total, and import's GST is the same with or without export.
+    credit = 2 * EXPORT_CREDIT.price / 100
+    assert costs["export_supplier"][hour] == pytest.approx(credit)
+    assert costs[EXPORT_TOTAL][hour] == pytest.approx(credit)
+    assert costs[EXPORT_GST][hour] == pytest.approx(credit * 0.15)
+    assert costs[EXPORT_GST][hour] < 0
     assert costs[GST] == _costs(_readings(DAY), days=PRICED)[GST]
 
 
@@ -163,11 +169,11 @@ def test_net_billed_takes_export_credits_off_everything_charged() -> None:
 
     hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
     charged = (2 * (SUPPLIER.price + NETWORK.price + LEVY.price) + 144.0 / 24) * 1.15 / 100
-    credit = 2 * EXPORT_CREDIT.price / 100
+    credit = 2 * EXPORT_CREDIT.price * 1.15 / 100
     assert credit < 0
     assert costs[TOTAL_ELECTRICITY_NET_BILLED][hour] == pytest.approx(charged + credit)
     assert costs[TOTAL_ELECTRICITY_NET_BILLED][hour] == pytest.approx(
-        costs[TOTAL_ELECTRICITY_COST][hour] + costs[EXPORT_TOTAL][hour]
+        costs[TOTAL_ELECTRICITY_COST][hour] + costs[EXPORT_TOTAL][hour] + costs[EXPORT_GST][hour]
     )
 
 
@@ -190,7 +196,7 @@ def test_net_billed_waits_for_a_recent_hours_export() -> None:
     assert last_hour in recent[TOTAL_ELECTRICITY_COST]
     assert last_hour not in recent[TOTAL_ELECTRICITY_NET_BILLED]
     assert settled[TOTAL_ELECTRICITY_NET_BILLED][last_hour] == pytest.approx(
-        settled[TOTAL_ELECTRICITY_COST][last_hour] + EXPORT_CREDIT.price / 100
+        settled[TOTAL_ELECTRICITY_COST][last_hour] + EXPORT_CREDIT.price * 1.15 / 100
     )
 
 
@@ -206,10 +212,11 @@ def test_export_keeps_its_sign() -> None:
     assert costs[EXPORT_TOTAL][hour] == pytest.approx(
         2 * (EXPORT_CREDIT.price + EXPORT_FEE.price) / 100
     )
-    # The Energy dashboard counts money received as positive compensation, with no GST.
-    assert costs[TOTAL_ELECTRICITY_COMPENSATION] == {
-        hour: -value for hour, value in costs[EXPORT_TOTAL].items()
-    }
+    # The Energy dashboard counts money received as positive compensation, GST included.
+    assert costs[EXPORT_GST][hour] == pytest.approx(costs[EXPORT_TOTAL][hour] * 0.15)
+    assert costs[TOTAL_ELECTRICITY_COMPENSATION][hour] == pytest.approx(
+        -costs[EXPORT_TOTAL][hour] * 1.15
+    )
 
 
 @pytest.mark.parametrize(
@@ -437,6 +444,7 @@ def test_cost_labels() -> None:
     assert cost_label(TOTAL_ELECTRICITY_NET_BILLED) == "total electricity net billed"
     assert cost_label(EXPORT_TOTAL) == "export total"
     assert cost_label(GST) == "GST"
+    assert cost_label(EXPORT_GST) == "export GST"
     assert cost_label("line_import_network_charge_high") == "line (import network charge high)"
     energy = "line_import_network_charge_high" + LINE_ENERGY_SUFFIX
     assert is_line_energy(energy)

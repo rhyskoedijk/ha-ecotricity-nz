@@ -159,6 +159,7 @@ def _parse_rate(raw: dict[str, Any], *, network: bool) -> Rate:
         season=raw.get("season") or None,
         valid_start=_parse_date(raw.get("valid_start")),
         valid_end=_parse_date(raw.get("valid_end")),
+        price_category=raw.get("price_category") or None,
     )
 
 

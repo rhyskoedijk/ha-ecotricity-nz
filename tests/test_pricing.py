@@ -27,7 +27,7 @@ from custom_components.ecotricity_nz.api.parsers import (
 )
 from custom_components.ecotricity_nz.api.timeframes import ChartReading, read_chart
 from custom_components.ecotricity_nz.const import (
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PLAN_ID,
     PRICING_CHECK_INTERVAL,
     PRICING_FETCH_INTERVAL,
@@ -264,7 +264,7 @@ async def test_choosing_another_plan_fetches(
 
     # Its charts weren't downloaded with the last fetch, so they're fetched now.
     hass.config_entries.async_update_entry(
-        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+        config_entry, options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
     )
     await _reload(hass, config_entry)
     assert mock_onboarding.async_get_icp.await_count == calls + 1

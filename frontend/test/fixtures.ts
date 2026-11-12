@@ -39,10 +39,8 @@ export const LAYOUT: BillLayout = {
 };
 
 function line(key: string, usageKey: string | null, losses = false) {
-  // GST is on imports and daily charges, never on export.
-  const gst = !key.startsWith("line_export_");
   const usage_statistic_id = usageKey && `s:${usageKey}`;
-  return { key, statistic_id: `s:${key}`, usage_statistic_id, losses, gst };
+  return { key, statistic_id: `s:${key}`, usage_statistic_id, losses };
 }
 
 function daily(key: string, part: string, name: string): LayoutLine {

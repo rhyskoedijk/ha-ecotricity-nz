@@ -3,7 +3,7 @@
  *
  * Nothing here touches the DOM or Home Assistant, so it can be tested on its own. Amounts are in
  * dollars, and keep their sign: a credit is negative. Like Ecotricity's bill, lines exclude GST,
- * and GST is added once at the end, on the lines it's charged on.
+ * and GST is added once at the end, on the total: export credits included.
  */
 
 /** A section of the bill, in the order it lists them. */
@@ -27,8 +27,6 @@ export interface LayoutLine {
   usage_statistic_id: string | null;
   /** Whether it's charged on the usage plus line losses. */
   losses: boolean;
-  /** Whether GST is charged on it: imports and daily charges, never export. */
-  gst: boolean;
 }
 
 /** The bill's layout, from the `ecotricity_nz/bill` websocket command. */
@@ -37,7 +35,7 @@ export interface BillLayout {
   network_name: string;
   loss_factor: number;
   sections: { section: SectionKind; lines: LayoutLine[] }[];
-  /** The GST rate charged on the lines marked `gst`, such as 0.15. */
+  /** The GST rate charged on the total, such as 0.15. */
   gst_rate: number;
 }
 
@@ -66,7 +64,7 @@ export interface Bill {
   sections: BillSection[];
   /** Every line added up, excluding GST. */
   charges: number;
-  /** GST on the lines it's charged on: imports and daily charges, never export. */
+  /** GST on the total, export credits included, so a credit has negative GST. */
   gst: number;
   /** What the bill comes to, including GST. */
   total: number;
@@ -85,29 +83,35 @@ const PERIOD_NAMES: Record<string, string> = {
 
 const SIDE_NAMES: Record<string, string> = { import: "Import", export: "Export" };
 
-/** Daily charge items by who charges them, as the integration splits the daily charge. */
+/**
+ * Daily charge items by who charges them, as the integration splits the daily charge. The
+ * network's is the only daily charge in its section, so it needs no name.
+ */
 const DAILY_NAMES: Record<string, string> = {
-  network: "Network",
   metering: "Metering",
   supplier: "Ecotricity",
 };
+const NETWORK_DAILY = "network";
 
-const LEVY_NAMES: Record<string, string> = { ea_levy: "EA levy" };
+const LEVY_NAMES: Record<string, string> = { ea_levy: "Electricity Authority (EA) Levy" };
 
 /**
- * Name a line the same way whatever the network calls its rates: "Import - Off-peak",
- * "Daily charge - Ecotricity", "EA levy". Anything without a name of its own here keeps the
- * integration's (for a period) or the plan's.
+ * Name a line the same way whatever the network calls its rates: "Import - Off-peak Usage",
+ * "Daily Charges - Ecotricity", "Electricity Authority (EA) Levy". Anything without a name of its
+ * own here keeps the integration's (for a period) or the plan's.
  */
 export function lineLabel(line: LayoutLine): string {
   switch (line.kind) {
     case "daily":
-      return `Daily charge - ${DAILY_NAMES[line.part] ?? line.name}`;
+      if (line.part === NETWORK_DAILY) {
+        return "Daily Charges";
+      }
+      return `Daily Charges - ${DAILY_NAMES[line.part] ?? line.name}`;
     case "levy":
       return LEVY_NAMES[line.part] ?? line.name;
     case "usage": {
       const period = (line.period && PERIOD_NAMES[line.period]) || line.name;
-      return `${SIDE_NAMES[line.part] ?? line.part} - ${period}`;
+      return `${SIDE_NAMES[line.part] ?? line.part} - ${period} Usage`;
     }
   }
 }
@@ -157,14 +161,10 @@ interface BillOptions {
 export function buildBill(layout: BillLayout, changes: Changes, days: number, options: BillOptions = {}): Bill {
   const value = (id: string | null): number => (id ? changes.get(id) ?? 0 : 0);
   const sections: BillSection[] = [];
-  let taxed = 0;
   for (const section of layout.sections) {
     const lines: BillLine[] = [];
     for (const line of section.lines) {
       const amount = value(line.statistic_id);
-      if (line.gst) {
-        taxed += amount;
-      }
       if (line.usage_statistic_id === null) {
         if (amount || options.showEmptyLines) {
           const rate = days && amount ? amount / days : null;
@@ -192,7 +192,7 @@ export function buildBill(layout: BillLayout, changes: Changes, days: number, op
     }
   }
   const charges = sum(sections.map((section) => section.total));
-  const gst = taxed * layout.gst_rate;
+  const gst = charges * layout.gst_rate;
   return { sections, charges, gst, total: charges + gst };
 }
 

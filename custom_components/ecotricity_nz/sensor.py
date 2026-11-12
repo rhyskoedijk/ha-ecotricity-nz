@@ -20,7 +20,13 @@ from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST, DOMAIN, GST_FACTOR
+from .const import (
+    CONF_INCLUDE_GST_EXPORT,
+    CONF_INCLUDE_GST_IMPORT,
+    DEFAULT_INCLUDE_GST,
+    DOMAIN,
+    GST_FACTOR,
+)
 from .coordinator import ConsumptionCoordinator, PricingCoordinator
 from .entity import EcotricityEntity
 from .statistics import CARBON, EXPORT, IMPORT, statistic_id
@@ -37,6 +43,7 @@ from .tariff import (
     component_key,
     daily_charge_key,
     day_windows,
+    network_category,
     next_change,
     next_season_change,
     period_for_bucket,
@@ -131,7 +138,8 @@ PRICING_SENSORS: tuple[PricingSensorDescription, ...] = (
         value_fn=lambda data: data.plan.name,
         attrs_fn=lambda data: {
             "internal_name": data.plan.description,
-            "code": data.plan.code,
+            "internal_code": data.plan.code,
+            **_network_categories(data),
             # Here rather than on the current price sensors, which are unavailable, and so show
             # no attributes, when their own side's charts can't be read.
             "tou_error": data.tou_error,
@@ -354,6 +362,22 @@ def _registered_plan_sensors(
     return sensors
 
 
+def _network_categories(data: PricingData) -> dict[str, Any]:
+    """Return the category the plan is published for and the one the network bills: the ICP's.
+
+    They differ until the network moves the ICP (see `billed_plan`), which the site flags as
+    "Network Capacity Change Required" (`alert_flag`). Whether they differ is unknown when the
+    plan's network rates don't say which category they're for.
+    """
+    expected = network_category(data.plan)
+    actual = data.icp.price_category
+    return {
+        "expected_network_price_category": expected,
+        "actual_network_price_category": actual,
+        "network_price_category_change_required": None if expected is None else expected != actual,
+    }
+
+
 class _PricingEntity(EcotricityEntity[PricingCoordinator], SensorEntity):
     """Shared helpers for pricing sensors."""
 
@@ -369,17 +393,15 @@ class _PricingEntity(EcotricityEntity[PricingCoordinator], SensorEntity):
         """Convert cents excluding GST to NZD.
 
         The sign is kept, so a cost is positive and a credit (most export rates) negative. GST is
-        added to import prices and daily charges when the option is on. Export prices never have
-        GST added: residential customers who aren't GST-registered are paid the published rate.
+        added when the side's option is on: the import option covers import prices and daily
+        charges. Ecotricity's bills charge GST on the net total, so an export credit with GST is
+        worth 15% more than its published rate.
         """
-        if export:
-            # Adding 0.0 turns a zero credit's -0.0 into 0.0.
-            return round(cents / 100, 4) + 0.0
-        include_gst = self.coordinator.config_entry.options.get(
-            CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
-        )
+        option = CONF_INCLUDE_GST_EXPORT if export else CONF_INCLUDE_GST_IMPORT
+        include_gst = self.coordinator.config_entry.options.get(option, DEFAULT_INCLUDE_GST)
         factor = GST_FACTOR if include_gst else 1.0
-        return round(cents / 100 * factor, 4)
+        # Adding 0.0 turns a zero credit's -0.0 into 0.0.
+        return round(cents / 100 * factor, 4) + 0.0
 
     def _component_attributes(
         self, components: tuple[PriceComponent, ...], *, export: bool

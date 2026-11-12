@@ -19,7 +19,8 @@ from custom_components.ecotricity_nz.api import (
 from custom_components.ecotricity_nz.const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_EXPORT,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PASSWORD,
     CONF_PLAN_ID,
     DOMAIN,
@@ -59,7 +60,11 @@ async def test_user_without_credentials_picks_plan(hass: HomeAssistant) -> None:
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_ICP: TEST_ICP}
-    assert result["options"] == {CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    assert result["options"] == {
+        CONF_INCLUDE_GST_IMPORT: True,
+        CONF_INCLUDE_GST_EXPORT: True,
+        CONF_PLAN_ID: plan_id(ANYTIME_PLAN),
+    }
     assert result["result"].unique_id == TEST_ICP
 
 

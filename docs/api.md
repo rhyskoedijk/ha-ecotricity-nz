@@ -50,7 +50,7 @@ One quirk: lists with a single item are collapsed into a bare object, for exampl
 | `customerType` | `Residential`                                                                               |
 | `icpNumber`    | the ICP                                                                                     |
 
-The service doesn't check the ICP: requests with no `icpNumber`, an empty one or a made-up one return the same plans for a network and price category. Without a `capacityCode` it returns an empty `plan_list` and no default plan. Every network's price categories are public, in the Electricity Authority's registry data (see [development.md](development.md#networks-and-price-categories)). Within a network, the price category has so far changed only the suggested default plan and, on Orion, the daily network charge; the plans, seasons, per-kWh rates and charts were the same (see [development.md](development.md#choosing-price-categories)).
+The service doesn't check the ICP: requests with no `icpNumber`, an empty one or a made-up one return the same plans for a network and price category. Without a `capacityCode` it returns an empty `plan_list` and no default plan. Every network's price categories are public, in the Electricity Authority's registry data (see [development.md](development.md#networks-and-price-categories)). Within a network, the price category has so far changed only the suggested default plan, which plans are flagged as needing a category change, and, on Orion, the daily network charge; the plans, seasons, per-kWh rates and charts were the same (see [development.md](development.md#choosing-price-categories)). Each plan's network rates are for the category that plan needs, not the one asked for (see [Network price categories](#network-price-categories)).
 
 The site rate-limits by IP. It was observed when about 200 plan list and chart requests in a few minutes got the IP refused for about 24 hours (connections refused, not an HTTP error). The integration makes a handful of requests a week per install, far below that.
 
@@ -61,8 +61,18 @@ The response's `content[0]` holds `default` (the plan the site suggests), `alter
 - `retail_rates` and `network_rates`, each a list of `{charge, charge_description, register_type, unit, price, valid_start, valid_end, season}`. Prices are cents excluding GST. Units are `cents/kWh` or `cents/d`, except Scanpower's and Powerco's "Capacity Charges", which are `cents/kVA/d`. Nothing in the plan list or ICP details is known to give the kVA (the ICP's `chargeableCapacity` was `0.00` on the captured ICP), so the integration leaves these out of the daily charge. Export rates have `register_type` `EG`. They're usually negative, as credits, but a network can charge for export: Northpower's network export rates are 1c. Network rates carry a `priceplan_id` key, which is how the web app tells them apart.
 - `seasons`, a list of `{season, start, end}`. These populate the site's season dropdown ("Seasonal Rates 04/2026 - 09/2026"). Plans whose rates are the same all year can have an empty list (every rate is "All-Year Rates" from 1 April to 31 March the following year). The web app then shows every rate and builds the chart URL from a pricing year written into its own code. The integration gives such a plan a season for each date range of its rates instead, named after their season (`_rates_season` in `parsers.py`), which gives the same dates without depending on the web app's code. Each range is kept apart, so when next year's rates are published before this year ends, each year still gets its own chart.
 - `timeframes_chart_wd` and `timeframes_chart_we`, paths to the weekday and weekend charts described below.
+- `price_category`, the category asked for, and `other_price_category`, the category the plan's network rates are for. Each network rate also has its own `price_category`, the same as `other_price_category`.
+- `alert_flag`, `"No Change"` when the two categories match and `"Network Capacity Change Required"` when they don't (true of all 66 fixture plans in November 2026). The integration doesn't parse it: the Plan sensor's `network_price_category_change_required` compares the categories itself, so it always agrees with the category attributes beside it. `standard_low` (`S` or `L`) follows the category asked for, not the plan. `display_on_capacity_match` and `display_alternative_low_std_plan` decide which plan cards the site shows first.
 
 The `default` plan is not necessarily the customer's plan, and neither site reliably says which plan a customer is on, so the user chooses it during setup. The choice is stored as the plan's `id`.
+
+### Network price categories
+
+Every plan list has plans for both of a network's residential categories, a low-user and a standard one (`RLUTOU` and `RSUTOU` on Wellington Electricity, `ARHLC` and `ARHSC` on Vector). The low-user plans (`_LOW_` in their code) carry the low-user category's network rates, and the standard plans the standard one's, whichever category was asked for; that held on all 11 fixture networks. A plan for the other category is flagged `"Network Capacity Change Required"`: joining it needs Ecotricity to ask the network to move the ICP to that category.
+
+The network charges the category the registry has the ICP on, not the plan's. An ICP on `RSUTOU` with a low-user plan (`BATT_SPECIAL_LOW`) was billed in September and October 2026 with the plan's own Ecotricity rates (18c anytime, 30c admin, 0.2c levy), but the `RSUTOU` network rates (159.51c a day, 2.51c off-peak, 14.51c peak, -2c export peak), not the `RLUTOU` ones the plan was listed with (90c, 5.67c, 17.67c). The registry still had the ICP on `RSUTOU`, so the move hadn't happened.
+
+So the integration prices a plan with the network rates of the ICP's registered category (`billed_plan` in `tariff.py`), taken from another plan in the same list that carries them, and reads the plan's charts with the plan's own network rates, as they're drawn with them.
 
 ### Plan names
 
@@ -124,11 +134,16 @@ This hasn't been checked against a real controlled-load ICP yet; the captured IC
 
 ### GST
 
-Plan prices in the API exclude GST. The web app has a GST toggle that multiplies every row by 1.15, export rates included, but that's a display choice, not what customers are paid.
+Plan prices in the API exclude GST. The web app has a GST toggle that multiplies every row by 1.15, export rates included.
 
-For residential customers who aren't GST-registered, NZ export buy-back rates are paid as published, with GST added only for GST-registered customers. Ecotricity doesn't state its GST basis, but its [solar page](https://ecotricity.co.nz/solar) quotes ecoSOLAR at 21c peak and 16c off-peak export alongside an 18c low-user import rate, and 18c is the GST-exclusive figure the plan data gives, so the export figures are on the same basis.
+That matches what customers are billed. The integration used to assume that residential customers who aren't GST-registered are paid export rates as published, but two real ecoSOLAR bills (September and October 2026, a residential customer who isn't GST-registered) show otherwise. Each line is listed excluding GST, export credits at their published rates (`(0.21) $ per kWh`, `(0.16) $ per kWh`), and GST is charged once on the net total of every line:
 
-So the integration adds GST to import prices and daily charges (when the option is on) and never to export credits.
+| Bill | Total excluding GST | GST on the bill | 15% of the net total | 15% of import and daily charges only |
+| --- | --- | --- | --- | --- |
+| September 2026 (1 day) | $2.52 | $0.38 | $0.38 | $0.59 |
+| October 2026 | ($77.89) | ($11.68) | ($11.68) | $17.77 |
+
+So an export credit is worth its published rate plus GST, and when credits outweigh charges the GST is itself a credit. The integration adds GST to export prices like import ones (each side has its own option, both on by default), and the cost statistics and bill card charge GST on export as the bills do, whatever the options.
 
 ### Timeframe charts (time-of-use hours)
 

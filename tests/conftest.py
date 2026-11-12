@@ -39,7 +39,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
 from custom_components.ecotricity_nz.const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PASSWORD,
     CONF_PLAN_ID,
     DOMAIN,
@@ -50,6 +50,7 @@ from custom_components.ecotricity_nz.tariff import (
     Slot,
     explain,
     first_day,
+    network_category,
     period_for_bucket,
     resolve_bucket,
     season_for,
@@ -323,6 +324,23 @@ def has_clipped_price_needing_its_bar(chart: Path) -> bool:
     return False
 
 
+def needs_network_category_change(plan: Plan) -> bool:
+    """Return whether a plan is published with another price category's network rates.
+
+    A low-user plan listed for a standard-user ICP has the low-user category's rates, say, as
+    joining it needs the ICP moved.
+    """
+    return network_category(plan) not in (None, plan.price_category)
+
+
+def default_plan_where(scenario: Callable[[Plan], bool]) -> Plan:
+    """Return a plan in the default fixture, the test ICP's, that has a pricing scenario."""
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).all_plans
+    plan = next((plan for plan in sorted(plans, key=lambda p: p.code) if scenario(plan)), None)
+    assert plan is not None, f"No default fixture plan has the {scenario.__name__} scenario"
+    return plan
+
+
 def has_overlapping_seasons(plan: Plan) -> bool:
     """Seasons that overlap, such as "Standard Rates" all year and a winter season inside it."""
     return any(
@@ -474,7 +492,7 @@ def config_entry() -> MockConfigEntry:
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP},
-        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
+        options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
     )
 
 
@@ -486,7 +504,7 @@ def portal_config_entry() -> MockConfigEntry:
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP, CONF_ACCOUNT_NUMBER: "123456", CONF_PASSWORD: "secret"},
-        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)},
+        options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)},
     )
 
 

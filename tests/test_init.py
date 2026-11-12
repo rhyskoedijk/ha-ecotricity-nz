@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Generator
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -47,7 +50,8 @@ from custom_components.ecotricity_nz.api.timeframes import (
     shown_price,
 )
 from custom_components.ecotricity_nz.const import (
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_EXPORT,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PLAN_ID,
     CONSUMPTION_RECHECK_INTERVAL,
     CONSUMPTION_UPDATE_INTERVAL,
@@ -64,7 +68,9 @@ from custom_components.ecotricity_nz.sensor import BucketPriceSensor
 from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, statistic_id
 from custom_components.ecotricity_nz.tariff import (
     EXPORT_PREFIX,
+    billed_plan,
     day_slots,
+    network_category,
     plan_alignment,
     price_side,
     resolve_bucket,
@@ -84,6 +90,7 @@ from tests.conftest import (
     chart_file,
     chart_name,
     chart_reading,
+    default_plan_where,
     extra_network_codes,
     find_plan,
     find_plan_where,
@@ -92,6 +99,7 @@ from tests.conftest import (
     import_rates,
     load_json_fixture,
     load_network_fixture,
+    needs_network_category_change,
     plan_id,
     season_only_period,
     stored_charts,
@@ -130,15 +138,16 @@ async def test_pricing_sensors(
     # Only the periods this plan uses are options.
     assert _extra(hass, "current_import_period")["options"] == ["peak", "off_peak"]
     assert _extra(hass, "current_export_period")["options"] == ["peak", "off_peak"]
-    # Winter peak: 37.3476c + GST. Export: 13.74c anytime + 2c network peak, credited as
-    # published because GST isn't added to export credits.
+    # Winter peak: 37.3476c + GST. Export: 13.74c anytime + 2c network peak credited, plus GST.
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.4295)
-    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.1574)
+    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.181)
     assert float(_state(hass, "daily_charge")) == pytest.approx(1.7825)
 
     plan = hass.states.get(f"{PREFIX}_plan")
     assert plan is not None
     assert plan.attributes["internal_name"] == "Low Off Peak"
+    assert plan.attributes["internal_code"] == find_plan(TIME_OF_USE_PLAN).code
+    assert "code" not in plan.attributes
     assert plan.attributes["tou_error"] is None
 
     # 11:05am is off peak, and the price changes at the half-hour boundary without a poll.
@@ -152,18 +161,40 @@ async def test_pricing_sensors(
     assert config_entry.state is ConfigEntryState.NOT_LOADED
 
 
+@pytest.mark.parametrize(
+    ("import_gst", "export_gst", "import_price", "export_price", "daily_charge"),
+    [
+        pytest.param(False, True, 0.3735, -0.181, 1.55, id="import without GST"),
+        pytest.param(True, False, 0.4295, -0.1574, 1.7825, id="export without GST"),
+        pytest.param(False, False, 0.3735, -0.1574, 1.55, id="neither with GST"),
+    ],
+)
 @pytest.mark.usefixtures("mock_onboarding")
-async def test_gst_option(
-    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+async def test_gst_options(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+    import_gst: bool,
+    export_gst: bool,
+    import_price: float,
+    export_price: float,
+    daily_charge: float,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     await _setup(
-        hass, config_entry, {CONF_INCLUDE_GST: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
+        hass,
+        config_entry,
+        {
+            CONF_INCLUDE_GST_IMPORT: import_gst,
+            CONF_INCLUDE_GST_EXPORT: export_gst,
+            CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN),
+        },
     )
 
-    assert float(_state(hass, "current_import_price")) == pytest.approx(0.3735)
-    # Export credits are paid as published either way.
-    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.1574)
+    # Each side follows its own option; daily charges go with import.
+    assert float(_state(hass, "current_import_price")) == pytest.approx(import_price)
+    assert float(_state(hass, "current_export_price")) == pytest.approx(export_price)
+    assert float(_state(hass, "daily_charge")) == pytest.approx(daily_charge)
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -175,11 +206,11 @@ async def test_options_flow_reloads(
 
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_INCLUDE_GST: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
+        result["flow_id"], {CONF_INCLUDE_GST_IMPORT: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
     )
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert config_entry.options[CONF_INCLUDE_GST] is False
+    assert config_entry.options[CONF_INCLUDE_GST_IMPORT] is False
     assert float(_state(hass, "current_import_price")) == pytest.approx(0.3735)
 
 
@@ -473,6 +504,111 @@ async def _last_stat(hass: HomeAssistant, stat_id: str) -> dict[str, float]:
     return dict(result[stat_id][0])  # type: ignore[arg-type]
 
 
+def _needs_change_time_of_use(plan: Plan) -> bool:
+    return needs_network_category_change(plan) and any(
+        rate.charge == "CHARGE_HIGH" for rate in plan.retail_rates if not rate.is_export
+    )
+
+
+async def test_plan_for_another_category_is_priced_with_the_icps_network_rates(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    issue_registry: ir.IssueRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The plan is published with the network rates of a category the ICP isn't on, and the
+    # network charges the ICP's own, so those are what it's priced with.
+    freezer.move_to(WINTER_PEAK)
+    plan = default_plan_where(_needs_change_time_of_use)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    billed = billed_plan(plan, plans.all_plans, DEFAULT_PRICE_CATEGORY)
+    assert billed.chart_network_rates is not None
+    await _setup(hass, config_entry, {CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan.id})
+
+    day = WINTER_PEAK.astimezone(NZ).date()
+    gst = GST_FACTOR / 100
+    billed_prices = {round(rate.price * gst, 4) for rate in import_rates(billed.network_rates, day)}
+    advertised = {round(rate.price * gst, 4) for rate in import_rates(plan.network_rates, day)}
+    network = round(_extra(hass, "current_import_price")["network_rate"], 4)
+    assert network in billed_prices - advertised
+    network_daily = next(
+        rate.price
+        for rate in billed.network_rates
+        if rate.unit is RateUnit.PER_DAY and rate.applies_on(day)
+    )
+    assert _extra(hass, "daily_charge")["network_rate"] == pytest.approx(network_daily * gst)
+    # The plan is published for another category than the ICP's, which the network bills.
+    attributes = _extra(hass, "plan")
+    assert attributes["expected_network_price_category"] == network_category(plan)
+    assert attributes["expected_network_price_category"] != DEFAULT_PRICE_CATEGORY
+    assert attributes["actual_network_price_category"] == DEFAULT_PRICE_CATEGORY
+    assert attributes["network_price_category_change_required"] is True
+
+    issue_id = f"network_category_mismatch_{config_entry.entry_id}"
+    issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    # Exactly the placeholders its text uses, none missing and none unused.
+    assert issue.translation_placeholders == {
+        "icp": TEST_ICP,
+        # The name shown for the plan, its customer-facing title.
+        "plan": _state(hass, "plan"),
+        "plan_category": network_category(plan),
+        "icp_category": DEFAULT_PRICE_CATEGORY,
+    }
+    assert set(issue.translation_placeholders) == _issue_placeholders("network_category_mismatch")
+
+    # A plan published for the ICP's own category clears it.
+    hass.config_entries.async_update_entry(
+        config_entry,
+        options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not issue_registry.async_get_issue(DOMAIN, issue_id)
+    attributes = _extra(hass, "plan")
+    assert attributes["expected_network_price_category"] == DEFAULT_PRICE_CATEGORY
+    assert attributes["actual_network_price_category"] == DEFAULT_PRICE_CATEGORY
+    assert attributes["network_price_category_change_required"] is False
+
+
+async def test_plan_for_another_category_without_the_icps_rates_raises_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    issue_registry: ir.IssueRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    plans: PlanList = mock_onboarding.async_get_plans.return_value
+    plan = next(plan for plan in plans.all_plans if _needs_change_time_of_use(plan))
+    # No listed plan has the ICP's category's network rates.
+    mock_onboarding.async_get_plans.return_value = PlanList(default=plan)
+    await _setup(hass, config_entry, {CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan.id})
+
+    unpriced = f"network_category_unpriced_{config_entry.entry_id}"
+    issue = issue_registry.async_get_issue(DOMAIN, unpriced)
+    assert issue is not None
+    assert issue.translation_placeholders == {
+        # The name shown for the plan, its customer-facing title.
+        "plan": _state(hass, "plan"),
+        "plan_category": network_category(plan),
+        "icp_category": DEFAULT_PRICE_CATEGORY,
+    }
+    assert set(issue.translation_placeholders) == _issue_placeholders("network_category_unpriced")
+    assert not issue_registry.async_get_issue(
+        DOMAIN, f"network_category_mismatch_{config_entry.entry_id}"
+    )
+    attributes = _extra(hass, "plan")
+    assert attributes["expected_network_price_category"] == network_category(plan)
+    assert attributes["actual_network_price_category"] == DEFAULT_PRICE_CATEGORY
+    assert attributes["network_price_category_change_required"] is True
+    day = WINTER_PEAK.astimezone(NZ).date()
+    assert round(_extra(hass, "current_import_price")["network_rate"], 4) in {
+        round(rate.price * GST_FACTOR / 100, 4) for rate in import_rates(plan.network_rates, day)
+    }
+
+
 async def test_unlisted_plan_falls_back_and_raises_issue(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -492,11 +628,16 @@ async def test_unlisted_plan_falls_back_and_raises_issue(
 
     # Choosing a listed plan again clears it.
     hass.config_entries.async_update_entry(
-        config_entry, options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
+        config_entry,
+        options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
     )
     await hass.config_entries.async_reload(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert not issue_registry.async_get_issue(DOMAIN, issue_id)
+    attributes = _extra(hass, "plan")
+    assert attributes["expected_network_price_category"] == DEFAULT_PRICE_CATEGORY
+    assert attributes["actual_network_price_category"] == DEFAULT_PRICE_CATEGORY
+    assert attributes["network_price_category_change_required"] is False
 
 
 async def test_options_flow_offers_the_plan_in_use_when_the_saved_one_is_unlisted(
@@ -515,11 +656,15 @@ async def test_options_flow_offers_the_plan_in_use_when_the_saved_one_is_unliste
     defaults = {str(key): key.default() for key in result["data_schema"].schema}
     assert defaults[CONF_PLAN_ID] == in_use.id
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_INCLUDE_GST: False}
+        result["flow_id"], {CONF_INCLUDE_GST_IMPORT: False}
     )
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert config_entry.options == {CONF_INCLUDE_GST: False, CONF_PLAN_ID: in_use.id}
+    assert config_entry.options == {
+        CONF_INCLUDE_GST_IMPORT: False,
+        CONF_INCLUDE_GST_EXPORT: True,
+        CONF_PLAN_ID: in_use.id,
+    }
     assert mock_onboarding.async_get_plans.await_count
 
 
@@ -545,16 +690,17 @@ async def test_options_flow_while_setup_is_retrying(
     await hass.config_entries.async_setup(config_entry.entry_id)
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
 
-    # Plans aren't known, so only the GST option is offered, and the chosen plan is kept.
+    # Plans aren't known, so only the GST options are offered, and the chosen plan is kept.
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
-    assert list(result["data_schema"].schema) == [CONF_INCLUDE_GST]
+    assert list(result["data_schema"].schema) == [CONF_INCLUDE_GST_IMPORT, CONF_INCLUDE_GST_EXPORT]
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_INCLUDE_GST: False}
+        result["flow_id"], {CONF_INCLUDE_GST_IMPORT: False}
     )
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert config_entry.options == {
-        CONF_INCLUDE_GST: False,
+        CONF_INCLUDE_GST_IMPORT: False,
+        CONF_INCLUDE_GST_EXPORT: True,
         CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN),
     }
 
@@ -1373,10 +1519,10 @@ async def test_pricing_is_fetched_weekly(
 @pytest.mark.parametrize(
     ("supplier", "network", "price"),
     [
-        # Ecotricity's credit outweighs the network's charge: a credit overall.
-        (-10.0, 2.0, -0.08),
-        # The network's charge outweighs Ecotricity's credit: a cost overall.
-        (-1.0, 2.0, 0.01),
+        # Ecotricity's credit outweighs the network's charge: a credit overall, plus GST.
+        (-10.0, 2.0, -0.092),
+        # The network's charge outweighs Ecotricity's credit: a cost overall, plus GST.
+        (-1.0, 2.0, 0.0115),
         # A credit too small to show, shown as 0 rather than -0.
         (-0.001, 0.0, 0.0),
     ],
@@ -1390,7 +1536,7 @@ async def test_export_price_keeps_its_sign(
     network: float,
     price: float,
 ) -> None:
-    # A credit is negative and a cost positive, in the state and in each part, with no GST.
+    # A credit is negative and a cost positive, in the state and in each part, GST included.
     freezer.move_to(WINTER_PEAK)
     plans: PlanList = mock_onboarding.async_get_plans.return_value
     rates = [
@@ -1426,7 +1572,7 @@ async def test_export_price_keeps_its_sign(
     assert state != "-0.0"
     # Zero parts add nothing, so they're left out.
     expected = {
-        key: pytest.approx(cents / 100, abs=1e-4)
+        key: pytest.approx(cents * GST_FACTOR / 100, abs=1e-4)
         for key, cents in (("supplier_rate", supplier), ("network_rate", network))
         if cents
     }
@@ -1603,6 +1749,13 @@ _STANDARD_ATTRIBUTES = {
 }
 
 
+def _issue_placeholders(key: str) -> set[str]:
+    """Return the placeholders a repair issue's title and description use, from strings.json."""
+    strings = Path(__file__).parent.parent / "custom_components" / DOMAIN / "strings.json"
+    issue = json.loads(strings.read_text())["issues"][key]
+    return set(re.findall(r"{(\w+)}", issue["title"] + issue["description"]))
+
+
 def _extra(hass: HomeAssistant, key: str) -> dict[str, Any]:
     """Return a sensor's own attributes, without Home Assistant's standard ones."""
     state = hass.states.get(f"{PREFIX}_{key}")
@@ -1630,12 +1783,12 @@ async def test_price_breakdown_attributes(
         float(_state(hass, "current_import_price")), abs=0.0002
     )
 
-    # Export credits are negative, like the sensor state, and have no GST added.
+    # Export credits are negative, like the sensor state, and have GST added like import.
     export = _extra(hass, "current_export_price")
     assert export.pop("period") == "peak"
     assert export == {
-        "supplier_rate": pytest.approx(-0.1374),
-        "network_rate": pytest.approx(-0.02),
+        "supplier_rate": pytest.approx(-0.158),
+        "network_rate": pytest.approx(-0.023),
     }
     assert sum(export.values()) == pytest.approx(float(_state(hass, "current_export_price")))
 
@@ -1935,11 +2088,11 @@ async def test_schedule_sensors(
         "period": "off_peak",
         "price": pytest.approx(0.2765),
     }
-    # Export has the same windows on this plan: 15.74c peak, 13.74c off-peak.
+    # Export has the same windows on this plan: 15.74c peak, 13.74c off-peak, plus GST.
     assert _state(hass, "next_export_period_change") == "2026-06-14T23:00:00+00:00"
     assert _extra(hass, "next_export_period_change") == {
         "period": "off_peak",
-        "price": pytest.approx(-0.1374),
+        "price": pytest.approx(-0.158),
     }
     assert _extra(hass, "current_import_period")["windows"] == [
         "00:00-07:00 off_peak",
@@ -1994,7 +2147,8 @@ async def test_time_of_use_chart_image(
 
     # GST off: the GST-exclusive chart.
     hass.config_entries.async_update_entry(
-        config_entry, options={CONF_INCLUDE_GST: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)}
+        config_entry,
+        options={CONF_INCLUDE_GST_IMPORT: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
     )
     await hass.config_entries.async_reload(config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -2098,12 +2252,13 @@ async def test_import_and_export_periods_are_separate(
         "17:00-21:00 peak",
         "21:00-24:00 off_peak",
     ]
-    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.21)
-    # 11am NZDT, when export drops to the off-peak rate.
+    # 21c credited, plus GST.
+    assert float(_state(hass, "current_export_price")) == pytest.approx(-0.2415)
+    # 11am NZDT, when export drops to the off-peak rate, 16c plus GST.
     assert _state(hass, "next_export_period_change") == "2026-10-14T22:00:00+00:00"
     assert _extra(hass, "next_export_period_change") == {
         "period": "off_peak",
-        "price": pytest.approx(-0.16),
+        "price": pytest.approx(-0.184),
     }
 
 
@@ -2171,7 +2326,7 @@ async def test_enabled_period_price_sensor_follows_pricing_updates(
     assert name is not None
 
     hass.config_entries.async_update_entry(
-        config_entry, options={**config_entry.options, CONF_INCLUDE_GST: False}
+        config_entry, options={**config_entry.options, CONF_INCLUDE_GST_IMPORT: False}
     )
     config_entry.runtime_data.pricing.async_update_listeners()
     await hass.async_block_till_done()

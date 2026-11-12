@@ -360,7 +360,7 @@ export class EcotricityBillCard extends LitElement {
             <th colspan="6">Total Charges</th>
           </tr>
           <tr>
-            <td colspan="5">Charges</td>
+            <td colspan="5">Electricity Charges</td>
             <td class="amount">${formatAmount(bill.charges)}</td>
           </tr>
           <tr>

@@ -25,8 +25,9 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
-# Version 2 reads chart legends rather than bar heights; older snapshots are fetched again.
-STORAGE_VERSION = 2
+# Version 2 reads chart legends rather than bar heights, and version 3 keeps each network rate's
+# price category; older snapshots are fetched again.
+STORAGE_VERSION = 3
 
 
 class _SnapshotStore(Store[dict[str, Any]]):
@@ -208,6 +209,7 @@ def _rate_dict(rate: Rate) -> dict[str, Any]:
         "season": rate.season,
         "valid_start": _date_str(rate.valid_start),
         "valid_end": _date_str(rate.valid_end),
+        "price_category": rate.price_category,
     }
 
 
@@ -222,6 +224,7 @@ def _rate(raw: dict[str, Any]) -> Rate:
         season=raw["season"],
         valid_start=_date(raw["valid_start"]),
         valid_end=_date(raw["valid_end"]),
+        price_category=raw["price_category"],
     )
 
 

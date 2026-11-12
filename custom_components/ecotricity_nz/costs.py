@@ -3,7 +3,8 @@
 Each half-hourly reading is priced with the half-hour's rates (see tariff.py), split the way a
 bill is: Ecotricity's rate, the network's rate and each levy for import, Ecotricity's and the
 network's rate for export, and each daily charge item spread evenly over the hours of its day.
-GST is its own part, added to import and daily charges but never to export.
+GST is its own part on each side, as Ecotricity's bills charge it on the net total: on import and
+daily charges, and on export, where it adds to the credit.
 
 Bills charge Ecotricity's import rates on usage plus line losses, so Ecotricity's import cost
 applies the ICP's consumption loss factor. The network's rates and the levies are charged on
@@ -53,17 +54,20 @@ DAILY_CHARGE_TOTAL = "daily_charge_total"
 """Every daily charge item added up, excluding GST."""
 GST = "gst"
 """GST on the import parts and daily charges."""
+EXPORT_GST = "export_gst"
+"""GST on the export parts, negative for a credit: bills charge GST on the net total."""
 TOTAL_ELECTRICITY_COST = "total_electricity_cost"
 """Everything charged for using electricity: import parts, daily charges and GST. For the Energy
 dashboard."""
 EXPORT_TOTAL = "export_total"
-"""Every export part added up, negative for a credit."""
+"""Every export part added up, excluding GST, negative for a credit."""
 TOTAL_ELECTRICITY_COMPENSATION = "total_electricity_compensation"
-"""The export total with its sign flipped, for the Energy dashboard, which counts money received
-as positive and takes it off the cost. The one amount where a credit is positive."""
+"""The export total and its GST with the sign flipped, for the Energy dashboard, which counts
+money received as positive and takes it off the cost. The one amount where a credit is
+positive."""
 TOTAL_ELECTRICITY_NET_BILLED = "total_electricity_net_billed"
-"""What the bill comes to: the total electricity cost plus the export total, so export credits
-are taken off and any export charges added."""
+"""What the bill comes to: the total electricity cost plus the export total and its GST, so
+export credits are taken off and any export charges added."""
 IMPORT_TOTALS = frozenset(
     {
         IMPORT_COST_TOTAL,
@@ -74,7 +78,7 @@ IMPORT_TOTALS = frozenset(
     }
 )
 """The import side's statistics worked out from its parts."""
-EXPORT_TOTALS = frozenset({EXPORT_TOTAL, TOTAL_ELECTRICITY_COMPENSATION})
+EXPORT_TOTALS = frozenset({EXPORT_TOTAL, EXPORT_GST, TOTAL_ELECTRICITY_COMPENSATION})
 """The export side's statistics worked out from its parts."""
 
 LINE_PREFIX = "line_"
@@ -92,6 +96,7 @@ _TOTAL_LABELS = {
     IMPORT_COST_TOTAL: "import cost total",
     DAILY_CHARGE_TOTAL: "daily charge total",
     GST: "GST",
+    EXPORT_GST: "export GST",
     TOTAL_ELECTRICITY_COST: "total electricity cost",
     EXPORT_TOTAL: "export total",
     TOTAL_ELECTRICITY_COMPENSATION: "total electricity compensation",
@@ -226,8 +231,9 @@ def hourly_costs(  # noqa: PLR0913 - pricing a reading needs all of these
     Hours are left out when their day's prices aren't known, and, like `hourly_totals`, when a
     half-hour is missing, unless they start before `settled_before`. Daily charges and GST go
     with import: each hour with priced import gets the day's charges divided by the hours in
-    that NZ day (23, 24 or 25). The net billed total needs both sides: with export readings, an
-    hour whose export isn't priced yet waits like a missing half-hour.
+    that NZ day (23, 24 or 25). Export GST goes with export. The net billed total needs both
+    sides: with export readings, an hour whose export isn't priced yet waits like a missing
+    half-hour.
     """
     exported = tuple(exported)
     import_parts, import_lines, import_hours = _price_readings(
@@ -272,9 +278,11 @@ def hourly_costs(  # noqa: PLR0913 - pricing a reading needs all of these
             parts[key] = parts.get(key, 0.0) + cents
             total += cents
         if keys.export_keys:
+            gst = total * (GST_FACTOR - 1)
             parts[EXPORT_TOTAL] = total
-            parts[TOTAL_ELECTRICITY_COMPENSATION] = -total
-            credited[hour] = total
+            parts[EXPORT_GST] = gst
+            parts[TOTAL_ELECTRICITY_COMPENSATION] = -(total + gst)
+            credited[hour] = total + gst
         for key, cents in parts.items():
             costs[key][hour] = _nzd(cents)
         _add_lines(costs, hour, keys.export_lines, export_lines[hour])

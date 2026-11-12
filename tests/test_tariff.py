@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.ecotricity_nz.api import Plan, Rate, RateUnit, Season
+from custom_components.ecotricity_nz.api.parsers import parse_plan_list
 from custom_components.ecotricity_nz.api.timeframes import (
     MINUTES_PER_DAY,
     SLOTS_PER_DAY,
@@ -24,14 +25,17 @@ from custom_components.ecotricity_nz.api.timeframes import (
 from custom_components.ecotricity_nz.costs import charged_days
 from custom_components.ecotricity_nz.tariff import (
     Alignment,
+    ComponentKind,
     DailyCharge,
     DaySlots,
     SideRates,
     Slot,
     TouPeriod,
+    billed_plan,
     bucket_name,
     bucket_names,
     bucket_period,
+    chart_plan,
     chart_seasons,
     daily_charge_key,
     daily_charges,
@@ -39,6 +43,7 @@ from custom_components.ecotricity_nz.tariff import (
     day_windows,
     explain,
     first_day,
+    network_category,
     next_change,
     next_season_change,
     period_for_bucket,
@@ -64,6 +69,7 @@ from tests.conftest import (
     chart_files,
     chart_name,
     chart_reading,
+    default_plan_where,
     explained_chart,
     find_chart_where,
     find_plan,
@@ -74,6 +80,10 @@ from tests.conftest import (
     has_mixed_periods,
     has_overlapping_seasons,
     has_supplier_periods_and_anytime_network,
+    load_plan_list,
+    needs_network_category_change,
+    season_chart_name,
+    stored_charts,
 )
 
 NZ = ZoneInfo("Pacific/Auckland")
@@ -1141,3 +1151,103 @@ def test_daily_charge_keys() -> None:
     assert daily_charge_key(DailyCharge("Smart Home Bundle", 20, is_network=False)) == (
         "smart_home_bundle"
     )
+
+
+def _category_plans(plan: Plan) -> tuple[Plan, ...]:
+    """Return the plans listed with a fixture plan, for its network and queried category."""
+    return parse_plan_list(load_plan_list(plan.network, plan.price_category)).all_plans
+
+
+def test_plan_for_another_category_is_billed_the_registered_categorys_network_rates() -> None:
+    # The network charges the ICP's registered category until it's moved, whatever the plan
+    # was published with.
+    plan = find_plan_where(needs_network_category_change)
+    plans = _category_plans(plan)
+    registered = next(other for other in plans if network_category(other) == plan.price_category)
+
+    billed = billed_plan(plan, plans, plan.price_category)
+
+    assert billed.network_rates == registered.network_rates
+    assert billed.retail_rates == plan.retail_rates
+    assert billed.chart_network_rates == plan.network_rates
+    assert network_category(billed) == plan.price_category
+    assert chart_plan(billed) == plan
+
+
+def test_plan_for_the_registered_category_is_billed_as_published() -> None:
+    plan = find_plan_where(lambda plan: network_category(plan) == plan.price_category)
+
+    assert billed_plan(plan, _category_plans(plan), plan.price_category) is plan
+    assert chart_plan(plan) is plan
+
+
+def test_plan_is_kept_as_published_when_no_plan_has_the_registered_categorys_rates() -> None:
+    plan = find_plan_where(needs_network_category_change)
+
+    assert billed_plan(plan, (plan,), plan.price_category) is plan
+    # Rates that cover different periods can't stand in for the plan's.
+    others = tuple(
+        replace(other, network_rates=other.network_rates[1:]) for other in _category_plans(plan)
+    )
+    assert billed_plan(plan, others, plan.price_category) is plan
+
+
+def test_plan_with_untagged_network_rates_is_billed_as_published() -> None:
+    plan = find_plan_where(needs_network_category_change)
+    untagged = replace(
+        plan, network_rates=tuple(replace(rate, price_category=None) for rate in plan.network_rates)
+    )
+
+    assert billed_plan(untagged, _category_plans(plan), plan.price_category) is untagged
+
+
+def _season_readings(plan: Plan) -> dict[str, ChartReading]:
+    """Return a plan's stored fixture charts, keyed by the paths the integration saves them by."""
+    readings: dict[str, ChartReading] = {}
+    for season in plan.seasons:
+        for weekend, path in enumerate(season_charts(plan, season)):
+            chart = chart_file(season_chart_name(plan, season, weekend=bool(weekend)))
+            if chart.exists():
+                readings[path] = chart_reading(chart)
+    return readings
+
+
+def test_chart_for_another_category_is_read_with_its_own_rates_and_billed_the_registered_ones() -> (
+    None
+):
+    plan = default_plan_where(needs_network_category_change)
+    plans = _category_plans(plan)
+    billed = billed_plan(plan, plans, plan.price_category)
+    charts = _season_readings(plan)
+    assert charts
+
+    days = [day for day, _chart in stored_charts(plan)]
+    explained = 0
+    # Only seasons with both their weekday and weekend charts stored.
+    for day in sorted({day for day in days if days.count(day) == 2}):
+        for export in (False, True):
+            advertised, gap = season_slots(charts, plan, season_for(plan, day), day, export=export)
+            slots, missing = season_slots(charts, billed, season_for(plan, day), day, export=export)
+            assert missing == gap
+            if advertised is None or gap is not None:
+                # No rates for the side, or a chart that needn't match them.
+                continue
+            assert slots is not None
+            rates = side_rates(billed, day, export=export)
+            for drawn, priced in zip(advertised.all, slots.all, strict=True):
+                # Same periods as the chart shows, priced with the billed network rates.
+                assert (priced.supplier, priced.network) == (drawn.supplier, drawn.network)
+                network = rates.network.get(priced.network, ())
+                expected = [p for p in drawn.components if p.kind is not ComponentKind.NETWORK]
+                assert list(priced.components) == [*expected, *network]
+                assert priced.price == pytest.approx(sum(p.price for p in priced.components))
+            explained += 1
+    assert explained
+
+
+def test_export_free_plan_drops_the_charts_export_network_rates_too() -> None:
+    plan = default_plan_where(needs_network_category_change)
+    billed = without_export(billed_plan(plan, _category_plans(plan), plan.price_category))
+
+    assert billed.chart_network_rates is not None
+    assert not any(rate.is_export for rate in billed.chart_network_rates)

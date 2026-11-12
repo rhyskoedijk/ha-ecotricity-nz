@@ -17,7 +17,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 from custom_components.ecotricity_nz.api import Rate, RateUnit
 from custom_components.ecotricity_nz.const import (
     CONF_ICP,
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PLAN_ID,
     DOMAIN,
     GST_FACTOR,
@@ -131,8 +131,8 @@ async def test_bill_lists_every_rate_as_a_line_in_its_section(
             assert line["part"] == ("export" if rate.is_export else "import")
             assert line["period"] == bucket_period(part.bucket, names)
             assert line["name"] == bucket_name(part.bucket, names)
-        # GST is on imports and daily charges, never on export.
-        assert line["gst"] is not rate.is_export
+        # GST is charged on the bill's total, not line by line.
+        assert "gst" not in line
         assert line["statistic_id"] == _stat(line["key"])
 
 
@@ -203,7 +203,7 @@ async def test_bill_has_no_export_lines_without_an_export_register(
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP},
-        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(SOLAR_PLAN)},
+        options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(SOLAR_PLAN)},
     )
     await _setup(hass, entry)
 
@@ -314,7 +314,7 @@ async def test_bill_has_gst_whatever_the_entrys_option(
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP},
-        options={CONF_INCLUDE_GST: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
+        options={CONF_INCLUDE_GST_IMPORT: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
     )
     await _setup(hass, entry)
 

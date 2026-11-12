@@ -114,6 +114,20 @@ def test_parse_plan_list() -> None:
     assert plans.default.timeframe_chart_weekday is not None
 
 
+def test_network_rates_keep_the_price_category_they_are_for() -> None:
+    raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
+    alternative = raw["content"][0]["alternative"]
+    plans = parse_plan_list(raw)
+
+    assert plans.alternative is not None
+    assert [rate.price_category for rate in plans.alternative.network_rates] == [
+        rate["price_category"] for rate in alternative["network_rates"]
+    ]
+    # The plan itself is listed under the category asked for.
+    assert plans.alternative.price_category == alternative["price_category"]
+    assert all(rate.price_category is None for rate in plans.alternative.retail_rates)
+
+
 def test_find_plans() -> None:
     plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY))
 

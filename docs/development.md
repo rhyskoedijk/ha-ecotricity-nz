@@ -148,7 +148,7 @@ To use a file you've already downloaded, pass its path as the only argument. Net
 
 ### Choosing price categories
 
-A network's price categories mostly share the same Ecotricity data. Comparing the top categories of Wellington Electricity (`CKHK`), Orion (`ORON`) and Vector (`VECT`) in October 2026, every category returned the same six plans, seasons, per-kWh rates and charts (byte for byte). Only two things changed: the plan the site suggests as the default (a low-user plan on low-user categories, a standard plan otherwise), and on Orion the daily network charge (`URES` charges 90c a day on low-user plans where `RES` and `RSC` charge 75.72c). The low-user and standard-user split is in the plans themselves (`_LOW` and `_STD` plan codes), not in the price category.
+A network's price categories mostly share the same Ecotricity data. Comparing the top categories of Wellington Electricity (`CKHK`), Orion (`ORON`) and Vector (`VECT`), every category returned the same six plans, seasons, per-kWh rates and charts (byte for byte). Only two things changed: the plan the site suggests as the default (a low-user plan on low-user categories, a standard plan otherwise), and on Orion the daily network charge (`URES` charges 90c a day on low-user plans where `RES` and `RSC` charge 75.72c). The low-user and standard-user split is in the plans themselves (`_LOW` and `_STD` plan codes), not in the price category.
 
 So each network gets one price category folder, which covers everything the integration parses:
 
@@ -159,7 +159,7 @@ So each network gets one price category folder, which covers everything the inte
 
 ### Adding a network
 
-Ecotricity's onboarding site blocks an IP for about 24 hours after a burst of a few hundred requests (October 2026), so the script paces every request.
+Ecotricity's onboarding site blocks an IP for about 24 hours after a burst of a few hundred requests, so the script paces every request.
 
 ```bash
 uv run python scripts/build_ea_network_price_categories.py        # see which networks have no fixtures
@@ -178,7 +178,7 @@ To build a folder by hand instead: save the plan list response (`RESTPLAN/plan/l
 
 ### Keeping a network's charts
 
-The build script saves every chart of a network, but only charts that test something no other chart does are kept in git. In October 2026 every network's charts were read and described by the pricing scenarios they show (how many periods, whether Ecotricity's and the network's periods line up, hours with no network rate, a cut-off legend price, overlapping or unpublished seasons and so on), and one chart was kept for each scenario: 34 of 576 charts, from 11 networks. The test ICP's network (the one with `icp.json`) keeps more, because the integration tests run against it.
+The build script saves every chart of a network, but only charts that test something no other chart does are kept in git. Every network's charts were read and described by the pricing scenarios they show (how many periods, whether Ecotricity's and the network's periods line up, hours with no network rate, a cut-off legend price, overlapping or unpublished seasons and so on), and one chart was kept for each scenario: 34 of 576 charts, from 11 networks. The test ICP's network (the one with `icp.json`) keeps more, because the integration tests run against it.
 
 After building a network, or when a bug turns up a scenario the kept charts don't cover:
 

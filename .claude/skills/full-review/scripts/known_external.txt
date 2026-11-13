@@ -30,7 +30,6 @@ standard_low
 # Ecotricity's and the Electricity Authority's codes: plans, charges, networks and categories
 ARHLC
 ARHSC
-BATT_SPECIAL_LOW
 ORON
 RSC
 RSUTOU

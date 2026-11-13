@@ -29,9 +29,6 @@ override-dependencies = ["pillow>=13.0.0"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = [
-    "review(*check_ids): the full-review checks a test covers, such as TEST-02 or PRICE-02",
-]
 
 [tool.coverage.run]
 source = ["custom_components.ecotricity_nz"]
@@ -70,8 +67,6 @@ ignore = [
 # Parsers take raw JSON, so their inputs are typed Any. Models leave them fully typed.
 "custom_components/ecotricity_nz/api/parsers.py" = ["ANN401"]
 "scripts/**" = ["INP001", "T201", "D"]
-# Claude Code skill scripts are standalone tools that print their reports.
-".claude/**" = ["INP001", "T201", "D"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["custom_components.ecotricity_nz"]
@@ -81,8 +76,7 @@ python_version = "3.14"
 strict = true
 warn_unreachable = true
 explicit_package_bases = true
-# The review scripts gate CI through tests/test_review_scripts.py, so they're checked too.
-files = ["custom_components", ".claude/skills/full-review/scripts"]
+files = ["custom_components"]
 
 [tool.pyright]
 venvPath = "."

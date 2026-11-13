@@ -120,7 +120,6 @@ def test_every_period_is_translated(network: str, category: str) -> None:
                 assert period in sensors[key]["state"], f"{plan.code}: {period} has no {key} state"
 
 
-@pytest.mark.review("TEST-04")
 def test_overlapping_seasons_each_find_their_own_chart() -> None:
     # A season inside "Standard Rates" has its own chart. Tests asking for a day's chart, or a
     # plan's stored charts, must get the chart of the season that applies that day.
@@ -157,7 +156,6 @@ def test_every_half_hours_bill_lines_are_in_the_plans_cost_keys(chart: Path) -> 
                 assert line is None or not part.price or line in lines, (line, part.description)
 
 
-@pytest.mark.review("PRICE-07")
 @pytest.mark.parametrize(("network", "category"), price_categories())
 def test_every_bucket_has_its_own_period_key(network: str, category: str) -> None:
     # Two buckets in one group with the same period key would share a sensor and a state.

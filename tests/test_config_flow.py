@@ -43,7 +43,6 @@ async def _start(hass: HomeAssistant) -> str:
     return str(result["flow_id"])
 
 
-@pytest.mark.review("TEST-18")
 async def test_user_without_credentials_picks_plan(hass: HomeAssistant) -> None:
     flow_id = await _start(hass)
 
@@ -85,7 +84,6 @@ async def test_plans_are_listed_by_their_internal_names_when_their_names_cant_be
     assert labels == {plan.description for plan in plans}
 
 
-@pytest.mark.review("TEST-18")
 async def test_user_with_credentials(hass: HomeAssistant, mock_portal: MagicMock) -> None:
     flow_id = await _start(hass)
 
@@ -116,7 +114,6 @@ async def test_user_with_credentials(hass: HomeAssistant, mock_portal: MagicMock
         ({CONF_ICP: TEST_ICP, CONF_PASSWORD: "x"}, "base", "credentials_incomplete"),
     ],
 )
-@pytest.mark.review("TEST-18")
 async def test_user_input_errors(
     hass: HomeAssistant, user_input: dict[str, str], error_key: str, error: str
 ) -> None:
@@ -135,7 +132,6 @@ async def test_user_input_errors(
         (EcotricityConnectionError("down"), "base", "cannot_connect"),
     ],
 )
-@pytest.mark.review("TEST-18")
 async def test_onboarding_errors_recover(
     hass: HomeAssistant,
     mock_onboarding: MagicMock,
@@ -160,7 +156,6 @@ async def test_onboarding_errors_recover(
     ("side_effect", "error"),
     [(AuthError("no"), "invalid_auth"), (EcotricityConnectionError("down"), "cannot_connect")],
 )
-@pytest.mark.review("TEST-18")
 async def test_portal_errors(
     hass: HomeAssistant, mock_portal: MagicMock, side_effect: Exception, error: str
 ) -> None:
@@ -203,7 +198,6 @@ async def test_already_configured(hass: HomeAssistant, config_entry: MockConfigE
     assert result["reason"] == "already_configured"
 
 
-@pytest.mark.review("TEST-18")
 async def test_reauth(
     hass: HomeAssistant, portal_config_entry: MockConfigEntry, mock_portal: MagicMock
 ) -> None:
@@ -239,7 +233,6 @@ async def test_reauth_requires_credentials(
     assert result["errors"] == {"base": "credentials_required"}
 
 
-@pytest.mark.review("TEST-18")
 async def test_reconfigure_removes_credentials(
     hass: HomeAssistant, portal_config_entry: MockConfigEntry
 ) -> None:
@@ -254,7 +247,6 @@ async def test_reconfigure_removes_credentials(
     assert portal_config_entry.data == {CONF_ICP: TEST_ICP}
 
 
-@pytest.mark.review("TEST-18")
 async def test_reconfigure_error(
     hass: HomeAssistant, config_entry: MockConfigEntry, mock_portal: MagicMock
 ) -> None:

@@ -129,7 +129,6 @@ describe("buildBill", () => {
   });
 });
 
-// review: TEST-21
 describe("lineLabel", () => {
   const all = LAYOUT.sections.flatMap((section) => section.lines);
 
@@ -177,7 +176,6 @@ describe("statisticIds", () => {
   });
 });
 
-// review: TEST-21
 describe("bill options", () => {
   it("lists lines that charged nothing when asked to", () => {
     const quiet = new Map([...CHANGES].map(([id, value]) => [id, id.includes("supplier") ? 0 : value]));
@@ -201,7 +199,6 @@ describe("billingPeriodStart", () => {
   });
 });
 
-// review: TEST-21
 describe("wholeHours", () => {
   it("takes in the last hour of a day the date picker ends at 23:59:59.999", () => {
     // 23 October 2026 in New Zealand (UTC+13).

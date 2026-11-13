@@ -33,6 +33,3 @@ htmlcov/
 # Frontend dependencies and build artifacts
 node_modules/
 /custom_components/ecotricity_nz/frontend/
-
-# Full review state (file hashes from the last review)
-/.claude/skills/full-review/.state/

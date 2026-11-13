@@ -357,7 +357,6 @@ async def test_icp_without_an_export_register_has_no_export_costs(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
-@pytest.mark.review("TEST-15")
 async def test_costs_start_once_the_usage_can_be_priced(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -398,7 +397,6 @@ async def test_costs_start_once_the_usage_can_be_priced(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
-@pytest.mark.review("TEST-15")
 async def test_cost_statistic_that_fell_behind_the_others_catches_up(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -483,7 +481,6 @@ def _daily_total(plan: Plan, day: date) -> float:
 
 
 @pytest.mark.usefixtures("mock_onboarding")
-@pytest.mark.review("TEST-15")
 async def test_usage_before_the_pricing_year_gets_no_costs(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -511,7 +508,6 @@ async def test_usage_before_the_pricing_year_gets_no_costs(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
-@pytest.mark.review("TEST-02")
 async def test_day_daylight_saving_starts_is_imported_and_priced_in_23_hours(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -539,7 +535,6 @@ _ONBOARDING_CALLS = ("async_get_icp", "async_get_plans", "async_get_plan_titles"
 
 
 @pytest.mark.usefixtures("mock_portal")
-@pytest.mark.review("TEST-13")
 async def test_costs_are_worked_out_from_saved_pricing_with_no_requests(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -573,7 +568,6 @@ async def test_costs_are_worked_out_from_saved_pricing_with_no_requests(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
-@pytest.mark.review("TEST-12")
 async def test_choosing_another_plan_prices_later_usage_with_it(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,

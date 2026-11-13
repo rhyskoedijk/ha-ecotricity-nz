@@ -24,7 +24,7 @@ The integration depends on Home Assistant's `frontend` component, to serve the b
 uv run pytest                                  # all tests
 uv run pytest --cov --cov-report=term-missing  # code coverage
 uv run ruff format . && uv run ruff check .    # formatting and linting
-uv run mypy                                    # type checking (strict), integration and review scripts
+uv run mypy                                    # type checking (strict)
 uv run pre-commit run --all-files              # git hook checks
 ```
 
@@ -38,7 +38,7 @@ npm run build       # bundle into custom_components/ecotricity_nz/frontend/
 
 CI runs the same commands. Below 95% code coverage, `pytest --cov` fails (`fail_under` in `pyproject.toml`), locally as in CI. The pre-commit hooks run in CI too, so a commit made without them installed is still checked, except for its message.
 
-Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, there's no `Co-Authored-By` or AI tool line, there's no ICP, email address, phone number or secret (`pii_scan.py --message`), and the message follows the writing rules (`prose.py --message`). `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
+Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, and there's no `Co-Authored-By` or AI tool line. `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
 
 Some of `CLAUDE.md`'s rules are tests rather than hooks, as they read the code:
 
@@ -61,7 +61,6 @@ Write every test around the scenario it covers, not the network, plan or bug rep
 5. Work out expected values from the plan's own rates (`side_rates`, `import_rates` and `extra_network_codes` help), or from data the test controls, such as rates and legend windows it builds or descriptions it renames. Don't copy one network's legend values into a scenario test, or it only passes for that network. Values printed in a chart's legend belong only in tests that check the default fixture's plans against Ecotricity's site, such as `test_prices_match_website`.
 6. Refer to the test ICP's network and price category through `DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY`, and take other details of the test ICP (its network name, say) from its `icp.json`, so each value is written down once.
 7. A bug fix gets a test of the scenario that caused it, written the same way. The bug report's number belongs in the commit message and changelog, not the test.
-8. If the test covers one of the scenarios in the full review's checklist (the `TEST-NN` rows in `.claude/skills/full-review/SKILL.md`), tag it with `@pytest.mark.review("TEST-02")`, or in the frontend with a `// review: TEST-21` comment on the line directly above the `describe` or `it`. A probe test from a review that's worth keeping is tagged with its own check's ID, such as `PRICE-02`. The review lists tagged tests with `review_tags.py` instead of hunting for them, and treats a check whose tagged tests pass as done rather than writing a new probe, so it reaches the same verdict every run.
 
 `tests/test_network_fixtures.py` covers every kept chart automatically, so a new network needs no new test unless it brings a new scenario.
 
@@ -199,21 +198,6 @@ Before committing, search the whole repository (not just `tests/fixtures`) for y
 `custom_components/ecotricity_nz/brand/` holds the icon and logos Home Assistant shows for the integration. They follow the [home-assistant/brands](https://github.com/home-assistant/brands) image rules: transparent PNGs trimmed to their content, with `icon.png` at 256×256, `logo.png` 128 px tall, and `@2x` versions at double size. `dark_logo.png` is a white version for the dark theme; the icon works on both themes as it is.
 
 They're rendered from the vector wordmark in the header of ecotricity.co.nz. The icon recreates Ecotricity's own favicon (the white wordmark on a `#333D47` circle) at full resolution.
-
-## Full review
-
-The `full-review` Claude Code skill (`.claude/skills/full-review/`) reviews the whole repository against a fixed checklist. Its scripts in `scripts/` do the checks that can be repeated exactly, and `tests/test_review_scripts.py` runs each one in CI so a change to the code can't quietly break them. It also fails the build when a section with only one right answer isn't empty (missing final newlines, writing rule breaks, missing doc paths or names, response keys nobody has checked, keys the client reads that no fixture has, unused TypeScript exports, unreviewed PII candidates, untagged scenarios, translation keys without icons and so on), so those are fixed in the PR that causes them rather than at the next review. Sections that need judgement, such as unreferenced symbols, are left to the review. Four of them keep a short list of candidates already checked by hand, so a clean tree prints nothing:
-
-- `known_external.txt`: names the docs mention that live outside this repo (Home Assistant, libraries, Ecotricity's site). Add one when a review lists it as external; `doc_refs.py` lists entries the docs no longer mention. Names that only appear in fixtures go here too: Ecotricity's response fields don't count as code.
-- `ignored_keys.txt`: keys in Ecotricity's responses that the client doesn't read, on purpose. When Ecotricity adds a key, `api_shapes.py` prints it and CI fails; either read it or add it here.
-- `reviewed.txt`: `pii_scan.py` candidates confirmed fake, by hash, so it holds no values. Once you've checked every candidate it prints, `uv run python .claude/skills/full-review/scripts/pii_scan.py --record` adds them.
-- `decisions.txt`: review candidates already decided, one per line with its check ID, file, an anchor (text that must still be in the file) and a status: "dismissed", "wontfix", or "open" for a finding waiting on you. A review never raises a decided candidate again, and reports each "open" one until you change it to "wontfix" or fix it. `decisions.py` lists a decision as stale once its anchor is gone, and the next review removes it. CI fails on a line not in this format.
-
-The review fixes what it finds unless you run it with `report-only`, and never commits. It reports only High and Medium findings, and Low ones a script or command shows (add `low` for the rest). At the end it records each file's hash in `.claude/skills/full-review/.state/` (git-ignored), and the next review judges only the files changed since, so one run normally finds and fixes everything and a second finds nothing new. Add `full` to judge every file again. If a second run does find something new in a file that hasn't changed, the report names the check that needs tighter wording.
-
-`prose.py --message` is also the `commit-writing-rules` commit-msg hook, and the review scripts are type-checked with the integration (`uv run mypy`), as they gate CI.
-
-Scenario tests are tagged with the checklist's IDs (see [Writing tests](#writing-tests)), and `review_tags.py` lists the scenarios no test is tagged with and any tag it can't tie to a test. `doc_refs.py` also checks the names in the skill's own `SKILL.md`, so when you rename a function a check names, update the check too.
 
 ## Releasing
 

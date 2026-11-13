@@ -131,7 +131,6 @@ def test_each_hour_is_split_into_supplier_network_and_levy_costs() -> None:
     assert len(costs["import_cost_supplier"]) == 24
 
 
-@pytest.mark.review("TEST-15")
 def test_loss_factor_applies_to_supplier_import_only() -> None:
     without = _costs(_readings(DAY), _readings(DAY), PRICED)
     with_losses = _costs(_readings(DAY), _readings(DAY), PRICED, loss_factor=1.05)
@@ -144,7 +143,6 @@ def test_loss_factor_applies_to_supplier_import_only() -> None:
         assert with_losses[key][hour] == pytest.approx(without[key][hour])
 
 
-@pytest.mark.review("TEST-15")
 def test_gst_is_added_to_import_daily_charges_and_export() -> None:
     costs = _costs(_readings(DAY), _readings(DAY), PRICED)
 
@@ -166,7 +164,6 @@ def test_gst_is_added_to_import_daily_charges_and_export() -> None:
     assert costs[GST] == _costs(_readings(DAY), days=PRICED)[GST]
 
 
-@pytest.mark.review("TEST-15")
 def test_net_billed_takes_export_credits_off_everything_charged() -> None:
     costs = _costs(_readings(DAY), _readings(DAY), PRICED)
 
@@ -203,7 +200,6 @@ def test_net_billed_waits_for_a_recent_hours_export() -> None:
     )
 
 
-@pytest.mark.review("TEST-08")
 def test_export_keeps_its_sign() -> None:
     priced = {DAY: DayCosts(_all_day(SUPPLIER), _all_day(EXPORT_CREDIT, EXPORT_FEE), ())}
     costs = _costs(_readings(DAY), _readings(DAY), priced)
@@ -231,7 +227,6 @@ def test_export_keeps_its_sign() -> None:
         pytest.param(DAY, 24, id="ordinary day"),
     ],
 )
-@pytest.mark.review("TEST-02", "TEST-15")
 def test_daily_charges_are_spread_evenly_over_the_hours_of_the_day(day: date, hours: int) -> None:
     priced = {day: DayCosts(_all_day(SUPPLIER), None, DAILY)}
     costs = _costs(_readings(day), days=priced)
@@ -243,7 +238,6 @@ def test_daily_charges_are_spread_evenly_over_the_hours_of_the_day(day: date, ho
     assert sum(costs["daily_charge_metering"].values()) == pytest.approx(DAILY[1].price / 100)
 
 
-@pytest.mark.review("TEST-15")
 def test_days_without_pricing_are_left_out() -> None:
     other = DAY + timedelta(days=1)
     costs = _costs(_readings(DAY) + _readings(other), days=PRICED)
@@ -271,7 +265,6 @@ def test_recent_hour_missing_a_half_hour_is_left_out_until_settled() -> None:
     assert settled["import_cost_supplier"][last_hour] == pytest.approx(SUPPLIER.price / 100)
 
 
-@pytest.mark.review("TEST-15")
 def test_parts_that_dont_apply_are_zero_in_priced_hours() -> None:
     # The plan has a levy, but today's prices don't include it, so the levy's statistic gets
     # zeros rather than a gap.
@@ -478,12 +471,10 @@ def _hours(day: date) -> list[datetime]:
         date(2026, 9, 27),
     ],
 )
-@pytest.mark.review("TEST-21")
 def test_a_whole_day_carries_one_days_charges(day: date) -> None:
     assert charged_days(_hours(day), NZ) == pytest.approx(1)
 
 
-@pytest.mark.review("TEST-21")
 def test_days_charged_count_only_the_hours_priced() -> None:
     # A range of three days with only the first two priced, and half of the third.
     first = date(2026, 6, 15)

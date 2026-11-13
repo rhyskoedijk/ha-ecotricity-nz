@@ -109,7 +109,6 @@ def test_small_rendering_changes_still_read() -> None:
     assert read_chart(_edited(_chart(), lighten)) == read_chart(_chart())
 
 
-@pytest.mark.review("TEST-10")
 def test_clipped_price_keeps_its_digits_and_an_estimate() -> None:
     # Long export lines on battery plans run off the image, cutting the last price short. The
     # digits that fit are kept, with an estimate of the price from its bar's height.
@@ -217,7 +216,6 @@ def test_glyph_templates_are_far_apart() -> None:
                 assert glyph_distance(glyph, template) > 0.3, (char, other)
 
 
-@pytest.mark.review("CHART-03")
 def test_every_legend_character_is_well_inside_the_matching_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -247,7 +245,6 @@ def test_every_legend_character_is_well_inside_the_matching_limit(
         assert second > limit * 1.25, second
 
 
-@pytest.mark.review("TEST-10")
 def test_unreadable_images_rejected() -> None:
     with pytest.raises(ChartReadError):
         read_chart(b"not an image")
@@ -273,7 +270,6 @@ def _ink_below_its_line_top() -> bytes:
     return _png(image)
 
 
-@pytest.mark.review("CHART-02")
 @pytest.mark.parametrize(
     "data",
     [

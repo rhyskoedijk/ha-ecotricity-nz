@@ -95,7 +95,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// review: TEST-21
 describe("ecotricity-bill-card", () => {
   it("shows the bill for the date picker's range", async () => {
     const collection = new FakeCollection();

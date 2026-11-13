@@ -36,9 +36,9 @@ npm test            # vitest: bill.ts's logic, and the card rendered in happy-do
 npm run build       # bundle into custom_components/ecotricity_nz/frontend/
 ```
 
-CI runs the same commands. Below 95% code coverage, `pytest --cov` fails (`fail_under` in `pyproject.toml`), locally as in CI. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
+CI runs the same commands. Below 95% code coverage, `pytest --cov` fails (`fail_under` in `pyproject.toml`), locally as in CI. The pre-commit hooks run in CI too, so a commit made without them installed is still checked, except for its message.
 
-Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, there's no `Co-Authored-By` or AI tool line, and there's no ICP or secret (`pii_scan.py --message`, which leaves out email addresses and phone numbers, as Dependabot's messages quote release notes). `scripts/setup` installs the commit message hooks with the others. CI runs the commit message hooks on every commit in a pull request.
+Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, there's no `Co-Authored-By` or AI tool line, there's no ICP, email address, phone number or secret (`pii_scan.py --message`), and the message follows the writing rules (`prose.py --message`). `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
 
 Some of `CLAUDE.md`'s rules are tests rather than hooks, as they read the code:
 

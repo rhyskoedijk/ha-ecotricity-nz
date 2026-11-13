@@ -31,7 +31,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), i
 - Body: skip it when the subject says it all. Otherwise, a short paragraph or two wrapped at about 76 characters: first why the change was needed (what was wrong, and what it caused), then what changed. Name the sensors, functions or files involved.
 - Keep it brief. Don't list every file touched, restate the diff, or mention tests and docs updated as part of the definition of done.
 - Never add `Co-Authored-By` lines or any other mention of AI tools.
-- The `commit-subject`, `commit-no-ai-mention`, `commit-no-personal-data` and `commit-writing-rules` hooks in `.pre-commit-config.yaml` check the subject's type, these lines, that no ICP or secret is in the message and the writing rules above (`prose.py --message`, which skips Dependabot's messages), at commit time and in CI for a pull request's commits.
+- The `commit-subject`, `commit-no-ai-mention`, `commit-no-personal-data` and `commit-writing-rules` hooks in `.pre-commit-config.yaml` check the subject's type, these lines, that no ICP or secret is in the message and the writing rules above (`prose.py --message`), at commit time.
 
 ## Definition of done
 

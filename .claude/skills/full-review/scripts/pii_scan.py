@@ -17,9 +17,8 @@ key path and value (never the value itself), and aren't printed again, so a clea
 reviewed.txt. A hash stops matching when the file, key or value changes, and is then listed
 under STALE REVIEWED for removal.
 
-With `--message FILE`, it checks a commit message instead, for ICPs and secrets, and exits
-with an error if any match (the `commit-no-personal-data` hook). Email addresses and phone
-numbers are left out there, as Dependabot's messages quote release notes that have them.
+With `--message FILE`, it checks a commit message instead, and exits with an error if anything
+matches (the `commit-no-personal-data` hook).
 Nothing in a commit message is ever reviewed as fake, since it can't be removed once pushed.
 """
 
@@ -35,8 +34,6 @@ from typing import Any
 from _repo import SKILL_DIR, read_text, repo_files
 
 REVIEWED = SKILL_DIR / "scripts/reviewed.txt"
-# Kinds a commit message may have: release notes Dependabot quotes have addresses and numbers.
-MESSAGE_SKIPPED = {"email", "phone"}
 # The fake ICPs the tests use. Anything else ICP-shaped is reported.
 ALLOWED_ICPS = {"0000123456AB1C2", "0000654321AB1C2", "0000999999AB1C2", "9999999999ZZ9Z9"}
 ALLOWED_EMAIL_DOMAINS = (
@@ -144,11 +141,7 @@ def _reviewed() -> dict[str, str]:
 
 
 def _check_message(path: Path) -> None:
-    found = [
-        line
-        for _, line in _text_matches(path, path.read_text(encoding="utf-8"))
-        if line.split("  ")[1] not in MESSAGE_SKIPPED
-    ]
+    found = [line for _, line in _text_matches(path, path.read_text(encoding="utf-8"))]
     if found:
         print("\n".join(found))
         sys.exit(1)

@@ -11,7 +11,6 @@ spellings with a clear NZ form are listed, so the list rarely needs adding to.
 
 With `--message FILE`, it checks a commit message instead, leaving out git's `#` comment
 lines, and exits with an error if any line breaks a rule (the `commit-writing-rules` hook).
-A message Dependabot signed off is skipped, as it quotes release notes written by others.
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ STRINGS = "custom_components/ecotricity_nz/strings.json"
 FENCE = re.compile(r"^\s*(```|~~~)")
 INLINE_CODE = re.compile(r"`[^`\n]*`|\]\([^)]*\)")
 CODE_SUFFIXES = {".py", ".ts"}
-DEPENDABOT = "Signed-off-by: dependabot[bot]"
 RULES = {
     "em dash": re.compile("\\u2014"),
     "en dash": re.compile("\\s\\u2013\\s"),
@@ -108,8 +106,6 @@ def _check(path: Path, lines: list[tuple[int, str]], *, spelling: bool) -> list[
 
 def _check_message(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
-    if DEPENDABOT in text:
-        return
     lines = [
         (number, line)
         for number, line in enumerate(text.splitlines(), start=1)

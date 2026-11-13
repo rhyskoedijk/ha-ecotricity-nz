@@ -103,7 +103,6 @@ def test_services_are_declared_everywhere() -> None:
         ("It was wrong \u2014 this fixes it.", True),
         ("Fixes the color of the total.", True),
         ("# git's own comment \u2014 left out", False),
-        ("It was wrong \u2014 see below.\n\nSigned-off-by: dependabot[bot] <x>", False),
     ],
 )
 def test_commit_message_writing_rules(tmp_path: Path, body: str, *, breaks: bool) -> None:

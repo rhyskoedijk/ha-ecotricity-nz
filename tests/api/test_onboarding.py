@@ -32,19 +32,14 @@ from tests.conftest import (
 BASE = "https://onboarding.test"
 ICP_URL = f"{BASE}/cgi-bin/RESTICP/energy/{TEST_ICP}"
 PLAN_URL = f"{BASE}/cgi-bin/RESTPLAN/plan/list_unbundle/"
-CHALLENGE = {
-    "cid": "c",
-    "expiry": 1,
-    "sig": "s",
-    "params": {"container_width": 10, "items": [5, 5, 5]},
-}
+CHALLENGE = load_json_fixture("ecotricity/attestation_challenge.json")
+# Expires far in the future, as these tests run on the real clock.
+TOKEN = {**load_json_fixture("ecotricity/attestation_token.json"), "expires": 9_999_999_999}
 
 
 def _mock_attestation(aioclient_mock: AiohttpClientMocker) -> None:
     aioclient_mock.get(f"{BASE}/cgi-bin/RESTATTEST/challenge", json=CHALLENGE)
-    aioclient_mock.post(
-        f"{BASE}/cgi-bin/RESTATTEST/token", json={"token": "tok", "expires": 9_999_999_999}
-    )
+    aioclient_mock.post(f"{BASE}/cgi-bin/RESTATTEST/token", json=TOKEN)
 
 
 def _client(hass: HomeAssistant) -> OnboardingClient:
@@ -142,7 +137,7 @@ async def test_errors(
 
 async def test_get_plan_titles(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     aioclient_mock.get(
-        f"{BASE}/assets/planmappings.json", json=load_json_fixture("plan_mappings.json")
+        f"{BASE}/assets/planmappings.json", json=load_json_fixture("ecotricity/plan_mappings.json")
     )
 
     titles = await _client(hass).async_get_plan_titles()

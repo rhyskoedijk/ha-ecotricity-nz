@@ -23,6 +23,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
 from tests.conftest import (
     TIME_OF_USE_PLAN,
     chart_file,
+    chart_files,
     chart_name,
     explained_chart,
     find_chart_where,
@@ -45,7 +46,7 @@ def _edited(data: bytes, edit: object) -> bytes:
     """Return a chart with an edit applied to its pixels."""
     with Image.open(io.BytesIO(data)) as raw:
         image = raw.convert("RGB")
-    edit(image)  # type: ignore[operator]
+    edit(image)  # type: ignore[operator]  # each edit takes the image
     out = io.BytesIO()
     image.save(out, format="PNG")
     return out.getvalue()
@@ -100,7 +101,7 @@ def test_small_rendering_changes_still_read() -> None:
         assert pixels is not None
         for y in range(LEGEND_TOP, image.height):
             for x in range(image.width):
-                red, green, blue = pixels[x, y]  # type: ignore[misc]
+                red, green, blue = pixels[x, y]  # type: ignore[misc]  # an RGB pixel is a 3-tuple
                 pixels[x, y] = tuple(
                     255 - (255 - value) * 85 // 100 for value in (red, green, blue)
                 )
@@ -108,6 +109,7 @@ def test_small_rendering_changes_still_read() -> None:
     assert read_chart(_edited(_chart(), lighten)) == read_chart(_chart())
 
 
+@pytest.mark.review("TEST-10")
 def test_clipped_price_keeps_its_digits_and_an_estimate() -> None:
     # Long export lines on battery plans run off the image, cutting the last price short. The
     # digits that fit are kept, with an estimate of the price from its bar's height.
@@ -215,6 +217,37 @@ def test_glyph_templates_are_far_apart() -> None:
                 assert glyph_distance(glyph, template) > 0.3, (char, other)
 
 
+@pytest.mark.review("CHART-03")
+def test_every_legend_character_is_well_inside_the_matching_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A character near the limit, or nearly as close to another template, would misread after a
+    # small rendering change. Keep a quarter of the limit clear on both sides. Only characters
+    # that match count: the reader also tries the text above the legend, and skips what it
+    # can't read there.
+    glyphs: set[timeframes._Glyph] = set()
+    match = timeframes._match_glyph
+
+    def recording_match(glyph: timeframes._Glyph) -> str:
+        char = match(glyph)
+        glyphs.add(glyph)
+        return char
+
+    monkeypatch.setattr(timeframes, "_match_glyph", recording_match)
+    for chart in chart_files():
+        read_chart(chart.read_bytes())
+
+    limit = timeframes._MAX_GLYPH_DISTANCE
+    assert glyphs
+    for glyph in glyphs:
+        nearest, second = sorted(
+            glyph_distance(glyph, template) for template in timeframes._TEMPLATES.values()
+        )[:2]
+        assert nearest < limit * 0.75, nearest
+        assert second > limit * 1.25, second
+
+
+@pytest.mark.review("TEST-10")
 def test_unreadable_images_rejected() -> None:
     with pytest.raises(ChartReadError):
         read_chart(b"not an image")
@@ -223,6 +256,39 @@ def test_unreadable_images_rejected() -> None:
     Image.new("RGB", (200, 100), "white").save(blank, format="PNG")
     with pytest.raises(ChartReadError, match="no legend"):
         read_chart(blank.getvalue())
+
+
+def _png(image: Image.Image) -> bytes:
+    data = io.BytesIO()
+    image.save(data, format="PNG")
+    return data.getvalue()
+
+
+def _ink_below_its_line_top() -> bytes:
+    """A mark whose ink starts further below its line's top than a character is tall."""
+    image = Image.new("RGB", (200, 60), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((10, 30, 13, 49), fill="black")
+    draw.rectangle((100, 5, 103, 49), fill="black")
+    return _png(image)
+
+
+@pytest.mark.review("CHART-02")
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(_png(Image.new("RGB", (40, 40), "white"))[:60], id="truncated"),
+        pytest.param(_png(Image.new("P", (40, 40), 0)), id="palette"),
+        pytest.param(_png(Image.new("L", (40, 40), 0)), id="greyscale_all_ink"),
+        pytest.param(_ink_below_its_line_top(), id="ink_below_its_line_top"),
+    ],
+)
+def test_any_unreadable_image_raises_chart_read_error(data: bytes) -> None:
+    # Anything else would escape the coordinator, which only expects the API's own errors, and
+    # make every pricing sensor unavailable instead of keeping the saved reading.
+    with pytest.raises(ChartReadError):
+        read_chart(data)
 
 
 def test_unknown_character_rejected() -> None:

@@ -259,6 +259,9 @@ class _Legend:
             for x in range(first, last + 1)
             if any(int(self._pixels[x, y]) < 255 for y in range(top, bottom))  # type: ignore[arg-type] # noqa: PLR2004 - a greyscale pixel is an int, though Pillow types it as any pixel; 255 is white
         ]
+        if not columns:
+            # Its ink starts below the rows a character can take up, so it isn't legend text.
+            raise ChartReadError("The chart's legend has a character that can't be read")
         rows = tuple(
             tuple(255 - int(self._pixels[x, y]) for x in range(columns[0], columns[-1] + 1))  # type: ignore[arg-type]  # a greyscale pixel is an int
             for y in range(top, bottom)

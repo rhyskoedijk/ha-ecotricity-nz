@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import MISSING, Field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.ecotricity_nz import coordinator as coordinator_module
 from custom_components.ecotricity_nz.api import EcotricityConnectionError
+from custom_components.ecotricity_nz.api.models import Plan
 from custom_components.ecotricity_nz.api.parsers import (
     parse_icp,
     parse_plan_list,
@@ -101,6 +103,7 @@ def _storage_key(entry: MockConfigEntry) -> str:
     return f"ecotricity_nz.{entry.entry_id}.pricing"
 
 
+@pytest.mark.review("TEST-13")
 async def test_restart_works_offline(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -126,6 +129,7 @@ async def test_restart_works_offline(
     assert _state(hass, "last_pricing_update") == fetched
 
 
+@pytest.mark.review("TEST-05")
 async def test_next_season_applies_offline(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -165,6 +169,7 @@ async def test_next_season_applies_offline(
         (datetime(2026, 6, 15, 12, 0), datetime(2026, 6, 22, 12, 1), True),
     ],
 )
+@pytest.mark.review("TEST-11")
 async def test_fetch_schedule(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -187,6 +192,7 @@ async def test_fetch_schedule(
     assert (mock_onboarding.async_get_icp.await_count > calls) is fetched
 
 
+@pytest.mark.review("TEST-05")
 async def test_unpublished_season_is_fetched_once_a_day(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -206,6 +212,7 @@ async def test_unpublished_season_is_fetched_once_a_day(
     assert mock_onboarding.async_get_icp.await_count == calls + 1
 
 
+@pytest.mark.review("TEST-11")
 async def test_unreadable_windows_are_fetched_again_next_day(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -252,6 +259,7 @@ async def test_each_day_is_priced_once(
     assert price_plan_day.call_count == 1
 
 
+@pytest.mark.review("TEST-11")
 async def test_choosing_another_plan_fetches(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -294,6 +302,7 @@ async def test_saved_pricing_for_another_icp_is_ignored(
     assert _state(hass, "icp") == TEST_ICP
 
 
+@pytest.mark.review("TEST-17")
 async def test_damaged_saved_pricing_is_fetched_again(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
@@ -356,7 +365,7 @@ async def test_offline_warning_is_logged_once(
 
 def _fixture_snapshot() -> PricingSnapshot:
     chart = chart_file(chart_name(find_plan(TIME_OF_USE_PLAN), date(2026, 6, 15)))
-    titles = parse_plan_titles(load_json_fixture("plan_mappings.json"))
+    titles = parse_plan_titles(load_json_fixture("ecotricity/plan_mappings.json"))
     return PricingSnapshot(
         icp=parse_icp(load_network_fixture(DEFAULT_NETWORK, "icp.json")),
         plans=parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).with_titles(
@@ -375,8 +384,63 @@ def _fixture_snapshot() -> PricingSnapshot:
     )
 
 
-def test_snapshot_round_trip() -> None:
+def _round_trip_snapshot() -> PricingSnapshot:
+    """Return the fixture snapshot with a value in the fields the fixtures leave at a default."""
     snapshot = _fixture_snapshot()
+    return replace(snapshot, icp=replace(snapshot.icp, generation_capacity_kw=5.0))
+
+
+# Fields worked out when pricing, never saved.
+NOT_SAVED = {(Plan, "chart_network_rates")}
+
+
+def _saved_models(value: object, found: dict[type, list[object]]) -> None:
+    """Collect every dataclass instance in a snapshot, by type."""
+    if is_dataclass(value) and not isinstance(value, type):
+        found.setdefault(type(value), []).append(value)
+        for model_field in fields(value):
+            _saved_models(getattr(value, model_field.name), found)
+    elif isinstance(value, Mapping):
+        for child in value.values():
+            _saved_models(child, found)
+    elif isinstance(value, tuple | list):
+        for child in value:
+            _saved_models(child, found)
+
+
+def _default(model_field: Field[object]) -> object:
+    if model_field.default is not MISSING:
+        return model_field.default
+    if model_field.default_factory is not MISSING:
+        return model_field.default_factory()
+    return MISSING
+
+
+@pytest.mark.review("TEST-17")
+def test_round_trip_snapshot_sets_every_saved_field() -> None:
+    # A field the snapshot only holds at its default would round-trip even if store.py
+    # dropped it, so the round trip below would prove nothing about it.
+    found: dict[type, list[object]] = {}
+    _saved_models(_round_trip_snapshot(), found)
+
+    unset = [
+        f"{model.__name__}.{model_field.name}"
+        for model, instances in found.items()
+        for model_field in fields(model)
+        if (model, model_field.name) not in NOT_SAVED
+        and not any(
+            getattr(instance, model_field.name)
+            and getattr(instance, model_field.name) != _default(model_field)
+            for instance in instances
+        )
+    ]
+    assert found
+    assert unset == []
+
+
+@pytest.mark.review("TEST-17")
+def test_snapshot_round_trip() -> None:
+    snapshot = _round_trip_snapshot()
     # Through JSON, as Home Assistant's store saves it.
     assert snapshot.charts
     clipped = snapshot.charts["/clipped.png"]
@@ -388,6 +452,7 @@ def test_snapshot_round_trip() -> None:
     assert _snapshot(saved) == snapshot
 
 
+@pytest.mark.review("TEST-17")
 async def test_pricing_saved_in_an_older_format_is_fetched_again(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
@@ -461,6 +526,7 @@ async def test_failed_chart_download_keeps_the_saved_reading(
     assert _state(hass, "current_import_period") == "peak"
 
 
+@pytest.mark.review("TEST-11")
 async def test_failed_fetches_back_off(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -491,6 +557,7 @@ async def test_failed_fetches_back_off(
     assert coordinator.update_interval == PRICING_CHECK_INTERVAL
 
 
+@pytest.mark.review("TEST-11")
 async def test_failed_fetch_without_saved_pricing_says_when_to_retry(
     hass: HomeAssistant, config_entry: MockConfigEntry, mock_onboarding: MagicMock
 ) -> None:

@@ -1,0 +1,9 @@
+{
+  "cid": "abc123",
+  "expiry": 1800000000,
+  "sig": "signature",
+  "params": {
+    "container_width": 100,
+    "items": [40, 30, 20, 25, 10]
+  }
+}

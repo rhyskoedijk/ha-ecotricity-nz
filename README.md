@@ -21,7 +21,7 @@ This is a community integration and isn't affiliated with Ecotricity NZ. The Eco
 
 ## Installation
 
-Home Assistant **2026.10** or later is required.
+Home Assistant **2026.10.4** or later is required.
 
 ### Automatic via HACS (recommended)
 
@@ -169,7 +169,7 @@ Each of your plan's rates also has a pair of bill line statistics, like the line
 
 ## Updates and working offline
 
-Pricing data comes from Ecotricity's public website, which requires internet access. The integration saves this data locally when fetched, and works out each day's prices and periods from the saved copy, so they keep working through restarts and internet outages. Once Ecotricity publishes the next season, the next fetch saves its pricing and time-of-use charts too, so the new season starts on time even if you're offline at midnight. The integration checks once a day whether anything needs fetching. It fetches weekly, on the 1st of each month, on the last day of each season, and daily while next season's pricing isn't published yet or today's time-of-use chart can't be read. If a chart is missing, or shows prices that don't match your plan's rates, on an import or export side where Ecotricity and your network each have only one rate, such as on an anytime plan, it's fetched again daily up to three times, then only at the usual times. A chart that goes missing later gets its own three tries, even if another is still missing. Restarting Home Assistant doesn't start the count again. The **Last pricing update** sensor shows when it last fetched.
+Pricing data comes from Ecotricity's public website, which requires internet access. The integration saves this data locally when fetched, and works out each day's prices and periods from the saved copy, so they keep working through restarts and internet outages. Once Ecotricity publishes the next season, the next fetch saves its pricing and time-of-use charts too, so the new season starts on time even if you're offline at midnight. The integration checks once a day whether anything needs fetching. It fetches weekly, on the 1st of each month, on the last day of each season, and daily while no published season covers today or tomorrow (from a season's last day until Ecotricity publishes the next) or today's time-of-use chart can't be read. If a chart is missing, or shows prices that don't match your plan's rates, on an import or export side where Ecotricity and your network each have only one rate, such as on an anytime plan, it's fetched again daily up to three times, then only at the usual times. A chart that goes missing later gets its own three tries, even if another is still missing. Restarting Home Assistant doesn't start the count again. The **Last pricing update** sensor shows when it last fetched.
 
 Usage data is imported from the Ecotricity customer portal once a day. If an import finds nothing new, the integration checks the portal again every 3 hours until the day's data appears.
 

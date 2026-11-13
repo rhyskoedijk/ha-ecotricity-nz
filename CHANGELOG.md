@@ -4,6 +4,7 @@
 
 ### Breaking changes
 
+- **Home Assistant 2026.10.4 or later is now required**, up from 2026.10.0, as that's the release the integration is tested against.
 - **The Plan sensor's `code` attribute is now `internal_code`**, to match `internal_name` beside it: both are Ecotricity's internal identifiers for the plan, not what its site shows. Update any templates or automations that read it.
 
 ### New features
@@ -24,6 +25,7 @@
 - Network prices and costs could be wrong when your plan is for a different network price category than your ICP is registered on, such as a low-user plan on a standard-user ICP. Ecotricity lists each plan with its own category's network rates, but the network charges your ICP's registered category until it's moved. The integration now prices with your ICP's category, a repair notice explains the difference, and the **Plan** sensor's `expected_network_price_category` and `actual_network_price_category` attributes show both categories, with `network_price_category_change_required` true while they differ. Your saved pricing is fetched again once after updating.
 - A portal login the portal briefly rejected asked you to sign in again, even though your password was right. A rejected login is now tried once more after 10 seconds before Home Assistant asks.
 - A usage series whose first readings arrived with a half-hour missing (such as export on a new solar install) skipped those readings for good once the portal filled the gap. They're now read again and imported.
+- A chart image with marks the chart reader didn't expect could stop the whole pricing update, making every pricing sensor unavailable. It's now treated as an unreadable chart, so its saved reading is kept and everything else carries on.
 
 ## 0.4.0 (2026-10-21)
 

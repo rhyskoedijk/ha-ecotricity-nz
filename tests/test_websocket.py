@@ -213,6 +213,7 @@ async def test_bill_has_no_export_lines_without_an_export_register(
     assert not [key for key in keys if key.startswith("line_export_")]
 
 
+@pytest.mark.review("TEST-22")
 async def test_bill_needs_a_loaded_entry(
     hass: HomeAssistant, hass_ws_client: WebSocketGenerator
 ) -> None:
@@ -224,6 +225,7 @@ async def test_bill_needs_a_loaded_entry(
 
 @pytest.mark.usefixtures("mock_onboarding")
 @pytest.mark.freeze_time(WINTER_PEAK)
+@pytest.mark.review("TEST-22")
 async def test_bill_needs_an_entry_named_when_several_are_loaded(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -251,6 +253,7 @@ async def test_bill_needs_an_entry_named_when_several_are_loaded(
 
 @pytest.mark.usefixtures("mock_onboarding")
 @pytest.mark.freeze_time(WINTER_PEAK)
+@pytest.mark.review("TEST-22")
 async def test_bill_is_chosen_by_icp_when_several_are_loaded(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -325,6 +328,7 @@ async def test_bill_has_gst_whatever_the_entrys_option(
 
 @pytest.mark.usefixtures("mock_onboarding", "mock_portal")
 @pytest.mark.freeze_time(WINTER_PEAK)
+@pytest.mark.review("TEST-21")
 async def test_bill_counts_only_the_days_charged(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -360,6 +364,7 @@ async def test_bill_counts_only_the_days_charged(
 
 @pytest.mark.usefixtures("mock_onboarding")
 @pytest.mark.freeze_time(WINTER_PEAK)
+@pytest.mark.review("TEST-22")
 async def test_bill_days_needs_a_valid_range_and_entry(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -384,6 +389,7 @@ async def test_bill_days_needs_a_valid_range_and_entry(
 
 @pytest.mark.usefixtures("mock_onboarding")
 @pytest.mark.freeze_time(WINTER_PEAK)
+@pytest.mark.review("TEST-22")
 async def test_icps_lists_every_loaded_icp_for_the_card_editor(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,

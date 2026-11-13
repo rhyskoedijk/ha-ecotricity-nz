@@ -25,16 +25,13 @@ from custom_components.ecotricity_nz.api.exceptions import (
     EcotricityConnectionError,
     EcotricityResponseError,
 )
+from tests.conftest import load_json_fixture
 
 BASE = "https://onboarding.test"
 CHALLENGE_URL = f"{BASE}/cgi-bin/RESTATTEST/challenge"
 TOKEN_URL = f"{BASE}/cgi-bin/RESTATTEST/token"
-CHALLENGE = {
-    "cid": "abc123",
-    "expiry": 1_800_000_000,
-    "sig": "signature",
-    "params": {"container_width": 100, "items": [40, 30, 20, 25, 10]},
-}
+CHALLENGE = load_json_fixture("ecotricity/attestation_challenge.json")
+TOKEN = load_json_fixture("ecotricity/attestation_token.json")
 
 
 @pytest.mark.parametrize(
@@ -52,7 +49,10 @@ def test_first_wrap_index(width: float, items: list[float], expected: int) -> No
 
 
 def test_solve_challenge_hashes_cid_and_index() -> None:
-    assert solve_challenge(CHALLENGE) == hashlib.sha256(b"abc123|3").hexdigest()
+    # The fixture's first three items fit its container, so the fourth wraps.
+    assert (
+        solve_challenge(CHALLENGE) == hashlib.sha256(f"{CHALLENGE['cid']}|3".encode()).hexdigest()
+    )
 
 
 @pytest.mark.parametrize(
@@ -87,16 +87,16 @@ async def test_token_is_minted_and_cached(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
     aioclient_mock.get(CHALLENGE_URL, json=CHALLENGE)
-    aioclient_mock.post(TOKEN_URL, json={"token": "tok", "expires": 2_000})
+    aioclient_mock.post(TOKEN_URL, json=TOKEN)
     manager = _manager(hass, Clock(1_000))
 
-    assert await manager.async_get_token() == "tok"
-    assert await manager.async_get_token() == "tok"
+    assert await manager.async_get_token() == TOKEN["token"]
+    assert await manager.async_get_token() == TOKEN["token"]
     assert aioclient_mock.call_count == 2
 
     _, _, body, _ = aioclient_mock.mock_calls[1]
     assert body["answer"] == solve_challenge(CHALLENGE)
-    assert body["cid"] == "abc123"
+    assert body["cid"] == CHALLENGE["cid"]
 
 
 async def test_concurrent_requests_share_one_token(
@@ -104,20 +104,20 @@ async def test_concurrent_requests_share_one_token(
 ) -> None:
     # A request waiting for the lock uses the token the one before it minted.
     aioclient_mock.get(CHALLENGE_URL, json=CHALLENGE)
-    aioclient_mock.post(TOKEN_URL, json={"token": "tok", "expires": 2_000})
+    aioclient_mock.post(TOKEN_URL, json=TOKEN)
     manager = _manager(hass, Clock(1_000))
     request = manager._async_request
 
     async def slow_request(*args: object) -> object:
         # Give the other request a chance to start while this one is minting.
         await asyncio.sleep(0)
-        return await request(*args)  # type: ignore[arg-type]
+        return await request(*args)  # type: ignore[arg-type]  # passes on the original's arguments
 
-    manager._async_request = slow_request  # type: ignore[method-assign]
+    manager._async_request = slow_request  # type: ignore[method-assign]  # slows the real request
 
     tokens = await asyncio.gather(manager.async_get_token(), manager.async_get_token())
 
-    assert tokens == ["tok", "tok"]
+    assert tokens == [TOKEN["token"], TOKEN["token"]]
     assert aioclient_mock.call_count == 2
 
 
@@ -125,7 +125,7 @@ async def test_token_refreshes_near_expiry(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
     aioclient_mock.get(CHALLENGE_URL, json=CHALLENGE)
-    aioclient_mock.post(TOKEN_URL, json={"token": "tok", "expires": 2_000})
+    aioclient_mock.post(TOKEN_URL, json=TOKEN)
     clock = Clock(1_000)
     manager = _manager(hass, clock)
 
@@ -139,7 +139,7 @@ async def test_token_refreshes_after_call_budget(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
     aioclient_mock.get(CHALLENGE_URL, json=CHALLENGE)
-    aioclient_mock.post(TOKEN_URL, json={"token": "tok", "expires": 2_000})
+    aioclient_mock.post(TOKEN_URL, json=TOKEN)
     manager = _manager(hass, Clock(1_000))
 
     await manager.async_get_token()
@@ -161,7 +161,7 @@ async def test_rejected_answer_is_retried_once(
     async def token_response(method: str, url: URL, data: object) -> AiohttpClientMockResponse:
         status = next(responses)
         return AiohttpClientMockResponse(
-            method, url, status=status, json={"token": "tok2", "expires": 2_000}
+            method, url, status=status, json={**TOKEN, "token": "tok2"}
         )
 
     aioclient_mock.get(CHALLENGE_URL, json=CHALLENGE)
@@ -198,7 +198,7 @@ async def test_server_errors_are_not_attestation_failures(
 ) -> None:
     """A site outage mustn't count towards the attestation repair issue."""
     aioclient_mock.get(CHALLENGE_URL, status=challenge_status, json=CHALLENGE)
-    aioclient_mock.post(TOKEN_URL, status=token_status, json={"token": "tok", "expires": 2_000})
+    aioclient_mock.post(TOKEN_URL, status=token_status, json=TOKEN)
 
     with pytest.raises(EcotricityConnectionError):
         await _manager(hass, Clock(1_000)).async_get_token()

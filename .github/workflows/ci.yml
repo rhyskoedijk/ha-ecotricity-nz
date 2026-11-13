@@ -20,18 +20,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The whole history, so a pull request's commit messages can be checked.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run ruff format --check .
       - run: uv run ruff check --output-format github .
-      - run: uv run mypy custom_components
+      - run: uv run mypy
       - name: Other pre-commit hooks
         # Ruff and mypy already ran above, with annotations.
         env:
           SKIP: ruff-format,ruff-check,mypy
         run: uv run pre-commit run --all-files --show-diff-on-failure
+      - name: Commit messages
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            git log -1 --format=%B "$sha" > "$RUNNER_TEMP/commit-msg"
+            uv run pre-commit run --hook-stage commit-msg --commit-msg-filename "$RUNNER_TEMP/commit-msg"
+          done
 
   test:
     name: Tests

@@ -445,7 +445,7 @@ def mock_onboarding() -> Generator[MagicMock]:
     )
     client.async_get_chart = AsyncMock(side_effect=_chart_bytes)
     client.async_get_plan_titles = AsyncMock(
-        return_value=parse_plan_titles(load_json_fixture("plan_mappings.json"))
+        return_value=parse_plan_titles(load_json_fixture("ecotricity/plan_mappings.json"))
     )
     with (
         patch("custom_components.ecotricity_nz.OnboardingClient", return_value=client),
@@ -467,7 +467,7 @@ def mock_portal() -> Generator[MagicMock]:
             data_end=datetime(2026, 4, 6, 0, 0, tzinfo=NZ),
         )
     )
-    values = parse_values(load_json_fixture("portal_values_dst_end.json"), NZ)
+    values = parse_values(load_json_fixture("ecotricity/portal_values_dst_end.json"), NZ)
 
     async def half_hourly(start: datetime, end: datetime) -> Any:
         return type(values)(

@@ -18,10 +18,7 @@ def repo_files() -> list[Path]:
         capture_output=True,
     ).stdout.decode()
     paths = {Path(name) for name in output.split("\0") if name}
-    skill = SKILL_DIR.relative_to(ROOT)
-    return sorted(
-        path for path in paths if (ROOT / path).is_file() and not path.is_relative_to(skill)
-    )
+    return sorted(path for path in paths if (ROOT / path).is_file())
 
 
 def read_text(path: Path) -> str | None:

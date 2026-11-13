@@ -24,7 +24,7 @@ The integration depends on Home Assistant's `frontend` component, to serve the b
 uv run pytest                                  # all tests
 uv run pytest --cov --cov-report=term-missing  # code coverage
 uv run ruff format . && uv run ruff check .    # formatting and linting
-uv run mypy custom_components                  # type checking (strict)
+uv run mypy                                    # type checking (strict), integration and review scripts
 uv run pre-commit run --all-files              # git hook checks
 ```
 
@@ -36,9 +36,17 @@ npm test            # vitest: bill.ts's logic, and the card rendered in happy-do
 npm run build       # bundle into custom_components/ecotricity_nz/frontend/
 ```
 
-CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
+CI runs the same commands. Below 95% code coverage, `pytest --cov` fails (`fail_under` in `pyproject.toml`), locally as in CI. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
 
-Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name (categories can contain hyphens, such as `T-1RL`, so it matches the name against the network's folders rather than splitting it). Most tests run against `CKHK` and `RLUTOU`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
+Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, there's no `Co-Authored-By` or AI tool line, and there's no ICP or secret (`pii_scan.py --message`, which leaves out email addresses and phone numbers, as Dependabot's messages quote release notes). `scripts/setup` installs the commit message hooks with the others. CI runs the commit message hooks on every commit in a pull request.
+
+Some of `CLAUDE.md`'s rules are tests rather than hooks, as they read the code:
+
+- `tests/test_conventions.py`: `api/`, `tariff.py` and `costs.py` have no Home Assistant imports, even through what they import, and nothing in `api/` imports the rest of the integration; `read_chart` only runs through `async_add_executor_job`; every `noqa` and `type: ignore` gives a reason; only `sensor.py` and `costs.py` convert cents to dollars; nothing turns off TLS checks, and every URL is HTTPS to a host `docs/security.md` lists; every public dataclass is frozen, apart from the config entry's runtime data; nothing is kept in `hass.data` per entry; tests name no fixture plan's ID or code, or chart's file name; the version stays at `0.0.0`; `manifest.json` has no `requirements`; `.env`, `.captures/` and the built card are git-ignored; a test names every fixture outside `tests/fixtures/networks`; the brand images keep their sizes; and every workflow action is pinned to a commit SHA with a version comment.
+- `tests/test_permanent_ids.py`: entity keys, statistic keys and the config entry and storage versions match `tests/fixtures/permanent_ids.json`. A renamed or removed key fails it, since users would lose history. A new one fails it too, until you add it to the file. Change a version there only once the migration it needs is in (`async_migrate_entry`, or `_SnapshotStore` for the snapshot).
+- `tests/test_dependencies.py`: the `home-assistant-frontend` pin and the minimum in `hacs.json` match the Home Assistant the tests run on.
+
+Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name (categories can contain hyphens, such as `T-1RL`, so it matches the name against the network's folders rather than splitting it). Ecotricity's other responses (plan names, the attestation challenge and token, and the portal's) are in `tests/fixtures/ecotricity`, and only the integration's own data, such as `permanent_ids.json` and the Electricity Authority's `network_price_categories.json`, sits at the top of `tests/fixtures`. Most tests run against `CKHK` and `RLUTOU`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
 
 The chart images are real Ecotricity charts; they contain only public pricing. Only charts that test something no other chart does are kept in git (see [Adding a scenario's chart](#keeping-a-networks-charts)), so most plans have a chart or two, not one per season.
 
@@ -53,6 +61,7 @@ Write every test around the scenario it covers, not the network, plan or bug rep
 5. Work out expected values from the plan's own rates (`side_rates`, `import_rates` and `extra_network_codes` help), or from data the test controls, such as rates and legend windows it builds or descriptions it renames. Don't copy one network's legend values into a scenario test, or it only passes for that network. Values printed in a chart's legend belong only in tests that check the default fixture's plans against Ecotricity's site, such as `test_prices_match_website`.
 6. Refer to the test ICP's network and price category through `DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY`, and take other details of the test ICP (its network name, say) from its `icp.json`, so each value is written down once.
 7. A bug fix gets a test of the scenario that caused it, written the same way. The bug report's number belongs in the commit message and changelog, not the test.
+8. If the test covers one of the scenarios in the full review's checklist (the `TEST-NN` rows in `.claude/skills/full-review/SKILL.md`), tag it with `@pytest.mark.review("TEST-02")`, or in the frontend with a `// review: TEST-21` comment on the line directly above the `describe` or `it`. A probe test from a review that's worth keeping is tagged with its own check's ID, such as `PRICE-02`. The review lists tagged tests with `review_tags.py` instead of hunting for them, and treats a check whose tagged tests pass as done rather than writing a new probe, so it reaches the same verdict every run.
 
 `tests/test_network_fixtures.py` covers every kept chart automatically, so a new network needs no new test unless it brings a new scenario.
 
@@ -190,6 +199,21 @@ Before committing, search the whole repository (not just `tests/fixtures`) for y
 `custom_components/ecotricity_nz/brand/` holds the icon and logos Home Assistant shows for the integration. They follow the [home-assistant/brands](https://github.com/home-assistant/brands) image rules: transparent PNGs trimmed to their content, with `icon.png` at 256×256, `logo.png` 128 px tall, and `@2x` versions at double size. `dark_logo.png` is a white version for the dark theme; the icon works on both themes as it is.
 
 They're rendered from the vector wordmark in the header of ecotricity.co.nz. The icon recreates Ecotricity's own favicon (the white wordmark on a `#333D47` circle) at full resolution.
+
+## Full review
+
+The `full-review` Claude Code skill (`.claude/skills/full-review/`) reviews the whole repository against a fixed checklist. Its scripts in `scripts/` do the checks that can be repeated exactly, and `tests/test_review_scripts.py` runs each one in CI so a change to the code can't quietly break them. It also fails the build when a section with only one right answer isn't empty (missing final newlines, writing rule breaks, missing doc paths or names, response keys nobody has checked, keys the client reads that no fixture has, unused TypeScript exports, unreviewed PII candidates, untagged scenarios, translation keys without icons and so on), so those are fixed in the PR that causes them rather than at the next review. Sections that need judgement, such as unreferenced symbols, are left to the review. Four of them keep a short list of candidates already checked by hand, so a clean tree prints nothing:
+
+- `known_external.txt`: names the docs mention that live outside this repo (Home Assistant, libraries, Ecotricity's site). Add one when a review lists it as external; `doc_refs.py` lists entries the docs no longer mention. Names that only appear in fixtures go here too: Ecotricity's response fields don't count as code.
+- `ignored_keys.txt`: keys in Ecotricity's responses that the client doesn't read, on purpose. When Ecotricity adds a key, `api_shapes.py` prints it and CI fails; either read it or add it here.
+- `reviewed.txt`: `pii_scan.py` candidates confirmed fake, by hash, so it holds no values. Once you've checked every candidate it prints, `uv run python .claude/skills/full-review/scripts/pii_scan.py --record` adds them.
+- `decisions.txt`: review candidates already decided, one per line with its check ID, file, an anchor (text that must still be in the file) and a status: "dismissed", "wontfix", or "open" for a finding waiting on you. A review never raises a decided candidate again, and reports each "open" one until you change it to "wontfix" or fix it. `decisions.py` lists a decision as stale once its anchor is gone, and the next review removes it. CI fails on a line not in this format.
+
+The review fixes what it finds unless you run it with `report-only`, and never commits. It reports only High and Medium findings, and Low ones a script or command shows (add `low` for the rest). At the end it records each file's hash in `.claude/skills/full-review/.state/` (git-ignored), and the next review judges only the files changed since, so one run normally finds and fixes everything and a second finds nothing new. Add `full` to judge every file again. If a second run does find something new in a file that hasn't changed, the report names the check that needs tighter wording.
+
+`prose.py --message` is also the `commit-writing-rules` commit-msg hook, and the review scripts are type-checked with the integration (`uv run mypy`), as they gate CI.
+
+Scenario tests are tagged with the checklist's IDs (see [Writing tests](#writing-tests)), and `review_tags.py` lists the scenarios no test is tagged with and any tag it can't tie to a test. `doc_refs.py` also checks the names in the skill's own `SKILL.md`, so when you rename a function a check names, update the check too.
 
 ## Releasing
 

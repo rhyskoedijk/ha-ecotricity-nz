@@ -163,11 +163,13 @@ def _mock_analysis(aioclient_mock: AiohttpClientMocker) -> None:
     _mock_login(aioclient_mock)
     aioclient_mock.get(f"{PORTAL}consumptionDetails", text="<html>consumption</html>")
     aioclient_mock.post(
-        f"{PORTAL}analysis/initData", json=load_json_fixture("portal_init_data.json"), headers=JSON
+        f"{PORTAL}analysis/initData",
+        json=load_json_fixture("ecotricity/portal_init_data.json"),
+        headers=JSON,
     )
     aioclient_mock.post(
         f"{PORTAL}analysis/valueRequest",
-        json=load_json_fixture("portal_values_dst_end.json"),
+        json=load_json_fixture("ecotricity/portal_values_dst_end.json"),
         headers=JSON,
     )
 
@@ -272,7 +274,10 @@ async def test_expired_session_logs_in_again(
         [
             AiohttpClientMockResponse("post", URL(PORTAL), text="<html>login</html>"),
             AiohttpClientMockResponse(
-                "post", URL(PORTAL), json=load_json_fixture("portal_init_data.json"), headers=JSON
+                "post",
+                URL(PORTAL),
+                json=load_json_fixture("ecotricity/portal_init_data.json"),
+                headers=JSON,
             ),
         ]
     )

@@ -120,7 +120,7 @@ async def _plan_list(client: OnboardingClient, pace: Paced, network: str, catego
         "customerType": "Residential",
     }
     # The client's public method needs ICP details; the service itself doesn't.
-    raw = await client._async_gated_get(PLAN_PATH, "Plan list", params)  # noqa: SLF001
+    raw = await client._async_gated_get(PLAN_PATH, "Plan list", params)  # noqa: SLF001 - the public method needs ICP details
     plans = _plans(raw)
     if not plans:
         raise PlanListError(f"{network}/{category}: Ecotricity returned no plans")

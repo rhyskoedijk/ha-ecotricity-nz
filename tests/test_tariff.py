@@ -74,6 +74,7 @@ from tests.conftest import (
     find_chart_where,
     find_plan,
     find_plan_where,
+    fixture_plans,
     has_capacity_charge,
     has_clipped_price_needing_its_bar,
     has_hours_without_a_network_rate,
@@ -100,7 +101,7 @@ def _rate(**kwargs: object) -> Rate:
         "price": 1.0,
         "is_network": False,
     }
-    return Rate(**(defaults | kwargs))  # type: ignore[arg-type]
+    return Rate(**(defaults | kwargs))  # type: ignore[arg-type]  # tests pass each field's own type
 
 
 def _plan(*rates: Rate) -> Plan:
@@ -182,6 +183,7 @@ def test_daily_charges_leave_out_capacity_charges() -> None:
     ]
 
 
+@pytest.mark.review("TEST-04")
 def test_season_for() -> None:
     plan = find_plan(TIME_OF_USE_PLAN)
 
@@ -191,6 +193,7 @@ def test_season_for() -> None:
     assert season_for(plan, date(2030, 1, 1)) is None
 
 
+@pytest.mark.review("TEST-04")
 def test_any_other_season_wins_over_standard_rates() -> None:
     # A plan can publish "Standard Rates" for the whole year and a season inside it. Ecotricity's
     # site prices a day in both with the other season.
@@ -203,6 +206,7 @@ def test_any_other_season_wins_over_standard_rates() -> None:
             assert chosen.name.lower() != "standard rates"
 
 
+@pytest.mark.review("TEST-04")
 def test_outer_season_first_applies_when_the_season_inside_it_ends() -> None:
     plan = find_plan_where(has_overlapping_seasons)
     inner = min(plan.seasons, key=lambda season: season.end - season.start)
@@ -213,6 +217,7 @@ def test_outer_season_first_applies_when_the_season_inside_it_ends() -> None:
     assert first_day(plan, outer, day) == inner.end + timedelta(days=1)
 
 
+@pytest.mark.review("TEST-04")
 def test_season_covered_by_another_for_the_rest_of_its_days_no_longer_applies() -> None:
     plan = find_plan_where(has_overlapping_seasons)
     inner = min(plan.seasons, key=lambda season: season.end - season.start)
@@ -223,6 +228,7 @@ def test_season_covered_by_another_for_the_rest_of_its_days_no_longer_applies() 
     assert first_day(plan, outer, inner.start + timedelta(days=14)) is None
 
 
+@pytest.mark.review("TEST-04")
 def test_next_season_change_with_overlapping_seasons() -> None:
     standard = Season("Standard Rates", date(2026, 4, 1), date(2027, 3, 31))
     winter = Season("Seasonal Rates", date(2026, 6, 1), date(2026, 9, 30))
@@ -235,6 +241,7 @@ def test_next_season_change_with_overlapping_seasons() -> None:
     assert next_season_change(plan, date(2026, 1, 1)) == standard.start
 
 
+@pytest.mark.review("TEST-03")
 def test_season_change_at_the_new_year() -> None:
     # Seasons can change between 31 December and 1 January.
     plan = find_plan(TIME_OF_USE_PLAN)
@@ -249,6 +256,7 @@ def test_season_change_at_the_new_year() -> None:
     assert chart_seasons(plan, december, upcoming=False) == [before, after]
 
 
+@pytest.mark.review("TEST-03")
 def test_leap_day_is_priced_like_any_other() -> None:
     year = Season("All-Year Rates", date(2027, 4, 1), date(2028, 3, 31))
     daily = _rate(
@@ -412,6 +420,7 @@ def test_fixture_charts_with_mixed_periods() -> None:
         assert {slot.supplier for slot in slots} <= {*rates.supplier, rates.prefix + "CHARGE_24"}
 
 
+@pytest.mark.review("TEST-10")
 def test_price_no_combination_explains_is_rejected() -> None:
     rates = side_rates(_plan(*SUPPLIER_PEAK_RATES, *NETWORK_PEAK_RATES), SPRING, export=False)
 
@@ -646,6 +655,7 @@ def _anytime_plan(*seasons: Season) -> Plan:
     )
 
 
+@pytest.mark.review("TEST-10")
 def test_one_network_rate_applies_all_day_when_a_chart_with_one_price_doesnt_match() -> None:
     # The side's one price may need no chart, so a chart showing another price all day (drawn
     # before a rate change, say) is reported rather than rejecting the side.
@@ -677,6 +687,7 @@ def test_one_network_rate_applies_all_day_when_none_of_the_charts_prices_match()
     assert missing is not None
 
 
+@pytest.mark.review("TEST-10")
 def test_chart_showing_one_network_rate_only_in_some_hours_is_rejected_when_it_doesnt_match() -> (
     None
 ):
@@ -913,6 +924,7 @@ def test_rates_alone_leave_a_period_only_one_party_has_unpriced() -> None:
     }
 
 
+@pytest.mark.review("TEST-10")
 def test_missing_chart_is_rejected() -> None:
     rates = side_rates(_plan(*SUPPLIER_PEAK_RATES), SPRING, export=False)
 
@@ -920,6 +932,7 @@ def test_missing_chart_is_rejected() -> None:
         day_slots(rates, None, None, export=False)
 
 
+@pytest.mark.review("TEST-10")
 def test_chart_without_export_windows_is_rejected() -> None:
     rates = side_rates(
         _plan(
@@ -960,6 +973,7 @@ def test_one_supplier_rate_follows_the_network() -> None:
     assert {slot.bucket for slot in priced.slots.all} == {"CHARGE_HIGH", "CHARGE_LOW"}
 
 
+@pytest.mark.review("TEST-07")
 def test_periods_that_dont_line_up_are_split() -> None:
     slots = _mixed_slots()
 
@@ -988,6 +1002,7 @@ def test_periods_that_dont_line_up_are_split() -> None:
     ]
 
 
+@pytest.mark.review("TEST-07")
 def test_split_is_decided_across_seasons() -> None:
     # A season where the network has no peak lines up; one where it does doesn't.
     rates = side_rates(
@@ -999,6 +1014,7 @@ def test_split_is_decided_across_seasons() -> None:
     assert plan_alignment([_day(aligned), _day(_mixed_slots())]) is Alignment.SPLIT
 
 
+@pytest.mark.review("TEST-07")
 def test_split_side_with_one_price_all_day_in_a_season() -> None:
     # A side that's split in other seasons can have a season with one anytime price, where
     # neither Ecotricity nor the network has periods; it's labelled anytime.
@@ -1011,6 +1027,7 @@ def test_split_side_with_one_price_all_day_in_a_season() -> None:
     assert priced.buckets == {"CHARGE_24": 22.0}
 
 
+@pytest.mark.review("TEST-09")
 def test_controlled_rates_are_priced_separately() -> None:
     plan = _plan(
         _rate(description="Controlled", charge="CHARGE_24", register_type="CN", price=12.0),
@@ -1032,6 +1049,7 @@ def test_controlled_rates_are_priced_separately() -> None:
     assert kinds == ["supplier", "supplier", "network", "levy"]
 
 
+@pytest.mark.review("TEST-09")
 def test_levy_on_the_controlled_register_is_added_once() -> None:
     plan = _plan(
         _rate(description="Controlled", charge="CHARGE_24", register_type="CN", price=12.0),
@@ -1072,6 +1090,7 @@ def _peak_slots(*peak: int) -> DaySlots:
         datetime(2026, 4, 5, 2, 45, tzinfo=NZ),
     ],
 )
+@pytest.mark.review("TEST-02")
 def test_next_change_in_repeated_hour(now: datetime) -> None:
     # Peak from 02:00 to 02:30 happens twice the night daylight saving ends. At the first 02:45
     # the next change is the second 02:00, not the following night.
@@ -1081,6 +1100,7 @@ def test_next_change_in_repeated_hour(now: datetime) -> None:
     assert change[1].bucket == "CHARGE_HIGH"
 
 
+@pytest.mark.review("TEST-02")
 def test_next_change_across_skipped_hour() -> None:
     # Peak from 02:00 to 04:00 starts at 03:00 the night daylight saving starts.
     slots = _peak_slots(4, 5, 6, 7)
@@ -1093,6 +1113,7 @@ def test_next_change_across_skipped_hour() -> None:
     assert (change[0], change[1].bucket) == (datetime(2026, 9, 27, 4, 0, tzinfo=NZ), "CHARGE_LOW")
 
 
+@pytest.mark.review("TEST-05")
 def test_no_change_before_the_season_ends() -> None:
     slots = _peak_slots()
     now = datetime(2026, 9, 27, 1, 15, tzinfo=NZ)
@@ -1102,6 +1123,7 @@ def test_no_change_before_the_season_ends() -> None:
     )
 
 
+@pytest.mark.review("TEST-08")
 def test_solar_plan_export_prices() -> None:
     # The default fixture's battery plan: Ecotricity's export peak and off-peak, with the
     # network's export rates, all from its own winter charts.
@@ -1117,6 +1139,7 @@ def test_solar_plan_export_prices() -> None:
         assert slot.price < 0
 
 
+@pytest.mark.review("TEST-08")
 def test_plan_without_export_keeps_import_and_daily_rates() -> None:
     # For an ICP with no export register: its plan still lists export rates, which go, while
     # import, controlled load and every daily charge stay.
@@ -1251,3 +1274,66 @@ def test_export_free_plan_drops_the_charts_export_network_rates_too() -> None:
 
     assert billed.chart_network_rates is not None
     assert not any(rate.is_export for rate in billed.chart_network_rates)
+
+
+def _numbered_slots() -> DaySlots:
+    """Half-hours each with their own price, so the half-hour used shows in the price."""
+
+    def slots(base: float) -> tuple[Slot, ...]:
+        return tuple(
+            Slot(price=base + index, supplier="CHARGE_24", network="CHARGE_24", components=())
+            for index in range(SLOTS_PER_DAY)
+        )
+
+    return DaySlots(slots(0.0), slots(100.0))
+
+
+@pytest.mark.review("TOU-04")
+@pytest.mark.parametrize(
+    ("instant", "index"),
+    [
+        # Daylight saving starts on Sunday 2026-09-27: 01:30 NZST, then straight to 03:30 NZDT.
+        (datetime(2026, 9, 26, 13, 30, tzinfo=UTC), 3),
+        (datetime(2026, 9, 26, 14, 30, tzinfo=UTC), 7),
+        # It ends on Sunday 2027-04-04: 01:30 NZDT, 02:30 twice, then 03:30 NZST.
+        (datetime(2027, 4, 3, 12, 30, tzinfo=UTC), 3),
+        (datetime(2027, 4, 3, 13, 30, tzinfo=UTC), 5),
+        (datetime(2027, 4, 3, 14, 30, tzinfo=UTC), 5),
+        (datetime(2027, 4, 3, 15, 30, tzinfo=UTC), 7),
+    ],
+)
+def test_half_hour_follows_the_wall_clock_across_daylight_saving(
+    instant: datetime, index: int
+) -> None:
+    assert _numbered_slots().at(instant.astimezone(NZ)).price == 100.0 + index
+
+
+def _season_on(plan: Plan, day: date) -> Season | None:
+    """The season covering a day, preferring any but Standard Rates, worked out directly."""
+    covering = [season for season in plan.seasons if season.start <= day <= season.end]
+    others = [season for season in covering if season.name.strip().lower() != "standard rates"]
+    return (others or covering or [None])[0]
+
+
+@pytest.mark.review("SEASON-01", "SEASON-02", "SEASON-03")
+@pytest.mark.parametrize("plan", fixture_plans(), ids=lambda plan: f"{plan.network}-{plan.code}")
+def test_seasons_around_every_boundary_match_a_day_by_day_search(plan: Plan) -> None:
+    days = sorted(
+        {
+            edge + timedelta(days=offset)
+            for season in plan.seasons
+            for edge in (season.start, season.end)
+            for offset in (-1, 0, 1)
+        }
+    )
+    last = max((season.end for season in plan.seasons), default=date.min) + timedelta(days=2)
+    for day in days:
+        current = _season_on(plan, day)
+        assert season_for(plan, day) == current
+        later = (day + timedelta(days=step) for step in range(1, (last - day).days + 1))
+        change = next((other for other in later if _season_on(plan, other) != current), None)
+        assert next_season_change(plan, day) == change, (plan.code, day)
+        for season in plan.seasons:
+            ahead = (day + timedelta(days=step) for step in range((season.end - day).days + 1))
+            start = next((other for other in ahead if _season_on(plan, other) == season), None)
+            assert first_day(plan, season, day) == start, (plan.code, season, day)

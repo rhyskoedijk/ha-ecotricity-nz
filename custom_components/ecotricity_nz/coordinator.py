@@ -239,7 +239,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         network rate all day is priced that way, as the sensors show it.
         """
         snapshot = self._snapshot
-        if snapshot is None:
+        if snapshot is None:  # pragma: no cover - the first refresh always leaves one
             return None
         plan = self._cost_plan(snapshot)
         if self._costed is None or self._costed[:2] != (snapshot, plan.id):
@@ -251,19 +251,19 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
 
     def cost_pricing(self) -> tuple[Plan, IcpDetails] | None:
         """Return the plan usage is priced with and the ICP, or None with no saved pricing."""
-        if self._snapshot is None:
+        if self._snapshot is None:  # pragma: no cover - the first refresh always leaves one
             return None
         return self._cost_plan(self._snapshot), self._snapshot.icp
 
     def cost_keys(self) -> CostKeys | None:
         """Return the cost statistic keys the plan's rates give, or None with no saved pricing."""
-        if self._snapshot is None:
+        if self._snapshot is None:  # pragma: no cover - the first refresh always leaves one
             return None
         return cost_keys(self._cost_plan(self._snapshot))
 
     def earliest_priced_day(self, until: date) -> date | None:
         """Return the first day, up to `until`, whose import the saved pricing can price."""
-        if self._snapshot is None:
+        if self._snapshot is None:  # pragma: no cover - the first refresh always leaves one
             return None
         plan = self._cost_plan(self._snapshot)
         starts = sorted({item.start for item in plan.seasons if item.start <= until})

@@ -40,6 +40,7 @@ function useRegistry(registry: unknown): void {
   }
 }
 
+// review: TEST-21
 it("defines the card in the registry the app installs, however early it's loaded", async () => {
   // Loaded with the frontend, before the app has started.
   const native = window.customElements;

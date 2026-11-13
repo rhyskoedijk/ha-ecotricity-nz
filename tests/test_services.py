@@ -22,6 +22,7 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done(wait_background_tasks=True)
 
 
+@pytest.mark.review("TEST-19")
 async def test_refresh_fetches_pricing_and_usage(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -41,6 +42,7 @@ async def test_refresh_fetches_pricing_and_usage(
     assert mock_portal.async_get_indicator.await_count == indicator_calls + 1
 
 
+@pytest.mark.review("TEST-19")
 async def test_refresh_a_chosen_entry_without_a_portal_login(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -59,6 +61,7 @@ async def test_refresh_a_chosen_entry_without_a_portal_login(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-19")
 async def test_refresh_reports_a_failed_update(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -74,6 +77,7 @@ async def test_refresh_reports_a_failed_update(
     assert err.value.translation_key == "refresh_failed"
 
 
+@pytest.mark.review("TEST-19")
 async def test_refresh_reports_a_failed_pricing_fetch(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -91,6 +95,7 @@ async def test_refresh_reports_a_failed_pricing_fetch(
     assert config_entry.runtime_data.pricing.last_update_success
 
 
+@pytest.mark.review("TEST-19")
 async def test_refresh_needs_a_loaded_entry(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:

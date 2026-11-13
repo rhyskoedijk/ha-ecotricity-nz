@@ -1,9 +1,14 @@
 """List Python symbols that nothing references, or that only tests reference.
 
 Inventories every module-level and class-level function, class, constant and field in
-custom_components/ and scripts/, then counts whole-word references to each name across
-the code, tests, scripts and the frontend. Names Home Assistant or Python call implicitly
-are left out (HA_ENTRY_POINTS). Output is sorted so two runs on the same tree are identical.
+custom_components/, scripts/ and tests/conftest.py, then counts whole-word references to each
+name across the code, tests, scripts and the frontend. Names called implicitly are left out:
+Home Assistant's integration hooks (MODULE_HOOKS), class members that override a base class's
+(found by importing the integration's modules, so new Home Assistant hooks need no list),
+pytest hooks and autouse fixtures. Output is sorted so two runs on the same tree are identical.
+
+UNUSED TYPESCRIPT EXPORTS lists each `export` in frontend/src that no other file in
+frontend/src or frontend/test names (DEAD-04): tsc's unused checks don't cover exports.
 
 These are candidates, not findings: a name can be used through getattr, a string or a
 framework, so each one still has to be checked by hand.
@@ -12,22 +17,29 @@ framework, so each one still has to be checked by hand.
 from __future__ import annotations
 
 import ast
+import importlib
 import re
-from collections import defaultdict
+import sys
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from _repo import read_text, repo_files
+from _repo import ROOT, read_text, repo_files
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-DEFINITION_ROOTS = ("custom_components/", "scripts/")
+DEFINITION_ROOTS = ("custom_components/", "scripts/", "tests/conftest.py")
 REFERENCE_ROOTS = ("custom_components/", "scripts/", "tests/", "frontend/src/", "frontend/test/")
 REFERENCE_SUFFIXES = {".py", ".ts", ".json", ".yaml", ".yml"}
+WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+TS_EXPORT = re.compile(
+    r"^export (?:default )?(?:async )?(?:function\*?|const|let|class|interface|type|enum) (\w+)",
+    re.MULTILINE,
+)
 
-# Called by Home Assistant, Python or a framework rather than by this repo's code.
-HA_ENTRY_POINTS = {
+# Module-level names Home Assistant's loader, Python or a script runner calls by name.
+MODULE_HOOKS = {
     "async_setup",
     "async_setup_entry",
     "async_unload_entry",
@@ -35,38 +47,15 @@ HA_ENTRY_POINTS = {
     "async_migrate_entry",
     "async_remove_config_entry_device",
     "async_get_config_entry_diagnostics",
-    "async_get_options_flow",
-    "async_added_to_hass",
-    "async_will_remove_from_hass",
-    "async_update",
-    "async_image",
-    "async_shutdown",
-    "_async_update_data",
-    "_async_setup",
-    "_async_migrate_func",
-    "native_value",
-    "native_unit_of_measurement",
-    "extra_state_attributes",
-    "available",
-    "options",
-    "image_url",
-    "image_last_updated",
-    "device_info",
-    "name",
-    "translation_placeholders",
-    "unique_id",
-    "is_on",
     "main",
-    "VERSION",
-    "MINOR_VERSION",
     "DOMAIN",
     "PLATFORMS",
     "CONFIG_SCHEMA",
     "PARALLEL_UPDATES",
 }
-HA_ENTRY_PREFIXES = ("async_step_", "__", "_attr_")
+IMPLICIT_PREFIXES = ("async_step_", "__", "_attr_", "pytest_")
 # Config flow classes are registered by their domain= class keyword, not by name.
-HA_ENTRY_SUFFIXES = ("ConfigFlow",)
+IMPLICIT_SUFFIXES = ("ConfigFlow",)
 
 
 @dataclass(frozen=True)
@@ -77,13 +66,30 @@ class Symbol:
     path: Path
     line: int
     kind: str
+    owner: str | None = None
 
 
 def _implicit(name: str) -> bool:
     return (
-        name in HA_ENTRY_POINTS
-        or name.startswith(HA_ENTRY_PREFIXES)
-        or name.endswith(HA_ENTRY_SUFFIXES)
+        name in MODULE_HOOKS
+        or name.startswith(IMPLICIT_PREFIXES)
+        or name.endswith(IMPLICIT_SUFFIXES)
+    )
+
+
+def _autouse(node: ast.stmt) -> bool:
+    """Return whether a function is a pytest fixture with autouse=True."""
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return False
+    return any(
+        isinstance(decorator, ast.Call)
+        and any(
+            keyword.arg == "autouse"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in decorator.keywords
+        )
+        for decorator in node.decorator_list
     )
 
 
@@ -104,13 +110,38 @@ def _defined(path: Path, tree: ast.Module) -> list[Symbol]:
     """Return a module's top-level and class-level symbols."""
     symbols: list[Symbol] = []
     for node in tree.body:
-        members = node.body if isinstance(node, ast.ClassDef) else []
+        if _autouse(node):
+            continue
         symbols.extend(Symbol(name, path, node.lineno, kind) for name, kind in _names(node))
-        for member in members:
+        if isinstance(node, ast.ClassDef):
             symbols.extend(
-                Symbol(name, path, member.lineno, f"class {kind}") for name, kind in _names(member)
+                Symbol(name, path, member.lineno, f"class {kind}", node.name)
+                for member in node.body
+                for name, kind in _names(member)
             )
     return [symbol for symbol in symbols if not _implicit(symbol.name)]
+
+
+def _overrides(symbols: list[Symbol]) -> tuple[set[Symbol], list[str]]:
+    """Return the integration's class members that override a base class's, and import errors.
+
+    Only custom_components/ is imported: scripts can have side effects, and tests need pytest.
+    """
+    sys.path.insert(0, str(ROOT))
+    overriding: set[Symbol] = set()
+    errors: set[str] = set()
+    for symbol in symbols:
+        if symbol.owner is None or symbol.path.parts[0] != "custom_components":
+            continue
+        module_name = ".".join(symbol.path.with_suffix("").parts)
+        try:
+            owner = getattr(importlib.import_module(module_name), symbol.owner)
+        except Exception as err:  # noqa: BLE001 - reported, and the symbol is still checked
+            errors.add(f"{module_name}.{symbol.owner}: {type(err).__name__}")
+            continue
+        if any(symbol.name in vars(base) for base in owner.__mro__[1:]):
+            overriding.add(symbol)
+    return overriding, sorted(errors)
 
 
 def _re_export_lines(tree: ast.Module) -> set[int]:
@@ -148,39 +179,72 @@ def _load() -> tuple[list[Symbol], dict[Path, list[str]]]:
     return symbols, corpus
 
 
-def _references(symbol: Symbol, corpus: dict[Path, list[str]]) -> dict[str, int]:
-    """Count a symbol's references in code and in tests, leaving out its own definition."""
-    pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(symbol.name)}(?![A-Za-z0-9_])")
-    where: dict[str, int] = defaultdict(int)
+def _word_counts(corpus: dict[Path, list[str]]) -> dict[str, Counter[str]]:
+    """Count every whole word in code and in tests."""
+    counts: dict[str, Counter[str]] = {"code": Counter(), "tests": Counter()}
     for path, lines in corpus.items():
         area = "tests" if path.as_posix().startswith("tests/") else "code"
-        for number, line in enumerate(lines, start=1):
-            count = len(pattern.findall(line))
-            if path == symbol.path and number == symbol.line:
-                count -= 1
-            if count > 0:
-                where[area] += count
-    return where
+        for line in lines:
+            counts[area].update(WORD.findall(line))
+    return counts
+
+
+def _references(
+    symbol: Symbol, corpus: dict[Path, list[str]], counts: dict[str, Counter[str]]
+) -> dict[str, int]:
+    """Count a symbol's references in code and in tests, leaving out its own definition."""
+    where = {area: counts[area][symbol.name] for area in counts}
+    lines = corpus.get(symbol.path, [])
+    if symbol.line <= len(lines) and symbol.name in WORD.findall(lines[symbol.line - 1]):
+        where["tests" if symbol.path.parts[0] == "tests" else "code"] -= 1
+    return {area: count for area, count in where.items() if count > 0}
+
+
+def _unused_exports(corpus: dict[Path, list[str]]) -> list[str]:
+    """Return the frontend/src exports no other frontend file names."""
+    frontend = {
+        path: set(WORD.findall("\n".join(lines)))
+        for path, lines in corpus.items()
+        if path.as_posix().startswith(("frontend/src/", "frontend/test/"))
+    }
+    unused: list[str] = []
+    for path, lines in sorted(corpus.items()):
+        if not path.as_posix().startswith("frontend/src/") or path.suffix != ".ts":
+            continue
+        text = "\n".join(lines)
+        for match in TS_EXPORT.finditer(text):
+            name = match[1]
+            if not any(name in words for other, words in frontend.items() if other != path):
+                line = text.count("\n", 0, match.start()) + 1
+                unused.append(f"{path.as_posix()}:{line}  {name}")
+    return unused
 
 
 def main() -> None:
-    """Print the unreferenced and test-only symbols."""
+    """Print the unreferenced and test-only symbols, and unused TypeScript exports."""
     symbols, corpus = _load()
+    counts = _word_counts(corpus)
+    overriding, errors = _overrides(symbols)
+    symbols = [symbol for symbol in symbols if symbol not in overriding]
     unreferenced: list[str] = []
     test_only: list[str] = []
     for symbol in sorted(symbols, key=lambda s: (s.path.as_posix(), s.line, s.name)):
-        where = _references(symbol, corpus)
+        where = _references(symbol, corpus, counts)
         label = f"{symbol.path.as_posix()}:{symbol.line}  {symbol.kind}  {symbol.name}"
         if not where:
             unreferenced.append(label)
-        elif "code" not in where:
+        elif "code" not in where and symbol.path.parts[0] != "tests":
             test_only.append(f"{label}  (tests: {where['tests']})")
 
-    print(f"# symbols scanned: {len(symbols)}")
+    print(f"# symbols scanned: {len(symbols)}, base class overrides left out: {len(overriding)}")
+    print(f"# classes that couldn't be imported: {', '.join(errors) or 'none'}")
     print(f"\n## UNREFERENCED ({len(unreferenced)})")
     print("\n".join(unreferenced) or "none")
     print(f"\n## REFERENCED ONLY BY TESTS ({len(test_only)})")
     print("\n".join(test_only) or "none")
+    exports = _unused_exports(corpus)
+    print(f"\n## UNUSED TYPESCRIPT EXPORTS ({len(exports)})")
+    print("\n".join(exports) or "none")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from tests.conftest import (
 @pytest.mark.usefixtures("mock_onboarding", "mock_portal")
 # Freeze before fixtures run, so the test client's auth token is issued in the frozen time.
 @pytest.mark.freeze_time(WINTER_PEAK)
+@pytest.mark.review("TEST-20")
 async def test_diagnostics_redact_personal_data(
     hass: HomeAssistant,
     hass_client: ClientSessionGenerator,

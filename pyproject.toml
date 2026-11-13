@@ -10,26 +10,35 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "pytest-homeassistant-custom-component==0.13.372",
+    "pytest-homeassistant-custom-component==0.13.375",
     "ruff",
     "mypy",
     "pre-commit",
-    "home-assistant-frontend==20260930.3",
+    "home-assistant-frontend==20260930.5",
+    "zizmor",
+    "shellcheck-py",
 ]
 
 [tool.uv]
 package = false
+# Home Assistant 2026.10 pins Pillow 12.3.0, which has known vulnerabilities
+# fixed in 13.0.0. Drop this once the test harness moves to 2026.11.
+override-dependencies = ["pillow>=13.0.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "review(*check_ids): the full-review checks a test covers, such as TEST-02 or PRICE-02",
+]
 
 [tool.coverage.run]
 source = ["custom_components.ecotricity_nz"]
 branch = true
 
 [tool.coverage.report]
+fail_under = 95
 show_missing = true
 skip_covered = true
 exclude_also = ["if TYPE_CHECKING:"]
@@ -72,7 +81,8 @@ python_version = "3.14"
 strict = true
 warn_unreachable = true
 explicit_package_bases = true
-packages = ["custom_components.ecotricity_nz"]
+# The review scripts gate CI through tests/test_review_scripts.py, so they're checked too.
+files = ["custom_components", ".claude/skills/full-review/scripts"]
 
 [tool.pyright]
 venvPath = "."

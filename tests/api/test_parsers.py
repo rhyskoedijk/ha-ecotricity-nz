@@ -149,6 +149,7 @@ def _all_year_plan_list() -> tuple[Any, list[dict[str, Any]]]:
     return raw, dated
 
 
+@pytest.mark.review("TEST-06")
 def test_plan_without_seasons_spans_its_rates() -> None:
     # A plan whose rates apply all year can publish no seasons. It still needs one, to fill in its
     # chart dates, so it gets one spanning its dated rates.
@@ -159,6 +160,7 @@ def test_plan_without_seasons_spans_its_rates() -> None:
     assert season == Season(name="All-Year Rates", start=date(2026, 4, 1), end=date(2027, 3, 31))
 
 
+@pytest.mark.review("TEST-06")
 def test_plan_without_seasons_publishing_next_years_rates_has_a_season_for_each_year() -> None:
     # Next year's rates can be published before this year ends. A season spanning both years would
     # give a chart URL that doesn't exist, so each year keeps its own.
@@ -179,6 +181,7 @@ def test_plan_without_seasons_publishing_next_years_rates_has_a_season_for_each_
     assert season_for(plan, date(2027, 4, 1)) == plan.seasons[1]
 
 
+@pytest.mark.review("TEST-06")
 def test_plan_without_seasons_or_dated_rates_has_no_season() -> None:
     raw = load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)
     default = raw["content"][0]["default"]
@@ -202,10 +205,12 @@ def test_parse_plan_list_errors(payload: object) -> None:
         parse_plan_list(payload)
 
 
+@pytest.mark.review("TEST-16")
 def test_portal_wall_time_drops_offset() -> None:
     assert portal_wall_time("2026-10-08T07:30:00.000+02:00") == datetime(2026, 10, 8, 7, 30)
 
 
+@pytest.mark.review("TEST-16")
 def test_localise_wall_time_dst() -> None:
     # The repeated hour when daylight saving ends takes the later fold once time has passed it.
     first = localise_wall_time(datetime(2026, 4, 5, 2, 30), NZ)
@@ -216,8 +221,9 @@ def test_localise_wall_time_dst() -> None:
     assert localise_wall_time(datetime(2026, 9, 27, 2, 30), NZ) is None
 
 
+@pytest.mark.review("TEST-02", "TEST-16")
 def test_parse_values_across_dst_end() -> None:
-    data = parse_values(load_json_fixture("portal_values_dst_end.json"), NZ)
+    data = parse_values(load_json_fixture("ecotricity/portal_values_dst_end.json"), NZ)
 
     assert len(data.imported_kwh) == 50
     assert len(data.exported_kwh) == 50
@@ -293,6 +299,7 @@ def _import_payload(*periods: tuple[str, str]) -> dict[str, object]:
         "2026-09-27T03:00:00.000+02:00",
     ],
 )
+@pytest.mark.review("TEST-02")
 def test_parse_values_across_dst_start(gap_end: str) -> None:
     # Clocks go from 02:00 to 03:00, so the 01:30 reading ends in the skipped hour. It's kept,
     # or the 01:00 hour would be half-filled and hold back the statistics import.
@@ -324,6 +331,7 @@ def test_parse_values_end_before_start_takes_half_an_hour() -> None:
     ]
 
 
+@pytest.mark.review("TEST-16")
 def test_parse_indicator_range_ending_in_skipped_hour() -> None:
     payload = {
         "currentIndicator": {
@@ -346,7 +354,7 @@ def test_parse_indicator_range_ending_in_skipped_hour() -> None:
 
 
 def test_parse_indicator() -> None:
-    indicator = parse_indicator(load_json_fixture("portal_init_data.json"), NZ)
+    indicator = parse_indicator(load_json_fixture("ecotricity/portal_init_data.json"), NZ)
 
     assert indicator.indicator_id == "00000000-0000-0000-0000-000000000001"
     assert indicator.data_start == datetime(2026, 3, 1, 0, 0, tzinfo=NZ)
@@ -368,7 +376,7 @@ def test_parse_indicator_errors(payload: object) -> None:
 
 
 def test_plan_titles() -> None:
-    titles = parse_plan_titles(load_json_fixture("plan_mappings.json"))
+    titles = parse_plan_titles(load_json_fixture("ecotricity/plan_mappings.json"))
 
     assert titles["lowbattery user"] == "Low ecoSOLAR"
     assert "default" not in titles
@@ -453,6 +461,7 @@ def test_rate_with_an_unreadable_date_has_no_date() -> None:
     assert parse_plan_list(raw).default.network_rates[0].valid_start is None
 
 
+@pytest.mark.review("TEST-06")
 def test_plan_without_seasons_whose_rates_name_none_has_an_unnamed_season() -> None:
     raw, dated = _all_year_plan_list()
     for rate in dated:

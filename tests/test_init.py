@@ -198,6 +198,7 @@ async def test_gst_options(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-12", "TEST-18")
 async def test_options_flow_reloads(
     hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -293,6 +294,7 @@ async def _daily_fetches(
     return fetched
 
 
+@pytest.mark.review("TEST-11")
 async def test_missing_chart_retries_carry_on_after_a_restart(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -317,6 +319,7 @@ async def test_missing_chart_retries_carry_on_after_a_restart(
     assert fetched == [True, False, False]
 
 
+@pytest.mark.review("TEST-11")
 async def test_missing_chart_retries_start_again_for_a_new_gap(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -348,6 +351,7 @@ async def test_missing_chart_retries_start_again_for_a_new_gap(
     assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
 
 
+@pytest.mark.review("TEST-11")
 async def test_missing_chart_retries_carry_on_when_the_chart_stops_matching_instead(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -375,6 +379,7 @@ async def test_missing_chart_retries_carry_on_when_the_chart_stops_matching_inst
     assert fetched == [True] * PRICING_MISSING_CHART_RETRIES + [False]
 
 
+@pytest.mark.review("TEST-11")
 async def test_missing_chart_retries_start_again_for_a_gap_alongside_one_still_missing(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -407,6 +412,7 @@ async def test_missing_chart_retries_start_again_for_a_gap_alongside_one_still_m
     assert fetched == [True] * (PRICING_MISSING_CHART_RETRIES + 1) + [False]
 
 
+@pytest.mark.review("TEST-11")
 async def test_missing_chart_retries_start_again_once_the_chart_has_been_read(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -437,6 +443,7 @@ async def test_missing_chart_retries_start_again_once_the_chart_has_been_read(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-14")
 async def test_consumption_imports_statistics(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -501,7 +508,7 @@ async def _last_stat(hass: HomeAssistant, stat_id: str) -> dict[str, float]:
     result = await get_instance(hass).async_add_executor_job(
         get_last_statistics, hass, 1, stat_id, True, {"sum"}
     )
-    return dict(result[stat_id][0])  # type: ignore[arg-type]
+    return dict(result[stat_id][0])  # type: ignore[arg-type]  # a statistics row is a TypedDict
 
 
 def _needs_change_time_of_use(plan: Plan) -> bool:
@@ -792,6 +799,7 @@ async def test_unreadable_chart_prices_periods_from_the_rates(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-23")
 async def test_price_sensors_are_kept_while_the_chart_cannot_be_read(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -893,6 +901,7 @@ async def test_fixed_chart_plan_has_later_seasons_controlled_periods(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-03")
 async def test_refreshes_after_nz_midnight(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -915,6 +924,7 @@ async def test_refreshes_after_nz_midnight(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-03")
 async def test_half_hourly_sensors_show_the_new_day_at_midnight(
     hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -1100,6 +1110,7 @@ def new_season_charts(mock_onboarding: MagicMock) -> Generator[None]:
 
 
 @pytest.mark.usefixtures("new_season_charts")
+@pytest.mark.review("TEST-05")
 async def test_new_season_adds_sensors(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1130,6 +1141,7 @@ async def test_new_season_adds_sensors(
 
 
 @pytest.mark.usefixtures("new_season_charts")
+@pytest.mark.review("TEST-12")
 async def test_prices_the_plan_no_longer_has_are_removed(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1163,6 +1175,7 @@ async def test_prices_the_plan_no_longer_has_are_removed(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-23")
 async def test_price_sensors_are_kept_while_a_later_seasons_chart_cannot_be_read(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1264,9 +1277,9 @@ async def test_kept_price_sensors_get_their_buckets_back_from_the_plan(
     )
 
     buckets = {
-        create.args[2]  # type: ignore[attr-defined]
+        create.args[2]  # type: ignore[attr-defined]  # each entity factory is a partial
         for create in registered.values()
-        if create.func is BucketPriceSensor  # type: ignore[attr-defined]
+        if create.func is BucketPriceSensor  # type: ignore[attr-defined]  # a partial, as above
     }
     assert {resolve_bucket(rate) for rate in extra} <= buckets
     assert buckets <= pricing.data.periods.buckets | {resolve_bucket(rate) for rate in extra}
@@ -1329,6 +1342,7 @@ async def test_price_sensor_for_a_period_only_an_ended_season_has_is_kept(
     assert kept.name == "My peak price"
 
 
+@pytest.mark.review("TEST-08")
 async def test_icp_without_an_export_register_has_no_export_periods(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1373,6 +1387,7 @@ async def test_icp_without_an_export_register_has_no_export_periods(
     assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
 
+@pytest.mark.review("TEST-08")
 async def test_icp_without_an_export_register_has_no_export_periods_once_a_season_ends(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1489,6 +1504,7 @@ async def test_later_seasons_chart_is_downloaded_again_until_its_prices_are_expl
         assert later_season_downloads() == 4
 
 
+@pytest.mark.review("TEST-11")
 async def test_pricing_is_fetched_weekly(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1527,6 +1543,7 @@ async def test_pricing_is_fetched_weekly(
         (-0.001, 0.0, 0.0),
     ],
 )
+@pytest.mark.review("TEST-08")
 async def test_export_price_keeps_its_sign(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -1717,6 +1734,13 @@ async def test_price_sensor_names_follow_the_plan(
         "network_rate": pytest.approx(network * gst, abs=0.0001),
         **{_key(levy.description): pytest.approx(levy.price * gst, abs=0.0001) for levy in levies},
     }
+
+    # An update that leaves the plan's name alone keeps the sensor's.
+    await config_entry.runtime_data.pricing.async_fetch_now()
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["friendly_name"].endswith(f"{name.capitalize()} import price")
 
     # Ecotricity renames the rate, then drops its description altogether.
     number = code.removeprefix("CHARGE_")
@@ -1991,6 +2015,7 @@ async def test_generation_capacity_sensor_left_out_when_not_recorded(
     assert hass.states.get(f"{PREFIX}_icp") is not None
 
 
+@pytest.mark.review("TEST-23")
 async def test_generation_capacity_sensor_added_once_recorded(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -2010,6 +2035,7 @@ async def test_generation_capacity_sensor_added_once_recorded(
     assert float(_state(hass, "registered_generation_capacity")) == 5.5
 
 
+@pytest.mark.review("TEST-08", "TEST-23")
 async def test_export_sensors_added_once_the_icp_can_export(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -2338,6 +2364,7 @@ async def test_enabled_period_price_sensor_follows_pricing_updates(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-03")
 async def test_new_day_at_nz_midnight_on_new_years_eve(
     hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -2355,6 +2382,7 @@ async def test_new_day_at_nz_midnight_on_new_years_eve(
     assert coordinator.data.season == season_for(coordinator.data.plan, date(2027, 1, 1))
 
 
+@pytest.mark.review("TEST-09")
 async def test_controlled_load(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -2400,6 +2428,7 @@ async def test_controlled_load(
     )
 
 
+@pytest.mark.review("TEST-09")
 async def test_controlled_period_from_a_later_season_has_its_sensor(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -2432,6 +2461,7 @@ async def test_controlled_period_from_a_later_season_has_its_sensor(
     assert await _enabled_price(hass, config_entry, entity_registry, "cn_charge_low") == "unknown"
 
 
+@pytest.mark.review("TEST-04")
 async def test_outer_season_is_priced_from_when_it_applies_again(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -2466,6 +2496,7 @@ async def test_outer_season_is_priced_from_when_it_applies_again(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-09")
 async def test_no_controlled_sensors_without_controlled_load(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -2484,6 +2515,7 @@ async def test_no_controlled_sensors_without_controlled_load(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-14")
 async def test_new_series_catches_up_without_duplicates(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -2604,6 +2636,7 @@ async def test_series_listed_without_readings_is_not_reread(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-14")
 async def test_new_series_with_only_incomplete_hours_is_imported_once_complete(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -2635,7 +2668,7 @@ async def test_new_series_with_only_incomplete_hours_is_imported_once_complete(
     await portal_config_entry.runtime_data.consumption.async_refresh()
     await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
-    values = parse_values(load_json_fixture("portal_values_dst_end.json"), NZ)
+    values = parse_values(load_json_fixture("ecotricity/portal_values_dst_end.json"), NZ)
     expected = sum(reading.value for reading in values.carbon_savings_kg)
     assert (await _last_stat(hass, statistic_id(TEST_ICP, CARBON)))["sum"] == pytest.approx(
         expected
@@ -2678,6 +2711,7 @@ def _import_legend(plan: Plan, day: date, *windows: tuple[int, int, str, str]) -
     )
 
 
+@pytest.mark.review("TEST-07")
 async def test_periods_that_dont_line_up_get_their_own_sensors(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -2807,6 +2841,7 @@ def _drop_import_reading(mock_portal: MagicMock, missing: datetime) -> list[bool
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-14")
 async def test_recent_gap_holds_back_the_import_until_filled(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -2835,6 +2870,7 @@ async def test_recent_gap_holds_back_the_import_until_filled(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-16")
 async def test_requests_start_at_nz_midnight(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -2874,6 +2910,7 @@ async def test_requests_start_at_nz_midnight(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-14")
 async def test_settled_gap_is_imported_as_it_stands(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,
@@ -2895,6 +2932,7 @@ async def test_settled_gap_is_imported_as_it_stands(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+@pytest.mark.review("TEST-14")
 async def test_consumption_rechecks_until_new_data_arrives(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,

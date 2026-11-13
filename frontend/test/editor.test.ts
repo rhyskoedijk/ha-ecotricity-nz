@@ -49,6 +49,7 @@ describe("editorSchema", () => {
   });
 });
 
+// review: TEST-21
 describe("every option", () => {
   it("is in the editor", () => {
     expect(names(editorSchema([HOME, FLAT], { ...CONFIG, config_entry_id: "abc" })).sort()).toEqual(

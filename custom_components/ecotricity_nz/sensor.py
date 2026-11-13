@@ -305,7 +305,8 @@ def _sync_plan_sensors(
         return
     known.intersection_update(wanted)
     for unique_id in registered.keys() - wanted.keys():
-        if entity_id := entity_registry.async_get_entity_id(SENSOR_DOMAIN, DOMAIN, unique_id):
+        entity_id = entity_registry.async_get_entity_id(SENSOR_DOMAIN, DOMAIN, unique_id)
+        if entity_id:  # pragma: no branch - every unique ID here came from the registry
             entity_registry.async_remove(entity_id)
 
 
@@ -642,11 +643,12 @@ class CurrentPriceSensor(_HalfHourlyEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Describe the active period and break the price down."""
         slot = self._current_slot(export=self._export)
-        attributes: dict[str, Any] = {}
-        if slot is not None:
-            attributes["period"] = self._period(slot.bucket)
-            attributes |= self._component_attributes(slot.components, export=self._export)
-        return attributes
+        if slot is None:  # pragma: no cover - unavailable without it, so attributes aren't read
+            return {}
+        return {
+            "period": self._period(slot.bucket),
+            **self._component_attributes(slot.components, export=self._export),
+        }
 
 
 class CurrentPeriodSensor(_HalfHourlyEntity):

@@ -1,3 +1,7 @@
+# `pre-commit install` (run by scripts/setup) installs the commit message hooks too.
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -26,7 +30,7 @@ repos:
         types: [python]
       - id: mypy
         name: mypy
-        entry: uv run mypy custom_components
+        entry: uv run mypy
         language: system
         types: [python]
         pass_filenames: false
@@ -42,3 +46,43 @@ repos:
         language: system
         files: ^custom_components/ecotricity_nz/(strings\.json|translations/en\.json)$
         pass_filenames: false
+      - id: uv-lock
+        name: uv.lock matches pyproject.toml
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+      - id: zizmor
+        name: zizmor
+        entry: uv run zizmor --offline
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+      - id: shellcheck
+        name: shellcheck
+        entry: uv run shellcheck
+        language: system
+        types: [shell]
+
+      # Commit messages, as CLAUDE.md "Commit messages" says. CI checks a pull request's
+      # commits with these too.
+      - id: commit-subject
+        name: commit subject follows Conventional Commits
+        entry: '\A(?:(?:fix|feat|refactor|docs|test|build|ci|chore)(?:\([^)]+\))?!?: [a-z0-9`]|Merge |Revert "|fixup! |squash! |amend! )'
+        language: pygrep
+        args: [--multiline, --negate]
+        stages: [commit-msg]
+      - id: commit-no-ai-mention
+        name: commit message has no co-author or AI tool line
+        entry: '(?im)^co-authored-by:|generated with \[?claude|noreply@anthropic\.com'
+        language: pygrep
+        stages: [commit-msg]
+      - id: commit-no-personal-data
+        name: commit message has no ICP or secret
+        entry: uv run python .claude/skills/full-review/scripts/pii_scan.py --message
+        language: system
+        stages: [commit-msg]
+      - id: commit-writing-rules
+        name: commit message follows the writing rules
+        entry: uv run python .claude/skills/full-review/scripts/prose.py --message
+        language: system
+        stages: [commit-msg]

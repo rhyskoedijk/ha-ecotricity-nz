@@ -16,8 +16,8 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.image import DATA_COMPONENT as IMAGE_DATA_COMPONENT
 from homeassistant.components.recorder.statistics import get_last_statistics, get_metadata
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EntityCategory
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.recorder import get_instance
@@ -495,6 +495,28 @@ async def test_consumption_imports_statistics(
     stats = await _last_stat(hass, statistic_id(TEST_ICP, IMPORT))
     assert stats["sum"] == pytest.approx(37.25)
     assert portal_config_entry.runtime_data.consumption.data.hours_imported == 0
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_consumption_import_waits_until_home_assistant_has_started(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # A first import can backfill years of history, so it doesn't hold up setup or startup.
+    freezer.move_to(WINTER_PEAK)
+    hass.set_state(CoreState.not_running)
+    await _setup(hass, portal_config_entry)
+    assert portal_config_entry.state is ConfigEntryState.LOADED
+    assert _state(hass, "current_import_price") != "unavailable"
+    mock_portal.async_get_indicator.assert_not_awaited()
+
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    mock_portal.async_get_half_hourly.assert_awaited()
+    assert float(_state(hass, "latest_day_imported")) == pytest.approx(37.25)
 
 
 async def _last_stat(hass: HomeAssistant, stat_id: str) -> dict[str, float]:

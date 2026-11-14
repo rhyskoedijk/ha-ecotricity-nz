@@ -28,7 +28,7 @@ PACKAGE = ROOT / "custom_components/ecotricity_nz"
 # kept apart from the rest of the integration, so it can move to PyPI.
 HOME_ASSISTANT_FREE = ("api", "tariff", "costs")
 # CPU-bound functions that must only run in the executor.
-EXECUTOR_ONLY = {"read_chart"}
+EXECUTOR_ONLY = {"hourly_costs", "read_chart"}
 
 
 def _module_path(parts: tuple[str, ...]) -> Path | None:
@@ -101,6 +101,19 @@ def test_module_has_no_home_assistant_imports(seed: str) -> None:
     assert broken == []
 
 
+def _executor_target(args: list[ast.expr]) -> list[ast.expr]:
+    """Return the function an executor job runs, looking inside `partial(function, ...)`."""
+    return [
+        arg.args[0]
+        if isinstance(arg, ast.Call)
+        and isinstance(arg.func, ast.Name)
+        and arg.func.id == "partial"
+        and arg.args
+        else arg
+        for arg in args
+    ]
+
+
 def test_cpu_bound_functions_only_run_in_the_executor() -> None:
     misused: list[str] = []
     for path in sorted(PACKAGE.rglob("*.py")):
@@ -111,7 +124,7 @@ def test_cpu_bound_functions_only_run_in_the_executor() -> None:
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "async_add_executor_job"
-            for arg in node.args[:1]
+            for arg in _executor_target(node.args[:1])
         }
         misused.extend(
             f"{path.relative_to(ROOT)}:{node.lineno} {node.id}"

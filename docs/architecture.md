@@ -86,9 +86,9 @@ It checks the ICP straight away by fetching its details and plans, and checks th
 
 When the entry loads:
 
-1. The pricing coordinator does its first refresh. It loads the saved pricing (see below) and only fetches if something is due, so a restart usually makes no requests and works without an internet connection. If there's no saved pricing and the fetch fails, setup is retried later (`ConfigEntryNotReady`).
+1. The pricing coordinator does its first refresh. It loads the saved pricing (see below) and works out today from it, with no requests, so a restart works without an internet connection. A fetch that's due is left for after startup (`async_fetch_deferred`), since downloading every chart can take a while. Only without saved pricing for the chosen plan (a new entry, or another plan chosen in the options) does setup fetch straight away. If that fetch fails, setup is retried later (`ConfigEntryNotReady`).
 2. The sensors are created.
-3. If there's a portal login, the consumption coordinator starts its first refresh as a background task. A first run can backfill years of history, so it doesn't hold up setup.
+3. Once Home Assistant has started (`async_at_started`, straight away when an entry is added or reloaded later), one background task runs any fetch left for later, then, if there's a portal login, the consumption coordinator's first refresh. A first run can backfill years of history, so neither holds up setup or startup, and pricing goes first so the import prices usage with what it fetched.
 
 ## Pricing
 

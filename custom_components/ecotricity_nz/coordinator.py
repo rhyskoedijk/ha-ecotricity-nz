@@ -94,9 +94,11 @@ from .tariff import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from homeassistant.core import HomeAssistant
+
+_NEW_PLAN = "a different plan was chosen"
 
 
 @dataclass(slots=True)
@@ -210,6 +212,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         # for the entities) only works it out once.
         self._priced: tuple[PricingSnapshot, date, PricingData] | None = None
         self._fetch_requested = False
+        # Set when a scheduled fetch was due at setup, which was left for after startup.
+        self._fetch_deferred = False
         self._fetch_error: str | None = None
         self._fetch_failures = 0
         self._attestation_failures = 0
@@ -230,6 +234,12 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         await self.async_refresh()
         return self.last_update_success and self._fetch_error is None
 
+    async def async_fetch_deferred(self) -> None:
+        """Run the fetch that was due at setup, if there was one (see `_async_update_data`)."""
+        if self._fetch_deferred:
+            self._fetch_deferred = False
+            await self.async_refresh()
+
     def day_costs(self, day: date) -> DayCosts | None:
         """Return what a day's usage is priced with, from the saved pricing. Makes no requests.
 
@@ -238,6 +248,15 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         pricing is for. A side whose charts can't be read has no half-hours; one given its one
         network rate all day is priced that way, as the sensors show it.
         """
+        pricer = self.cost_pricer()
+        return None if pricer is None else pricer(day)
+
+    def cost_pricer(self) -> Callable[[date], DayCosts | None] | None:
+        """Return `day_costs` for the pricing saved now, which can run in the executor.
+
+        The plan is chosen here, on the event loop, as choosing it can raise a repair issue. What
+        it returns only reads the saved pricing. None when no pricing is saved.
+        """
         snapshot = self._snapshot
         if snapshot is None:  # pragma: no cover - the first refresh always leaves one
             return None
@@ -245,9 +264,13 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         if self._costed is None or self._costed[:2] != (snapshot, plan.id):
             self._costed = (snapshot, plan.id, {})
         priced = self._costed[2]
-        if day not in priced:
-            priced[day] = _day_costs(snapshot.charts, plan, day)
-        return priced[day]
+
+        def price(day: date) -> DayCosts | None:
+            if day not in priced:
+                priced[day] = _day_costs(snapshot.charts, plan, day)
+            return priced[day]
+
+        return price
 
     def cost_pricing(self) -> tuple[Plan, IcpDetails] | None:
         """Return the plan usage is priced with and the ICP, or None with no saved pricing."""
@@ -345,13 +368,10 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         await super().async_shutdown()
 
     async def _async_update_data(self) -> PricingData:
-        if not self._loaded:
-            self._loaded = True
-            saved = await self._store.async_load()
-            if saved is not None and saved.icp.icp == self.icp:
-                self._snapshot = saved
         now = dt_util.utcnow()
         day = now.astimezone(self._local_tz).date()
+        if not self._loaded and await self._async_load(now, day) and self._snapshot is not None:
+            return self._price_day(self._snapshot, day)
         reason = self._fetch_reason(now, day)
         if reason is None:
             # Nothing is due, so whatever failed before no longer matters.
@@ -389,6 +409,21 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             raise UpdateFailed(translation_domain=DOMAIN, translation_key="update_failed")
         return self._price_day(self._snapshot, day)
 
+    async def _async_load(self, now: datetime, day: date) -> bool:
+        """Load the saved pricing, and return True if a fetch due now is left for after startup.
+
+        A scheduled fetch can take a while, so setup uses the saved pricing and the fetch runs
+        once Home Assistant has started (`async_fetch_deferred`). Without saved pricing for the
+        chosen plan there's nothing to start with, so that's fetched straight away.
+        """
+        self._loaded = True
+        saved = await self._store.async_load()
+        if saved is None or saved.icp.icp != self.icp:
+            return False
+        self._snapshot = saved
+        self._fetch_deferred = self._fetch_reason(now, day) not in {None, _NEW_PLAN}
+        return self._fetch_deferred
+
     def _fetch_reason(self, now: datetime, day: date) -> str | None:  # noqa: PLR0911 - one return per reason
         """Return why pricing should be fetched now, or None if the saved copy will do.
 
@@ -403,7 +438,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             return "requested"
         plan = self._select_plan(snapshot.plans)
         if snapshot.charts_plan_id != plan.id:
-            return "a different plan was chosen"
+            return _NEW_PLAN
         if now - snapshot.fetched_at >= PRICING_FETCH_INTERVAL:
             return "weekly update"
         if snapshot.fetched_at.astimezone(self._local_tz).date() >= day:
@@ -987,16 +1022,26 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         *,
         export: bool,
     ) -> None:
-        """Price a chunk's readings and add each part's hours to its cost statistic."""
-        costs = hourly_costs(
-            data.imported_kwh,
-            data.exported_kwh if export else (),
-            self._pricing.day_costs,
-            keys,
-            tz=self._local_tz,
-            import_loss_factor=self._pricing.import_loss_factor,
-            export_loss_factor=self._pricing.export_loss_factor,
-            settled_before=settled_before,
+        """Price a chunk's readings and add each part's hours to its cost statistic.
+
+        Pricing a month of half-hours takes long enough to hold up the event loop on slower
+        hardware, so it runs in the executor.
+        """
+        day_costs = self._pricing.cost_pricer()
+        if day_costs is None:  # pragma: no cover - `keys` needs saved pricing
+            return
+        costs = await self.hass.async_add_executor_job(
+            partial(
+                hourly_costs,
+                data.imported_kwh,
+                data.exported_kwh if export else (),
+                day_costs,
+                keys,
+                tz=self._local_tz,
+                import_loss_factor=self._pricing.import_loss_factor,
+                export_loss_factor=self._pricing.export_loss_factor,
+                settled_before=settled_before,
+            )
         )
         for key, hours in costs.items():
             series = cost_series(key)

@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
 from homeassistant.const import __version__ as HA_VERSION  # noqa: N812 - Home Assistant convention
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import (
     async_create_clientsession,
     async_get_clientsession,
 )
+from homeassistant.helpers.start import async_at_started
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
@@ -91,11 +93,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    if consumption is not None:
-        # A first run can backfill years of history, so don't hold up setup for it.
+    async def _async_after_start() -> None:
+        # Pricing first, so the import prices usage with whatever it fetches.
+        await pricing.async_fetch_deferred()
+        if consumption is not None:
+            await consumption.async_refresh()
+
+    @callback
+    def _async_started(_hass: HomeAssistant) -> None:
+        # A fetch can take a while, and a first import can backfill years of history, so
+        # neither holds up setup or Home Assistant's startup.
         entry.async_create_background_task(
-            hass, consumption.async_refresh(), f"{DOMAIN} consumption import"
+            hass, _async_after_start(), f"{DOMAIN} pricing fetch and consumption import"
         )
+
+    entry.async_on_unload(async_at_started(hass, _async_started))
     return True
 
 

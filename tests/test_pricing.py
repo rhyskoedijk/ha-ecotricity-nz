@@ -12,7 +12,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -272,6 +273,61 @@ async def test_choosing_another_plan_fetches(
     assert mock_onboarding.async_get_icp.await_count == calls + 1
     assert config_entry.runtime_data.pricing.data.plan.id == plan_id(ANYTIME_PLAN)
     assert _state(hass, "current_import_price") != "unavailable"
+
+
+async def _start(hass: HomeAssistant) -> None:
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def test_scheduled_fetch_waits_until_home_assistant_has_started(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    price = _state(hass, "current_import_price")
+    calls = mock_onboarding.async_get_icp.await_count
+
+    # Home Assistant restarts a week later, with the weekly fetch due. Setup doesn't wait for
+    # it: the saved pricing is used until Home Assistant has started.
+    freezer.move_to(WINTER_PEAK + PRICING_FETCH_INTERVAL)
+    hass.set_state(CoreState.not_running)
+    await _reload(hass, config_entry)
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert mock_onboarding.async_get_icp.await_count == calls
+    assert _state(hass, "current_import_price") == price
+
+    await _start(hass)
+    assert mock_onboarding.async_get_icp.await_count == calls + 1
+    assert _state(hass, "last_pricing_update") == (WINTER_PEAK + PRICING_FETCH_INTERVAL).isoformat()
+
+
+async def test_another_plan_is_fetched_before_home_assistant_has_started(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The saved pricing has no charts for a newly chosen plan, so it can't wait for startup.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    calls = mock_onboarding.async_get_icp.await_count
+
+    hass.set_state(CoreState.not_running)
+    hass.config_entries.async_update_entry(
+        config_entry, options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    )
+    await _reload(hass, config_entry)
+    assert mock_onboarding.async_get_icp.await_count == calls + 1
+    assert _state(hass, "current_import_price") != "unavailable"
+
+    # Nothing else is due once it has started.
+    await _start(hass)
+    assert mock_onboarding.async_get_icp.await_count == calls + 1
 
 
 async def test_saved_pricing_for_another_icp_is_ignored(

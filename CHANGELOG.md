@@ -16,6 +16,7 @@
 
 ### Improvements
 
+- Home Assistant no longer waits for a pricing fetch when it starts. The saved pricing is used straight away, and a fetch that's due, then the consumption import, run in the background once startup has finished. Working out the cost of each month of usage now runs outside Home Assistant's event loop, so a long first import doesn't make it sluggish on slower hardware.
 - The time-of-use charts of the pricing year's seasons that have ended are now downloaded once each, to work out the cost of past usage.
 - The plan, sign-in-again and reconfigure steps now explain each field, as setup already did.
 

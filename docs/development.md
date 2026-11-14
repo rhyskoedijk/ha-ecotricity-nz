@@ -72,6 +72,8 @@ scripts/develop
 
 This creates a `config/` directory (git-ignored), links the integration into `config/custom_components`, writes a minimal `configuration.yaml`, and starts Home Assistant. The first start takes a minute or two while Home Assistant installs its own runtime packages. Open http://localhost:8123, create a user, then go to Settings > Devices & services > Add integration > Ecotricity NZ.
 
+It passes `--skip-pip-packages Pillow`, as `pyproject.toml` overrides Home Assistant's Pillow pin and Home Assistant would otherwise try, and fail, to install its own version at startup (failing `image_upload` and `person` with it).
+
 Code changes need a restart: stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> and run `scripts/develop` again. The bill card is the exception: `scripts/develop` rebuilds it as its source changes, so reloading the dashboard shows the change.
 
 ### The bill card

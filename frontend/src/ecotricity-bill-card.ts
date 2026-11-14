@@ -83,6 +83,10 @@ const COLLECTION_PREFIX = "energy_";
 /** How long to wait for the date picker to create its collection, and how often to look. */
 const COLLECTION_WAIT_MS = 10_000;
 const COLLECTION_POLL_MS = 250;
+/** Without a date picker, how often to read the statistics again and move the range on. */
+const REFRESH_MS = 60 * 60 * 1000;
+/** How long to wait before asking for the bill again after it failed, as `hass` changes often. */
+const RETRY_MS = 60 * 1000;
 
 /** The supplier: every plan the integration prices is Ecotricity's. */
 const SUPPLIER_NAME = "Ecotricity";
@@ -113,7 +117,10 @@ export class EcotricityBillCard extends LitElement {
 
   private _unsubscribe?: () => void;
   private _waitTimer?: ReturnType<typeof setTimeout>;
+  private _refreshTimer?: ReturnType<typeof setInterval>;
   private _loading = false;
+  /** When the bill can be asked for again after it failed. */
+  private _retryAt = 0;
   /** Counts fetches, so a slow one doesn't overwrite a newer range's bill. */
   private _fetches = 0;
   /** The bill worked out from `_data`, kept so a `hass` update alone doesn't rebuild it. */
@@ -141,6 +148,7 @@ export class EcotricityBillCard extends LitElement {
     this._data = undefined;
     this._range = undefined;
     this._error = undefined;
+    this._retryAt = 0;
     this._stopListening();
   }
 
@@ -188,7 +196,8 @@ export class EcotricityBillCard extends LitElement {
     if (
       (changed.has("hass") || changed.has("_config")) &&
       !this._layout &&
-      !this._loading
+      !this._loading &&
+      Date.now() >= this._retryAt
     ) {
       void this._start();
     }
@@ -196,7 +205,13 @@ export class EcotricityBillCard extends LitElement {
 
   /** Load the bill's layout, then follow the date range. */
   private async _start(): Promise<void> {
-    if (!this.hass || !this._config || this._loading || this._layout) {
+    if (
+      !this.hass ||
+      !this._config ||
+      this._loading ||
+      this._layout ||
+      Date.now() < this._retryAt
+    ) {
       return;
     }
     this._loading = true;
@@ -206,8 +221,10 @@ export class EcotricityBillCard extends LitElement {
         ...this._target(),
       });
       this._error = undefined;
+      this._retryAt = 0;
     } catch (err) {
       this._error = errorMessage(err);
+      this._retryAt = Date.now() + RETRY_MS;
       return;
     } finally {
       this._loading = false;
@@ -231,8 +248,15 @@ export class EcotricityBillCard extends LitElement {
     this._stopListening();
     const key = this._config?.collection_key;
     if (!key) {
-      const now = new Date();
-      void this._setRange(billingPeriodStart(now, this._config?.billing_period_start_day ?? 1), now);
+      // This month so far: it moves on as time passes, picking up statistics imported since,
+      // and into the next billing period once it starts.
+      const thisPeriod = (refresh: boolean): void => {
+        const now = new Date();
+        const day = this._config?.billing_period_start_day ?? 1;
+        void this._setRange(billingPeriodStart(now, day), now, refresh);
+      };
+      thisPeriod(false);
+      this._refreshTimer = setInterval(() => thisPeriod(true), REFRESH_MS);
       return;
     }
     const deadline = Date.now() + COLLECTION_WAIT_MS;
@@ -266,6 +290,7 @@ export class EcotricityBillCard extends LitElement {
     this._unsubscribe?.();
     this._unsubscribe = undefined;
     clearTimeout(this._waitTimer);
+    clearInterval(this._refreshTimer);
   }
 
   private async _setRange(

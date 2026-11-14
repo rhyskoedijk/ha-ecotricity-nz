@@ -83,7 +83,7 @@ def _plan_selector(plans: PlanList) -> SelectSelector:
 class EcotricityConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Ecotricity NZ."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialise the flow."""

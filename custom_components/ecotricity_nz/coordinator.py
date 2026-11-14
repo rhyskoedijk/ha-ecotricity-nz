@@ -64,6 +64,7 @@ from .statistics import (
     StatisticPoint,
     async_import_hours,
     async_last_point,
+    async_last_points,
     cost_series,
     hourly_totals,
     statistic_id,
@@ -844,7 +845,8 @@ def _day_costs(
     """Return what a day's usage is priced with, or None if no published season covers it.
 
     Every day of a season with the same rates has the same half-hours, so each side's charts are
-    only explained once for them, and kept in `explained`.
+    only explained once for them, and kept in `explained`. Controlled-load daily charges are left
+    out, like every controlled rate in `cost_keys`.
     """
     season = season_for(plan, day)
     if season is None:
@@ -864,7 +866,7 @@ def _day_costs(
                 slots = None
             sides.append(slots)
         explained[key] = (sides[0], sides[1])
-    return DayCosts(*explained[key], daily_charges(plan, day))
+    return DayCosts(*explained[key], daily_charges(plan, day, controlled=False))
 
 
 def _pricing_plan(plan: Plan, plans: PlanList, icp: IcpDetails) -> Plan:
@@ -1081,7 +1083,7 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         Both are None when nothing can be priced: no import series, no saved pricing, or no day
         it can price. Every cost statistic is a checkpoint, so they carry on from the one
         furthest behind, and one that fell behind catches up, but never into hours another plan
-        costed (see `_async_side_points`). One on a side without any costs yet starts at the
+        costed (see `_side_points`). One on a side without any costs yet starts at the
         first day the saved pricing can price, rather than reading the portal's whole history
         again, unless its usage series has been read to the end this session without any
         readings (see `_scanned_until`), so it isn't read again every day. Their last points go
@@ -1119,13 +1121,11 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         """Return where each side's cost statistics carry on from, saving where they start."""
         saved = await self._cost_store.async_load()
         cost_starts = dict(saved)
-        last = {
-            usage: {
-                key: await async_last_point(self.hass, statistic_id(self.icp, cost_series(key)))
-                for key in sorted(keys)
-            }
-            for usage, keys in sides
+        ids = {
+            key: statistic_id(self.icp, cost_series(key)) for _usage, keys in sides for key in keys
         }
+        found = await async_last_points(self.hass, sorted(ids.values()))
+        last = {usage: {key: found[ids[key]] for key in sorted(keys)} for usage, keys in sides}
         # A side with no costs whose plan changed (one with no export rates to one with them,
         # say) can't tell from its own statistics which hours the old plan was chosen for.
         costed = max(
@@ -1228,7 +1228,8 @@ def _side_points(
     all (the old plan had no rates for it), takes the latest hour costed on any side, `costed`,
     if that's later, since its own statistics stopped when the old plan was chosen.
     None of the plan's statistics carries on from before it: one with no hours yet starts from
-    nothing after it, and one with hours from a plan chosen before carries on from that hour.
+    nothing after it, or after the side's latest costed hour if that's later, and one with hours
+    from a plan chosen before carries on from that hour.
     Either way, it doesn't cost hours that are already costed. One that fell behind since then
     still catches up.
     """
@@ -1240,10 +1241,10 @@ def _side_points(
             after = max((hour for hour in (latest, costed) if hour is not None), default=None)
         start = cost_starts[usage.key] = CostStart(keys, after)
     after = start.after
+    begin = max((hour for hour in (latest, after) if hour is not None), default=None)
     resumed: dict[str, StatisticPoint | None] = {}
     for key, point in points.items():
         if point is None:
-            begin = latest if latest is not None else after
             resumed[key] = None if begin is None else StatisticPoint(begin, 0.0, row=False)
         elif after is not None and point.start < after:
             resumed[key] = StatisticPoint(after, point.sum, row=False)

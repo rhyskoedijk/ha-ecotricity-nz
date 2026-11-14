@@ -20,9 +20,12 @@ from .api import OnboardingClient, PortalClient
 from .card import async_register_card
 from .const import (
     CONF_ACCOUNT_NUMBER,
+    CONF_INCLUDE_GST_EXPORT,
     CONF_PASSWORD,
+    DEFAULT_INCLUDE_GST,
     DOMAIN,
     LOCAL_TIME_ZONE,
+    LOGGER,
     PORTAL_SERVER_TIME_ZONE,
 )
 from .coordinator import (
@@ -108,6 +111,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
         )
 
     entry.async_on_unload(async_at_started(hass, _async_started))
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> bool:
+    """Bring an entry's options up to the current version.
+
+    Version 2 added the export GST option. Export prices left GST out before it, but it's on by
+    default, as Ecotricity's bills charge GST on export credits.
+    """
+    if entry.version == 1:
+        options = {CONF_INCLUDE_GST_EXPORT: DEFAULT_INCLUDE_GST, **entry.options}
+        hass.config_entries.async_update_entry(entry, options=options, version=2)
+        LOGGER.debug("Migrated config entry %s to version 2", entry.entry_id)
     return True
 
 

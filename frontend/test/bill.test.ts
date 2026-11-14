@@ -207,11 +207,24 @@ describe("bill options", () => {
 
 describe("billingPeriodStart", () => {
   it("starts on the billing period start day this month, or last month's before it comes round", () => {
-    expect(billingPeriodStart(new Date(2026, 9, 27, 9, 30), 15)).toEqual(new Date(2026, 9, 15));
-    expect(billingPeriodStart(new Date(2026, 9, 10, 9, 30), 15)).toEqual(new Date(2026, 8, 15));
-    expect(billingPeriodStart(new Date(2026, 0, 3), 15)).toEqual(new Date(2025, 11, 15));
+    // New Zealand midnights: 15 October 2026 is daylight time (UTC+13), 15 September standard.
+    expect(billingPeriodStart(new Date("2026-10-26T20:30:00Z"), 15)).toEqual(new Date("2026-10-14T11:00:00Z"));
+    expect(billingPeriodStart(new Date("2026-10-09T20:30:00Z"), 15)).toEqual(new Date("2026-09-14T12:00:00Z"));
+    expect(billingPeriodStart(new Date("2026-01-02T11:00:00Z"), 15)).toEqual(new Date("2025-12-14T11:00:00Z"));
     // Day 1 is the calendar month, starting at midnight on the day itself.
-    expect(billingPeriodStart(new Date(2026, 9, 1, 0, 0), 1)).toEqual(new Date(2026, 9, 1));
+    expect(billingPeriodStart(new Date("2026-09-30T11:00:00Z"), 1)).toEqual(new Date("2026-09-30T11:00:00Z"));
+  });
+
+  it("goes by the New Zealand date, whatever the browser's time zone", () => {
+    // 1 October in New Zealand, still 30 September in UTC and to its west.
+    expect(billingPeriodStart(new Date("2026-09-30T13:00:00Z"), 1)).toEqual(new Date("2026-09-30T11:00:00Z"));
+    // 30 September in New Zealand, already 1 October to its east (in UTC+14, say).
+    expect(billingPeriodStart(new Date("2026-09-30T10:30:00Z"), 1)).toEqual(new Date("2026-08-31T12:00:00Z"));
+  });
+
+  it("starts at midnight on the day daylight saving starts or ends", () => {
+    expect(billingPeriodStart(new Date("2026-09-28T00:00:00Z"), 27)).toEqual(new Date("2026-09-26T12:00:00Z"));
+    expect(billingPeriodStart(new Date("2026-04-06T00:00:00Z"), 5)).toEqual(new Date("2026-04-04T11:00:00Z"));
   });
 });
 

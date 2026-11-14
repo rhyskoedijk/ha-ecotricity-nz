@@ -1,5 +1,5 @@
 {
-  "config_entry_version": 1,
+  "config_entry_version": 2,
   "storage_version": 3,
   "entity_keys": [
     "current_controlled_price",

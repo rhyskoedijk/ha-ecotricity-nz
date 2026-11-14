@@ -167,20 +167,29 @@ def hourly_totals(
 
 async def async_last_point(hass: HomeAssistant, stat_id: str) -> StatisticPoint | None:
     """Return the most recent imported hour of a statistic."""
-    result = await get_instance(hass).async_add_executor_job(
-        get_last_statistics,
-        hass,
-        1,
-        stat_id,
-        True,  # noqa: FBT003 - convert_units, passed positionally to the executor
-        {"sum"},
-    )
-    rows = result.get(stat_id)
-    if not rows:
-        return None
-    row = rows[0]
-    start = datetime.fromtimestamp(row["start"], tz=UTC)
-    return StatisticPoint(start=start, sum=float(row.get("sum") or 0.0))
+    return (await async_last_points(hass, [stat_id]))[stat_id]
+
+
+async def async_last_points(
+    hass: HomeAssistant, stat_ids: Iterable[str]
+) -> dict[str, StatisticPoint | None]:
+    """Return the most recent imported hour of each statistic, read in one recorder job."""
+    return await get_instance(hass).async_add_executor_job(_last_points, hass, tuple(stat_ids))
+
+
+def _last_points(
+    hass: HomeAssistant, stat_ids: tuple[str, ...]
+) -> dict[str, StatisticPoint | None]:
+    points: dict[str, StatisticPoint | None] = {}
+    for stat_id in stat_ids:
+        rows = get_last_statistics(hass, 1, stat_id, True, {"sum"}).get(stat_id)  # noqa: FBT003 - convert_units, positional in Home Assistant's signature
+        if not rows:
+            points[stat_id] = None
+            continue
+        row = rows[0]
+        start = datetime.fromtimestamp(row["start"], tz=UTC)
+        points[stat_id] = StatisticPoint(start=start, sum=float(row.get("sum") or 0.0))
+    return points
 
 
 def async_import_hours(  # noqa: PLR0913 - writing a series needs all of these

@@ -22,11 +22,13 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.ecotricity_nz import coordinator as coordinator_module
+from custom_components.ecotricity_nz import statistics as statistics_module
 from custom_components.ecotricity_nz.api import (
     ConsumptionData,
     EcotricityConnectionError,
     IntervalReading,
     Plan,
+    RateUnit,
 )
 from custom_components.ecotricity_nz.api.parsers import parse_values
 from custom_components.ecotricity_nz.const import (
@@ -35,7 +37,7 @@ from custom_components.ecotricity_nz.const import (
     GST_FACTOR,
     ISSUE_TOU_CHART,
 )
-from custom_components.ecotricity_nz.coordinator import PricingCoordinator
+from custom_components.ecotricity_nz.coordinator import PricingCoordinator, _side_points
 from custom_components.ecotricity_nz.costs import (
     LINE_ENERGY_SUFFIX,
     TOTAL_ELECTRICITY_COMPENSATION,
@@ -49,9 +51,11 @@ from custom_components.ecotricity_nz.statistics import (
     COST_UNIT,
     EXPORT,
     IMPORT,
+    StatisticPoint,
     cost_series,
     statistic_id,
 )
+from custom_components.ecotricity_nz.store import CostStart
 from custom_components.ecotricity_nz.tariff import (
     ComponentKind,
     DaySlots,
@@ -887,3 +891,54 @@ async def test_hours_a_rate_isnt_charged_in_are_left_out_without_changing_any_ra
             )
             remaining = sum(cost for when, cost in costs.items() if when >= hour)
             assert result["change"] == pytest.approx(remaining, abs=1e-6), (line, hour)
+
+
+def test_new_statistic_doesnt_cost_hours_another_plan_had_no_statistics_on_its_side_for() -> None:
+    # The side's statistics stopped at an earlier hour when a plan without rates for it was
+    # chosen, and the plan chosen now adds a statistic the side never had. It starts where the
+    # other plan's hours end, like the side's existing statistic, not at that earlier hour.
+    earlier = datetime(2026, 6, 15, 12, tzinfo=UTC)
+    costed = earlier + timedelta(days=2)
+    cost_starts = {EXPORT.key: CostStart(frozenset(), costed)}
+    resumed = _side_points(
+        EXPORT,
+        {"kept": StatisticPoint(earlier, 1.0), "added": None},
+        frozenset({"kept", "added"}),
+        cost_starts,
+        costed,
+    )
+    assert resumed == {
+        "kept": StatisticPoint(costed, 1.0, row=False),
+        "added": StatisticPoint(costed, 0.0, row=False),
+    }
+
+
+def test_controlled_load_daily_charge_gets_no_cost_like_every_controlled_rate() -> None:
+    plan = find_plan(ANYTIME_PLAN)
+    daily = next(rate for rate in plan.retail_rates if rate.unit is RateUnit.PER_DAY and rate.price)
+    controlled = replace(daily, description="Controlled Daily Charge", register_type="CN")
+    plan = replace(plan, retail_rates=(*plan.retail_rates, controlled))
+    day = next(item.start for item in plan.seasons)
+
+    # Every daily charge an hour is costed with has a statistic key, so none is left out of the
+    # bill lines while still counting in the total.
+    day_costs = coordinator_module._day_costs({}, plan, day, {})
+    assert day_costs is not None
+    charged = {daily_key(charge) for charge in day_costs.daily_charges}
+    assert charged
+    assert charged <= cost_keys(plan).import_keys
+
+
+@pytest.mark.usefixtures("mock_onboarding", "mock_portal")
+async def test_cost_statistics_last_hours_are_read_in_one_recorder_job(
+    hass: HomeAssistant, portal_config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    read = statistics_module._last_points
+    with patch.object(statistics_module, "_last_points", side_effect=read) as reads:
+        await _setup(hass, portal_config_entry)
+    cost_ids = {statistic_id(TEST_ICP, cost_series(key)) for key in _plan_keys(portal_config_entry)}
+
+    jobs = [set(call.args[1]) for call in reads.call_args_list]
+    assert cost_ids in jobs
+    assert not any(job & cost_ids and job != cost_ids for job in jobs)

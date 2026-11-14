@@ -49,6 +49,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
     read_chart,
     shown_price,
 )
+from custom_components.ecotricity_nz.config_flow import EcotricityConfigFlow
 from custom_components.ecotricity_nz.const import (
     CONF_INCLUDE_GST_EXPORT,
     CONF_INCLUDE_GST_IMPORT,
@@ -196,6 +197,28 @@ async def test_gst_options(
     assert float(_state(hass, "current_import_price")) == pytest.approx(import_price)
     assert float(_state(hass, "current_export_price")) == pytest.approx(export_price)
     assert float(_state(hass, "daily_charge")) == pytest.approx(daily_charge)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_entry_from_before_the_export_gst_option_gets_it_on(
+    hass: HomeAssistant, config_entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    old = MockConfigEntry(
+        domain=config_entry.domain,
+        version=1,
+        title=config_entry.title,
+        unique_id=config_entry.unique_id,
+        data=dict(config_entry.data),
+        options={CONF_INCLUDE_GST_IMPORT: False, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
+    )
+    old.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(old.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert old.version == EcotricityConfigFlow.VERSION
+    assert old.options[CONF_INCLUDE_GST_EXPORT] is True
+    assert old.options[CONF_INCLUDE_GST_IMPORT] is False
 
 
 @pytest.mark.usefixtures("mock_onboarding")

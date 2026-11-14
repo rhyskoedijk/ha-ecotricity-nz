@@ -200,16 +200,69 @@ export function buildBill(layout: BillLayout, changes: Changes, days: number, op
   return { sections, charges, gst, total: charges + gst };
 }
 
+/** The integration's statistics and daily charges run on New Zealand days, wherever the browser is. */
+export const TIME_ZONE = "Pacific/Auckland";
+
 /**
  * Return when the billing period containing `now` started, for a bill that starts on `day` of
- * each month (1 to 28, so every month has it), at local midnight.
+ * each month (1 to 28, so every month has it), at midnight in New Zealand.
  */
 export function billingPeriodStart(now: Date, day: number): Date {
-  const start = new Date(now.getFullYear(), now.getMonth(), day);
+  const today = zonedDate(now);
+  let start = zonedMidnight(today.year, today.month, day);
   if (start.getTime() > now.getTime()) {
-    start.setMonth(start.getMonth() - 1);
+    start = zonedMidnight(today.year, today.month - 1, day);
   }
   return start;
+}
+
+/** Return the year, month (0 to 11) and day an instant falls on in New Zealand. */
+function zonedDate(instant: Date): { year: number; month: number; day: number } {
+  const parts = zonedParts(instant);
+  return { year: parts.year, month: parts.month - 1, day: parts.day };
+}
+
+/** Return the instant New Zealand's midnight starts a day; the month can be out of range. */
+function zonedMidnight(year: number, month: number, day: number): Date {
+  // Clocks there never change at midnight, so the offset an hour either side of it is its own.
+  const wall = Date.UTC(year, month, day);
+  let instant = wall - zoneOffset(new Date(wall));
+  instant = wall - zoneOffset(new Date(instant));
+  return new Date(instant);
+}
+
+/** Return how far New Zealand's clocks are ahead of UTC at an instant, in milliseconds. */
+function zoneOffset(instant: Date): number {
+  const parts = zonedParts(instant);
+  const wall = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return wall - Math.floor(instant.getTime() / 1000) * 1000;
+}
+
+const ZONE_FORMAT = new Intl.DateTimeFormat("en-NZ", {
+  timeZone: TIME_ZONE,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+});
+
+function zonedParts(instant: Date): Record<"year" | "month" | "day" | "hour" | "minute" | "second", number> {
+  const parts = Object.fromEntries(
+    ZONE_FORMAT.formatToParts(instant)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return {
+    year: parts.year ?? 0,
+    month: parts.month ?? 1,
+    day: parts.day ?? 1,
+    hour: parts.hour ?? 0,
+    minute: parts.minute ?? 0,
+    second: parts.second ?? 0,
+  };
 }
 
 function sum(values: number[]): number {

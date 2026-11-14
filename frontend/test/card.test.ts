@@ -8,7 +8,7 @@ import {
   type EnergyCollection,
   type HomeAssistant,
 } from "../src/ecotricity-bill-card";
-import type { BillLayout } from "../src/bill";
+import { billingPeriodStart, type BillLayout } from "../src/bill";
 import { CHANGES, LAYOUT } from "./fixtures";
 
 interface StatisticRequest {
@@ -220,9 +220,30 @@ describe("ecotricity-bill-card", () => {
   it("shows this month so far without a collection key", async () => {
     const { hass, requests } = fakeHass();
     await mount({}, hass);
-    const start = new Date(requests[0]?.fixed_period.start_time ?? "");
-    expect(start.getDate()).toBe(1);
-    expect(start.getHours()).toBe(0);
+    expect(requests[0]?.fixed_period.start_time).toBe(
+      billingPeriodStart(new Date(), 1).toISOString(),
+    );
+  });
+
+  it("moves this month so far on as time passes, into the next billing period", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    // 30 September 2026, 11pm in New Zealand: the next billing period starts in an hour.
+    vi.setSystemTime(new Date("2026-09-30T10:00:00Z"));
+    const { hass, requests } = fakeHass();
+    const card = await mount({}, hass);
+    expect(requests.at(-1)?.fixed_period.start_time).toBe("2026-08-31T12:00:00.000Z");
+
+    const reads = requests.length;
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    await settle(card);
+    expect(requests.length).toBeGreaterThan(reads);
+    expect(requests.at(-1)?.fixed_period.start_time).toBe("2026-09-30T11:00:00.000Z");
+    expect(requests.at(-1)?.fixed_period.end_time).toBe("2026-09-30T11:00:00.000Z");
+
+    card.remove();
+    const stopped = requests.length;
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(requests.length).toBe(stopped);
   });
 
   it("stops following the range once removed", async () => {
@@ -241,6 +262,30 @@ describe("ecotricity-bill-card", () => {
     };
     const card = await mount({}, hass);
     expect(text(card)).toContain("Pricing hasn't been fetched yet");
+  });
+
+  it("waits a while to ask for the bill again after it failed, however often hass changes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let asked = 0;
+    const failing: HomeAssistant = {
+      connection: {},
+      callWS: () => {
+        asked++;
+        return Promise.reject({ code: "not_ready", message: "Pricing hasn't been fetched yet" });
+      },
+    };
+    const card = await mount({}, failing);
+    expect(asked).toBe(1);
+    for (let i = 0; i < 5; i++) {
+      card.hass = { ...failing };
+      await settle(card);
+    }
+    expect(asked).toBe(1);
+
+    vi.setSystemTime(Date.now() + 61_000);
+    card.hass = { ...failing };
+    await settle(card);
+    expect(asked).toBe(2);
   });
 
   it("leaves out the losses and unit price columns, and who charges each section, when compact", async () => {
@@ -285,8 +330,9 @@ describe("ecotricity-bill-card", () => {
   it("starts on the billing period start day without a date picker", async () => {
     const { hass, requests } = fakeHass();
     await mount({ billing_period_start_day: 15 }, hass);
-    const start = new Date(requests[0]?.fixed_period.start_time ?? "");
-    expect(start.getDate()).toBe(15);
+    expect(requests[0]?.fixed_period.start_time).toBe(
+      billingPeriodStart(new Date(), 15).toISOString(),
+    );
   });
 
   it("changes how the bill's shown without reading the statistics again", async () => {

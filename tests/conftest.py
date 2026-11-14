@@ -36,6 +36,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
     read_chart,
     shown_price,
 )
+from custom_components.ecotricity_nz.config_flow import EcotricityConfigFlow
 from custom_components.ecotricity_nz.const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
@@ -489,6 +490,7 @@ def config_entry() -> MockConfigEntry:
     """A config entry without portal credentials, on the Low Off Peak plan."""
     return MockConfigEntry(
         domain=DOMAIN,
+        version=EcotricityConfigFlow.VERSION,
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP},
@@ -501,6 +503,7 @@ def portal_config_entry() -> MockConfigEntry:
     """A config entry with portal credentials."""
     return MockConfigEntry(
         domain=DOMAIN,
+        version=EcotricityConfigFlow.VERSION,
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP, CONF_ACCOUNT_NUMBER: "123456", CONF_PASSWORD: "secret"},

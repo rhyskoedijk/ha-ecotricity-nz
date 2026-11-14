@@ -832,12 +832,14 @@ def price_day(
     )
 
 
-def daily_charges(plan: Plan, day: date) -> tuple[DailyCharge, ...]:
-    """Return the plan's fixed daily charges on a day."""
+def daily_charges(plan: Plan, day: date, *, controlled: bool = True) -> tuple[DailyCharge, ...]:
+    """Return the plan's fixed daily charges on a day, without controlled-load ones if asked."""
     return tuple(
         DailyCharge(rate.description, rate.price, is_network=rate.is_network)
         for rate in plan.rates
-        if rate.applies_on(day) and rate.unit is RateUnit.PER_DAY
+        if rate.applies_on(day)
+        and rate.unit is RateUnit.PER_DAY
+        and (controlled or not rate.is_controlled)
     )
 
 

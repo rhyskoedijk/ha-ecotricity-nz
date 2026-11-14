@@ -33,7 +33,7 @@ from .costs import (
     daily_key,
     levy_key,
 )
-from .statistics import IMPORT, cost_series, statistic_id
+from .statistics import cost_series, statistic_id
 from .tariff import (
     ComponentKind,
     DailyCharge,
@@ -167,7 +167,7 @@ def _line(rate: Rate, names: dict[str, str]) -> BillLine | None:
             part=component_key(part),
             period=None,
             name=rate.description,
-            usage=IMPORT.key,
+            usage=levy_key(part) + LINE_ENERGY_SUFFIX,
             losses=False,
             order=1,
         )
@@ -217,11 +217,7 @@ def ws_bill(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
 
     sections: dict[BillSection, list[dict[str, Any]]] = {}
     for line in bill_lines(plan):
-        usage = None
-        if line.usage == IMPORT.key:
-            usage = statistic_id(icp.icp, IMPORT)
-        elif line.usage is not None:
-            usage = stat(line.usage)
+        usage = None if line.usage is None else stat(line.usage)
         sections.setdefault(line.section, []).append(
             {
                 "key": line.key,

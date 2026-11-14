@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -40,6 +41,9 @@ from custom_components.ecotricity_nz.const import (
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.store import (
     STORAGE_VERSION,
+    CostStart,
+    CostStore,
+    FetchBackoff,
     PricingSnapshot,
     PricingStore,
     _snapshot,
@@ -51,6 +55,7 @@ from tests.conftest import (
     DEFAULT_NETWORK,
     DEFAULT_PRICE_CATEGORY,
     NZ,
+    SOLAR_PLAN,
     TEST_ICP,
     TIME_OF_USE_PLAN,
     WINTER_PEAK,
@@ -273,6 +278,161 @@ async def test_choosing_another_plan_fetches(
     assert mock_onboarding.async_get_icp.await_count == calls + 1
     assert config_entry.runtime_data.pricing.data.plan.id == plan_id(ANYTIME_PLAN)
     assert _state(hass, "current_import_price") != "unavailable"
+
+
+async def test_setup_retries_when_another_plans_pricing_cant_be_fetched(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+
+    # The saved charts are the old plan's, so the new plan can't be priced from them.
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+    hass.config_entries.async_update_entry(
+        config_entry, options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_choosing_the_old_plan_again_forgets_the_other_plans_failures(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    options = dict(config_entry.options)
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+    hass.config_entries.async_update_entry(
+        config_entry, options={**options, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    failed = await PricingStore(hass, config_entry.entry_id).async_load_backoff()
+    assert failed is not None
+    assert failed.fetch_failures == 1
+
+    # The saved pricing is the old plan's, so setup starts from it without waiting.
+    hass.config_entries.async_update_entry(config_entry, options=options)
+    await _reload(hass, config_entry)
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert await PricingStore(hass, config_entry.entry_id).async_load_backoff() is None
+
+
+async def test_setup_for_a_plan_not_tried_yet_fetches_without_waiting(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Another plan's fetch failed, then a third plan is chosen once the site is back. That
+    # plan's fetch hasn't failed, so it doesn't wait for the other's backoff.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    options = dict(config_entry.options)
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+    hass.config_entries.async_update_entry(
+        config_entry, options={**options, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    calls = mock_onboarding.async_get_icp.await_count
+
+    mock_onboarding.async_get_icp.side_effect = None
+    hass.config_entries.async_update_entry(
+        config_entry, options={**options, CONF_PLAN_ID: plan_id(SOLAR_PLAN)}
+    )
+    await _reload(hass, config_entry)
+    assert mock_onboarding.async_get_icp.await_count == calls + 1
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert config_entry.runtime_data.pricing.data.plan.id == plan_id(SOLAR_PLAN)
+    assert await PricingStore(hass, config_entry.entry_id).async_load_backoff() is None
+
+
+async def _retry_setup(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Move on to Home Assistant's next setup retry, which comes within 10 minutes."""
+    freezer.tick(timedelta(minutes=10, seconds=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def test_setup_retries_for_another_plan_back_off_between_fetches(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Home Assistant retries setup every few minutes, whatever the coordinator asks, and each
+    # retry starts a new coordinator. The fetch still backs off as a running one would.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+    hass.config_entries.async_update_entry(
+        config_entry, options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    calls = mock_onboarding.async_get_icp.await_count
+
+    failed = dt_util.utcnow()
+    delay = PRICING_RETRY_INTERVAL
+    for _ in range(4):
+        while dt_util.utcnow() < failed + delay - timedelta(minutes=10):
+            await _retry_setup(hass, freezer)
+            assert config_entry.state is ConfigEntryState.SETUP_RETRY
+            assert mock_onboarding.async_get_icp.await_count == calls
+        while mock_onboarding.async_get_icp.await_count == calls:
+            await _retry_setup(hass, freezer)
+        calls += 1
+        assert mock_onboarding.async_get_icp.await_count == calls
+        failed = dt_util.utcnow()
+        delay = min(delay * 2, PRICING_RETRY_MAX_INTERVAL)
+
+    # Once it works, setup finishes with the new plan.
+    mock_onboarding.async_get_icp.side_effect = None
+    while config_entry.state is ConfigEntryState.SETUP_RETRY:
+        await _retry_setup(hass, freezer)
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert config_entry.runtime_data.pricing.data.plan.id == plan_id(ANYTIME_PLAN)
+
+
+async def test_setup_without_saved_pricing_backs_off_between_fetches(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # With nothing saved (a new install, or pricing saved in an older format), setup needs a
+    # fetch, and each retry starts a new coordinator. The fetch still backs off.
+    freezer.move_to(WINTER_PEAK)
+    mock_onboarding.async_get_icp.side_effect = EcotricityConnectionError("down")
+    config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    calls = mock_onboarding.async_get_icp.await_count
+    assert calls == 1
+
+    failed = dt_util.utcnow()
+    while dt_util.utcnow() < failed + PRICING_RETRY_INTERVAL - timedelta(minutes=10):
+        await _retry_setup(hass, freezer)
+        assert config_entry.state is ConfigEntryState.SETUP_RETRY
+        assert mock_onboarding.async_get_icp.await_count == calls
+    while mock_onboarding.async_get_icp.await_count == calls:
+        await _retry_setup(hass, freezer)
+
+    mock_onboarding.async_get_icp.side_effect = None
+    while config_entry.state is ConfigEntryState.SETUP_RETRY:
+        await _retry_setup(hass, freezer)
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert await PricingStore(hass, config_entry.entry_id).async_load_backoff() is None
 
 
 async def _start(hass: HomeAssistant) -> None:
@@ -548,6 +708,47 @@ async def test_saved_file_leaves_out_unused_personal_details(
         assert serial in saved
 
 
+async def test_cost_starts_that_cant_be_read_are_left_out(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    store = CostStore(hass, "entry")
+    after = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    starts = {
+        "import": CostStart(frozenset({"a", "b"}), after),
+        "export": CostStart(frozenset(), None),
+    }
+    await store.async_save(starts)
+    assert await store.async_load() == starts
+
+    # Without one, the side starts again from its latest costed hour.
+    hass_storage["ecotricity_nz.entry.costs"]["data"]["import"]["after"] = "2026-06-15T12:00:00"
+    assert await CostStore(hass, "entry").async_load() == {"export": starts["export"]}
+
+
+async def test_fetch_failures_that_cant_be_read_are_ignored(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    store = PricingStore(hass, "entry")
+    backoff = FetchBackoff(
+        icp=TEST_ICP,
+        plan_id=plan_id(ANYTIME_PLAN),
+        fetch_failures=2,
+        attestation_failures=1,
+        failed_at=datetime(2026, 6, 15, 20, 15, tzinfo=UTC),
+    )
+    await store.async_save_backoff(backoff)
+    assert await store.async_load_backoff() == backoff
+
+    # Without them, setup tries again straight away.
+    hass_storage["ecotricity_nz.entry.backoff"]["data"]["failed_at"] = "2026-06-15T20:15:00"
+    assert await PricingStore(hass, "entry").async_load_backoff() is None
+
+    # They go with the entry, like the snapshot.
+    await store.async_save_backoff(backoff)
+    await store.async_remove()
+    assert "ecotricity_nz.entry.backoff" not in hass_storage
+
+
 def test_snapshot_needs_a_time_zone() -> None:
     saved = _snapshot_dict(_fixture_snapshot())
     saved["fetched_at"] = "2026-06-14T20:15:00"
@@ -603,7 +804,10 @@ async def test_failed_fetches_back_off(
 
 
 async def test_failed_fetch_without_saved_pricing_says_when_to_retry(
-    hass: HomeAssistant, config_entry: MockConfigEntry, mock_onboarding: MagicMock
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
 ) -> None:
     # With nothing saved to fall back on, the update fails, and says to retry after the same
     # backoff as the coordinator's own interval.
@@ -618,6 +822,7 @@ async def test_failed_fetch_without_saved_pricing_says_when_to_retry(
             await coordinator._async_update_data()
         assert failed.value.retry_after == wait.total_seconds()
         assert coordinator.update_interval == wait
+        freezer.tick(wait)
 
 
 async def test_failed_refresh_action_doesnt_keep_backing_off(

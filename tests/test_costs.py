@@ -68,7 +68,14 @@ CREDIT_LINE = _line(EXPORT_CREDIT, export=True)
 FEE_LINE = _line(EXPORT_FEE, export=True)
 KEYS = CostKeys(
     import_keys=IMPORT_TOTALS
-    | frozenset({"line_import_ea_levy", "daily_charge_network", "daily_charge_metering"}),
+    | frozenset(
+        {
+            "line_import_ea_levy",
+            "line_import_ea_levy_energy",
+            "daily_charge_network",
+            "daily_charge_metering",
+        }
+    ),
     export_keys=EXPORT_TOTALS,
     import_lines=frozenset({SUPPLIER_LINE, NETWORK_LINE}),
     export_lines=frozenset({CREDIT_LINE, FEE_LINE}),
@@ -132,6 +139,29 @@ def test_each_hour_is_split_into_supplier_network_and_levy_costs() -> None:
     assert len(costs[SUPPLIER_LINE]) == 24
 
 
+def test_levy_is_charged_on_the_kwh_of_the_hours_priced_only() -> None:
+    # The next day isn't priced, so its usage isn't charged the levy and isn't counted as the
+    # levy's kWh either.
+    other = DAY + timedelta(days=1)
+    costs = _costs(_readings(DAY) + _readings(other, kwh=5.0), days=PRICED)
+
+    energy = costs["line_import_ea_levy_energy"]
+    assert sum(energy.values()) == pytest.approx(48.0)
+    assert sum(costs["line_import_ea_levy"].values()) == pytest.approx(48 * LEVY.price / 100)
+
+
+def test_two_levy_rates_with_one_key_count_the_usage_once() -> None:
+    # Both descriptions give the same levy key, so they're one line, charged on the usage once.
+    other = PriceComponent(ComponentKind.LEVY, "Electricity Authority Levy", 0.06)
+    assert levy_key(other) == levy_key(LEVY)
+    priced = {DAY: DayCosts(_all_day(SUPPLIER, LEVY, other), None, ())}
+    costs = _costs(_readings(DAY), days=priced)
+
+    key = levy_key(LEVY)
+    assert sum(costs[key + LINE_ENERGY_SUFFIX].values()) == pytest.approx(48.0)
+    assert sum(costs[key].values()) == pytest.approx(48 * (LEVY.price + other.price) / 100)
+
+
 def test_consumption_loss_factor_applies_to_supplier_import_only() -> None:
     without = _costs(_readings(DAY), _readings(DAY), PRICED)
     with_losses = _costs(_readings(DAY), _readings(DAY), PRICED, import_loss_factor=1.05)
@@ -185,8 +215,12 @@ def test_lines_levies_and_daily_charges_add_up_to_the_energy_dashboards_totals()
         _readings(DAY), _readings(DAY), PRICED, import_loss_factor=1.05, export_loss_factor=1.02
     )
 
-    # Levies, daily charges and lines; a line's kWh isn't an amount.
-    imported = (KEYS.import_keys - IMPORT_TOTALS) | KEYS.import_lines
+    # Levies, daily charges and lines; a line's or levy's kWh isn't an amount.
+    imported = {
+        key
+        for key in (KEYS.import_keys - IMPORT_TOTALS) | KEYS.import_lines
+        if not is_line_energy(key)
+    }
     for hour, total in costs[TOTAL_ELECTRICITY_COST].items():
         charged = sum(costs[key][hour] for key in imported)
         assert total == pytest.approx(charged * 1.15)
@@ -376,7 +410,8 @@ def test_cost_keys_come_from_the_plans_rates() -> None:
             continue
         part = rate_component(rate)
         if part.kind is ComponentKind.LEVY:
-            assert (levy_key(part) in keys.import_keys) is not rate.is_export
+            levy = {levy_key(part), levy_key(part) + LINE_ENERGY_SUFFIX}
+            assert (levy <= keys.import_keys) is not rate.is_export
         else:
             assert line_key(part, export=rate.is_export) in keys.import_lines | keys.export_lines
     assert keys.import_keys >= IMPORT_TOTALS

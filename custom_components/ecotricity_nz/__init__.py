@@ -32,7 +32,7 @@ from .coordinator import (
     PricingCoordinator,
 )
 from .services import async_setup_services
-from .store import PricingStore
+from .store import CostStore, PricingStore
 from .websocket_api import async_setup_websocket
 
 if TYPE_CHECKING:
@@ -112,8 +112,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> None:
-    """Delete the saved pricing when the entry is removed."""
+    """Delete the saved pricing, and where the costs start, when the entry is removed."""
     await PricingStore(hass, entry.entry_id).async_remove()
+    await CostStore(hass, entry.entry_id).async_remove()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> bool:

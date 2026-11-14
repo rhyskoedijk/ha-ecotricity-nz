@@ -61,6 +61,7 @@ from custom_components.ecotricity_nz.const import (
     PRICING_FETCH_INTERVAL,
     PRICING_MISSING_CHART_RETRIES,
     PRICING_RETRY_INTERVAL,
+    PRICING_RETRY_MAX_INTERVAL,
     RETRY_AFTER_FAILURE,
 )
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
@@ -750,6 +751,57 @@ async def test_repeated_attestation_failures_raise_issue(
     mock_onboarding.async_get_icp.side_effect = None
     assert await coordinator.async_fetch_now()
     assert not issue_registry.async_get_issue(DOMAIN, issue_id)
+
+
+async def test_attestation_failures_while_setup_retries_for_another_plan_raise_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    issue_registry: ir.IssueRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Each setup retry starts a new coordinator, so the failures are counted across them.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    issue_id = f"attestation_failed_{config_entry.entry_id}"
+    mock_onboarding.async_get_icp.side_effect = AttestationError("blocked")
+    hass.config_entries.async_update_entry(
+        config_entry, options={**config_entry.options, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    while mock_onboarding.async_get_icp.await_count < FAILURE_ISSUE_THRESHOLD + 1:
+        assert not issue_registry.async_get_issue(DOMAIN, issue_id)
+        freezer.tick(PRICING_RETRY_MAX_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    assert issue_registry.async_get_issue(DOMAIN, issue_id)
+
+
+async def test_attestation_failures_while_setup_retries_without_saved_pricing_raise_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    issue_registry: ir.IssueRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # With nothing saved, setup needs a fetch, and the failures still count across retries.
+    freezer.move_to(WINTER_PEAK)
+    issue_id = f"attestation_failed_{config_entry.entry_id}"
+    mock_onboarding.async_get_icp.side_effect = AttestationError("blocked")
+    config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    while mock_onboarding.async_get_icp.await_count < FAILURE_ISSUE_THRESHOLD:
+        assert not issue_registry.async_get_issue(DOMAIN, issue_id)
+        freezer.tick(PRICING_RETRY_MAX_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    assert issue_registry.async_get_issue(DOMAIN, issue_id)
 
 
 async def test_unreadable_chart_leaves_price_unavailable(

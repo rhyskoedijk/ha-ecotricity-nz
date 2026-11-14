@@ -70,6 +70,10 @@ class StatisticPoint:
 
     start: datetime
     sum: float
+    row: bool = True
+    """False for a start worked out for a statistic with no row at it, which then gets one, with
+    nothing added, before its next hours. Without it, a range starting between the statistic's
+    real last row and its next hours would lose its first hour."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +215,8 @@ def async_import_hours(  # noqa: PLR0913 - writing a series needs all of these
         for index, row in enumerate(hours)
         if not series.sparse or row["state"] or index == len(hours) - 1 or hours[index + 1]["state"]
     ]
+    if rows and last is not None and not last.row:
+        rows.insert(0, StatisticData(start=last.start, state=0.0, sum=last.sum))
     if rows:
         async_add_external_statistics(
             hass,

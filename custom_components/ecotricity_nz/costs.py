@@ -1,8 +1,8 @@
 """Work out what each hour of usage cost, part by part, for the cost statistics.
 
 Each half-hourly reading is priced with the half-hour's rates (see tariff.py), split the way a
-bill is: a line for each of Ecotricity's and the network's rates, with the kWh it was charged on,
-one for each levy, and each daily charge item spread evenly over the hours of its day. Only what
+bill is: a line for each of Ecotricity's and the network's rates and for each levy, with the kWh
+it was charged on, and each daily charge item spread evenly over the hours of its day. Only what
 can't be added up from those is stored besides: the total cost and the export compensation, which
 include GST, for the Energy dashboard. Anything else (a side's supplier or network cost, its GST,
 the net bill) is a sum of these, so it isn't stored again.
@@ -92,8 +92,8 @@ class DayCosts:
 def levy_key(part: PriceComponent) -> str:
     """Return the statistic key of an import levy, such as line_import_ea_levy.
 
-    A levy is one line of the bill, named like the others, but has no kWh of its own: it's
-    charged on all of the usage.
+    A levy is one line of the bill, named like the others. It's charged on all of the usage, but
+    has a kWh statistic of its own all the same, so its kWh only counts the hours it was costed.
     """
     return _LEVY_PREFIX + component_key(part).removesuffix(_RATE_SUFFIX)
 
@@ -131,7 +131,7 @@ class CostKeys:
     """Every statistic key a plan's rates can give, by side."""
 
     import_keys: frozenset[str]
-    """Levies and daily charges, with the import side's totals (`IMPORT_TOTALS`)."""
+    """Levies and their kWh, and daily charges, with the import side's totals (`IMPORT_TOTALS`)."""
     export_keys: frozenset[str]
     """The export side's totals (`EXPORT_TOTALS`). Empty when the plan has no export rates."""
     import_lines: frozenset[str] = frozenset()
@@ -171,7 +171,7 @@ def cost_keys(plan: Plan) -> CostKeys:
             continue
         part = rate_component(rate)
         if part.kind is ComponentKind.LEVY:
-            import_keys.add(levy_key(part))
+            import_keys |= {levy_key(part), levy_key(part) + LINE_ENERGY_SUFFIX}
         elif (line := line_key(part, export=rate.is_export)) is not None:
             lines[rate.is_export].add(line)
     export_keys = EXPORT_TOTALS if lines[True] else frozenset()
@@ -223,7 +223,9 @@ def hourly_costs(  # noqa: PLR0913 - pricing a reading needs all of these
             daily += share
         parts[TOTAL_ELECTRICITY_COST] = (energy + daily) * GST_FACTOR
         for key, cents in parts.items():
-            costs[key][hour] = _nzd(cents)
+            costs[key][hour] = (
+                round(cents, ENERGY_PRECISION) if is_line_energy(key) else _nzd(cents)
+            )
         _add_lines(costs, hour, keys.import_lines, import_lines[hour])
 
     for hour in _counted(export_hours, settled_before):
@@ -262,7 +264,7 @@ def _price_readings(
 ]:
     """Return each UTC hour's levies, bill lines and total amount, and its priced half-hours.
 
-    Amounts are in cents, excluding GST. A bill line's kWh is under its key with
+    Amounts are in cents, excluding GST. A bill line's or levy's kWh is under its key with
     `LINE_ENERGY_SUFFIX`: the kWh alone, though Ecotricity's lines include losses.
     """
     levies: dict[datetime, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -278,6 +280,7 @@ def _price_readings(
         hour = reading.start.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
         counts[hour] += 1
         charged: set[str] = set()
+        levied: set[str] = set()
         for part in slots.at(local).components:
             if not part.price:
                 continue
@@ -286,12 +289,16 @@ def _price_readings(
             amounts[hour] += cents
             if part.kind is ComponentKind.LEVY:
                 levies[hour][levy_key(part)] += cents
+                levied.add(levy_key(part))
             elif (line := line_key(part, export=export)) is not None:
                 lines[hour][line] += cents
                 charged.add(line)
-        # Two rates in one bucket are one line, charged on the usage once.
+        # Two rates in one bucket are one line, charged on the usage once, and so are two
+        # levies with one key.
         for line in charged:
             lines[hour][line + LINE_ENERGY_SUFFIX] += reading.value
+        for levy in levied:
+            levies[hour][levy + LINE_ENERGY_SUFFIX] += reading.value
     return levies, lines, amounts, counts
 
 

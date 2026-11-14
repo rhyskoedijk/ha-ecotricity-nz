@@ -238,6 +238,8 @@ describe("formatting", () => {
     expect(formatAmount(-0.9136)).toBe("($0.91)");
     expect(formatAmount(0)).toBe("$0.00");
     expect(formatAmount(-0.00001)).toBe("$0.00");
+    // A credit smaller than a cent rounds to nothing, so it isn't shown as one.
+    expect(formatAmount(-0.003)).toBe("$0.00");
   });
 
   it("shows rates to four places at most and two at least", () => {
@@ -246,6 +248,7 @@ describe("formatting", () => {
     expect(formatRate(1.5951)).toBe("1.5951");
     expect(formatRate(0.3)).toBe("0.30");
     expect(formatRate(-0.02)).toBe("(0.02)");
+    expect(formatRate(-0.00001)).toBe("0.00");
     expect(formatRate(0.123456)).toBe("0.1235");
   });
 

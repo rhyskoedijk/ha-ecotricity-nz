@@ -50,6 +50,7 @@
     "line_export_supplier_charge_24",
     "line_export_supplier_charge_24_energy",
     "line_import_ea_levy",
+    "line_import_ea_levy_energy",
     "line_import_network_charge_low",
     "line_import_network_charge_low_energy",
     "line_import_supplier_charge_4",

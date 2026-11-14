@@ -274,6 +274,9 @@
     "update_failed": {
       "message": "Couldn't update from Ecotricity: {error}"
     },
+    "fetch_waiting": {
+      "message": "Couldn't fetch the chosen plan's pricing from Ecotricity, so it won't be tried again until {time}."
+    },
     "refresh_failed": {
       "message": "Couldn't refresh the data from Ecotricity. Check the logs for details."
     }

@@ -6,6 +6,9 @@ worked out from this, so nothing needs fetching again until Ecotricity might hav
 
 Personal details no entity uses, such as the ICP's address, aren't parsed, so they never reach
 the file. The ICP number and meter serial numbers are kept, because sensors show them.
+
+The cost statistics' own store (`CostStore`) keeps where each side's costs start for the plan
+that's costing them now.
 """
 
 from __future__ import annotations
@@ -66,12 +69,36 @@ class PricingSnapshot:
     from the last that found a new gap."""
 
 
+BACKOFF_STORAGE_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class FetchBackoff:
+    """Fetches setup needed that failed in a row, for the ICP and plan chosen when they did.
+
+    Each setup retry starts a new coordinator, so they're saved, apart from the snapshot, as
+    setup can need a fetch when there's no snapshot.
+    """
+
+    icp: str
+    plan_id: str
+    """The plan chosen in the options, or an empty string if none was."""
+    fetch_failures: int
+    attestation_failures: int
+    """How many of those were refused by the onboarding site's security check."""
+    failed_at: datetime
+    """When the last of those failed."""
+
+
 class PricingStore:
-    """Load and save a config entry's pricing snapshot."""
+    """Load and save a config entry's pricing snapshot, and the fetches setup is waiting on."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         """Initialise the store."""
         self._store = _SnapshotStore(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.pricing")
+        self._backoff: Store[dict[str, Any]] = Store(
+            hass, BACKOFF_STORAGE_VERSION, f"{DOMAIN}.{entry_id}.backoff"
+        )
 
     async def async_load(self) -> PricingSnapshot | None:
         """Return the saved snapshot, or None if there isn't a usable one."""
@@ -89,8 +116,97 @@ class PricingStore:
         """Save a snapshot."""
         await self._store.async_save(_snapshot_dict(snapshot))
 
+    async def async_load_backoff(self) -> FetchBackoff | None:
+        """Return the saved failures, or None if there aren't any that can be read."""
+        raw = await self._backoff.async_load()
+        if not raw:
+            return None
+        try:
+            return FetchBackoff(
+                icp=str(raw["icp"]),
+                plan_id=str(raw["plan_id"]),
+                fetch_failures=int(raw["fetch_failures"]),
+                attestation_failures=int(raw["attestation_failures"]),
+                failed_at=_aware(raw["failed_at"], "failed_at"),
+            )
+        except (KeyError, TypeError, ValueError) as err:
+            # Without them, setup tries again straight away.
+            LOGGER.warning("Ignoring the saved fetch failures, which can't be read: %s", err)
+            return None
+
+    async def async_save_backoff(self, backoff: FetchBackoff | None) -> None:
+        """Save the failures, or delete them if None."""
+        if backoff is None:
+            await self._backoff.async_remove()
+            return
+        await self._backoff.async_save(
+            {
+                "icp": backoff.icp,
+                "plan_id": backoff.plan_id,
+                "fetch_failures": backoff.fetch_failures,
+                "attestation_failures": backoff.attestation_failures,
+                "failed_at": backoff.failed_at.isoformat(),
+            }
+        )
+
     async def async_remove(self) -> None:
-        """Delete the saved snapshot."""
+        """Delete the saved snapshot and failures."""
+        await self._store.async_remove()
+        await self._backoff.async_remove()
+
+
+COST_STORAGE_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class CostStart:
+    """Where a side's cost statistics start for the plan costing them now."""
+
+    keys: frozenset[str]
+    """The side's statistic keys (`CostKeys.statistic_keys`) for that plan."""
+    after: datetime | None
+    """The side's latest costed hour when they started, or None if it had none. Hours up to it
+    were costed by another plan's statistics."""
+
+
+class CostStore:
+    """Load and save where a config entry's cost statistics start, by side."""
+
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        """Initialise the store."""
+        self._store: Store[dict[str, Any]] = Store(
+            hass, COST_STORAGE_VERSION, f"{DOMAIN}.{entry_id}.costs"
+        )
+
+    async def async_load(self) -> dict[str, CostStart]:
+        """Return each side's start, by side, leaving out any that can't be read."""
+        raw = await self._store.async_load() or {}
+        starts: dict[str, CostStart] = {}
+        for side, value in raw.items():
+            try:
+                after = _aware(value["after"], "after") if value["after"] else None
+                starts[side] = CostStart(frozenset(str(key) for key in value["keys"]), after)
+            except (KeyError, TypeError, ValueError) as err:
+                # Without it, the side starts again from its latest costed hour.
+                LOGGER.warning(
+                    "Ignoring where the %s costs start, which can't be read: %s", side, err
+                )
+        return starts
+
+    async def async_save(self, starts: Mapping[str, CostStart]) -> None:
+        """Save each side's start."""
+        await self._store.async_save(
+            {
+                side: {
+                    "keys": sorted(start.keys),
+                    "after": start.after.isoformat() if start.after else None,
+                }
+                for side, start in starts.items()
+            }
+        )
+
+    async def async_remove(self) -> None:
+        """Delete the saved starts."""
         await self._store.async_remove()
 
 
@@ -115,9 +231,7 @@ def _snapshot_dict(snapshot: PricingSnapshot) -> dict[str, Any]:
 
 def _snapshot(raw: dict[str, Any]) -> PricingSnapshot:
     plans = raw["plans"]
-    fetched_at = datetime.fromisoformat(raw["fetched_at"])
-    if fetched_at.tzinfo is None:
-        raise ValueError("fetched_at has no time zone")
+    fetched_at = _aware(raw["fetched_at"], "fetched_at")
     return PricingSnapshot(
         icp=_icp(raw["icp"]),
         plans=PlanList(
@@ -132,6 +246,13 @@ def _snapshot(raw: dict[str, Any]) -> PricingSnapshot:
         chart_gaps=tuple(str(gap) for gap in raw["chart_gaps"]),
         missing_chart_fetches=int(raw["missing_chart_fetches"]),
     )
+
+
+def _aware(value: str, name: str) -> datetime:
+    instant = datetime.fromisoformat(value)
+    if instant.tzinfo is None:
+        raise ValueError(f"{name} has no time zone")
+    return instant
 
 
 def _date_str(value: date | None) -> str | None:

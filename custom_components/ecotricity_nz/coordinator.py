@@ -28,6 +28,7 @@ from .api import (
     PlanList,
     PortalClient,
     PortalIndicator,
+    Rate,
     Season,
 )
 from .api.timeframes import ChartReadError, ChartReading, read_chart
@@ -67,7 +68,7 @@ from .statistics import (
     hourly_totals,
     statistic_id,
 )
-from .store import PricingSnapshot, PricingStore
+from .store import CostStart, CostStore, FetchBackoff, PricingSnapshot, PricingStore
 from .tariff import (
     Alignment,
     DayPricing,
@@ -75,6 +76,7 @@ from .tariff import (
     PlanDay,
     billed_plan,
     bucket_names,
+    chart_plan,
     chart_seasons,
     controlled_prices,
     daily_charges,
@@ -98,6 +100,7 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
+_NO_SAVED_PRICING = "no saved pricing"
 _NEW_PLAN = "a different plan was chosen"
 
 
@@ -111,6 +114,12 @@ class EcotricityRuntimeData:
 
 
 type EcotricityConfigEntry = ConfigEntry[EcotricityRuntimeData]
+
+# Each side's half-hours (import's, then export's) for a season and the rates that apply in it,
+# with the rates the charts were drawn with.
+type _Explained = dict[
+    tuple[Season, tuple[Rate, ...], tuple[Rate, ...]], tuple[DaySlots | None, DaySlots | None]
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,11 +226,16 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._fetch_error: str | None = None
         self._fetch_failures = 0
         self._attestation_failures = 0
+        # Fetches setup needed that failed, saved for the next setup retry (`_wait_to_retry`).
+        self._backoff: FetchBackoff | None = None
         self._chart_failures = 0
         self._unsub_half_hour: CALLBACK_TYPE | None = None
         self._half_hour_listeners: list[CALLBACK_TYPE] = []
-        # Past days priced for the cost statistics, for the snapshot and plan they came from.
-        self._costed: tuple[PricingSnapshot, str, dict[date, DayCosts | None]] | None = None
+        # Past days priced for the cost statistics, and each side's half-hours for a season and
+        # the rates that apply in it, for the snapshot and plan they came from.
+        self._costed: (
+            tuple[PricingSnapshot, str, dict[date, DayCosts | None], _Explained] | None
+        ) = None
 
     @property
     def icp(self) -> str:
@@ -240,34 +254,27 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             self._fetch_deferred = False
             await self.async_refresh()
 
-    def day_costs(self, day: date) -> DayCosts | None:
-        """Return what a day's usage is priced with, from the saved pricing. Makes no requests.
-
-        None when no pricing is saved, or no published season covers the day: rates without
-        dates of their own apply to every day, so only the seasons tell which days the saved
-        pricing is for. A side whose charts can't be read has no half-hours; one given its one
-        network rate all day is priced that way, as the sensors show it.
-        """
-        pricer = self.cost_pricer()
-        return None if pricer is None else pricer(day)
-
     def cost_pricer(self) -> Callable[[date], DayCosts | None] | None:
-        """Return `day_costs` for the pricing saved now, which can run in the executor.
+        """Return what prices a past day's usage from the saved pricing, or None without any.
 
-        The plan is chosen here, on the event loop, as choosing it can raise a repair issue. What
-        it returns only reads the saved pricing. None when no pricing is saved.
+        The function returned makes no requests and only reads the saved pricing, so it can run
+        in the executor. The plan is chosen here, on the event loop, as choosing it can raise a
+        repair issue. It gives None for a day no published season covers: rates without dates
+        of their own apply to every day, so only the seasons tell which days the saved pricing
+        is for. A side whose charts can't be read has no half-hours; one given its one network
+        rate all day is priced that way, as the sensors show it.
         """
         snapshot = self._snapshot
         if snapshot is None:  # pragma: no cover - the first refresh always leaves one
             return None
         plan = self._cost_plan(snapshot)
         if self._costed is None or self._costed[:2] != (snapshot, plan.id):
-            self._costed = (snapshot, plan.id, {})
-        priced = self._costed[2]
+            self._costed = (snapshot, plan.id, {}, {})
+        _snapshot, _plan_id, priced, explained = self._costed
 
         def price(day: date) -> DayCosts | None:
             if day not in priced:
-                priced[day] = _day_costs(snapshot.charts, plan, day)
+                priced[day] = _day_costs(snapshot.charts, plan, day, explained)
             return priced[day]
 
         return price
@@ -284,20 +291,28 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             return None
         return cost_keys(self._cost_plan(self._snapshot))
 
-    def earliest_priced_day(self, until: date) -> date | None:
-        """Return the first day, up to `until`, whose import the saved pricing can price."""
-        if self._snapshot is None:  # pragma: no cover - the first refresh always leaves one
+    async def async_earliest_priced_day(self, until: date) -> date | None:
+        """Return the first day, up to `until`, whose import the saved pricing can price.
+
+        Each season's charts are explained to find out, so that runs in the executor.
+        """
+        pricer = self.cost_pricer()
+        pricing = self.cost_pricing()
+        if pricer is None or pricing is None:  # pragma: no cover - the first refresh leaves one
             return None
-        plan = self._cost_plan(self._snapshot)
-        starts = sorted({item.start for item in plan.seasons if item.start <= until})
-        return next(
-            (
-                day
-                for day in starts
-                if (costs := self.day_costs(day)) is not None and costs.import_slots is not None
-            ),
-            None,
-        )
+        starts = sorted({item.start for item in pricing[0].seasons if item.start <= until})
+
+        def earliest() -> date | None:
+            return next(
+                (
+                    day
+                    for day in starts
+                    if (costs := pricer(day)) is not None and costs.import_slots is not None
+                ),
+                None,
+            )
+
+        return await self.hass.async_add_executor_job(earliest)
 
     @property
     def import_loss_factor(self) -> float:
@@ -370,7 +385,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
     async def _async_update_data(self) -> PricingData:
         now = dt_util.utcnow()
         day = now.astimezone(self._local_tz).date()
-        if not self._loaded and await self._async_load(now, day) and self._snapshot is not None:
+        setup = not self._loaded
+        if setup and await self._async_load(now, day) and self._snapshot is not None:
             return self._price_day(self._snapshot, day)
         reason = self._fetch_reason(now, day)
         if reason is None:
@@ -378,7 +394,11 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             self._reset_backoff()
         else:
             LOGGER.debug("Fetching pricing from Ecotricity: %s", reason)
-            fetched = await self._async_fetch(now, day)
+            # Without saved pricing, or with another plan's charts, setup can't start.
+            required = self._snapshot is None or (setup and reason == _NEW_PLAN)
+            if required:
+                self._wait_to_retry(now)
+            fetched = await self._async_fetch(now, day, required=required)
             if fetched is None and self._snapshot is not None:
                 return self._price_day(self._snapshot, day)
             if fetched is None:  # pragma: no cover - _async_fetch raises without a saved copy
@@ -418,11 +438,44 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         """
         self._loaded = True
         saved = await self._store.async_load()
-        if saved is None or saved.icp.icp != self.icp:
-            return False
-        self._snapshot = saved
-        self._fetch_deferred = self._fetch_reason(now, day) not in {None, _NEW_PLAN}
+        if saved is not None and saved.icp.icp == self.icp:
+            self._snapshot = saved
+        reason = self._fetch_reason(now, day)
+        backoff = await self._store.async_load_backoff()
+        if (
+            backoff is not None
+            and reason in {_NO_SAVED_PRICING, _NEW_PLAN}
+            and (backoff.icp, backoff.plan_id) == (self.icp, self._chosen_plan_id())
+        ):
+            # Setup is retrying the same fetch, so it counts on from the last retry.
+            self._backoff = backoff
+            self._fetch_failures = backoff.fetch_failures
+            self._attestation_failures = backoff.attestation_failures
+        elif backoff is not None:
+            # Those failures were for another ICP or plan, or setup no longer needs a fetch.
+            await self._store.async_save_backoff(None)
+        self._fetch_deferred = self._snapshot is not None and reason not in {None, _NEW_PLAN}
         return self._fetch_deferred
+
+    def _wait_to_retry(self, now: datetime) -> None:
+        """Fail setup without a request until it's time to try the fetch it needs again.
+
+        Home Assistant retries setup every few minutes, whatever `retry_after` says, so the
+        failures are saved for the ICP and plan chosen (see `_async_fetch_failed`) and the
+        backoff is kept here.
+        """
+        if (backoff := self._backoff) is None:
+            return
+        retry_at = backoff.failed_at + _retry_delay(backoff.fetch_failures)
+        if now < retry_at:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="fetch_waiting",
+                translation_placeholders={
+                    "time": retry_at.astimezone(self._local_tz).isoformat(timespec="minutes")
+                },
+                retry_after=(retry_at - now).total_seconds(),
+            )
 
     def _fetch_reason(self, now: datetime, day: date) -> str | None:  # noqa: PLR0911 - one return per reason
         """Return why pricing should be fetched now, or None if the saved copy will do.
@@ -433,7 +486,7 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         """
         snapshot = self._snapshot
         if snapshot is None:
-            return "no saved pricing"
+            return _NO_SAVED_PRICING
         if self._fetch_requested:
             return "requested"
         plan = self._select_plan(snapshot.plans)
@@ -465,10 +518,12 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             return "charts missing"
         return None
 
-    async def _async_fetch(self, now: datetime, day: date) -> PricingSnapshot | None:
+    async def _async_fetch(
+        self, now: datetime, day: date, *, required: bool = False
+    ) -> PricingSnapshot | None:
         """Fetch everything, save it and return it, or return None to carry on with the saved copy.
 
-        Without a saved copy to fall back on, a failure fails the update.
+        Without a saved copy to fall back on, or when `required`, a failure fails the update.
         """
         self._fetch_requested = False
         try:
@@ -478,10 +533,12 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             self._attestation_failures += 1
             if self._attestation_failures >= FAILURE_ISSUE_THRESHOLD:
                 self._raise_issue(ISSUE_ATTESTATION)
-            self._fetch_failed(err, "attestation_failed", None)
+            await self._async_fetch_failed(now, err, "attestation_failed", None, required=required)
             return None
         except EcotricityError as err:
-            self._fetch_failed(err, "update_failed", {"error": str(err)})
+            await self._async_fetch_failed(
+                now, err, "update_failed", {"error": str(err)}, required=required
+            )
             return None
         self._attestation_failures = 0
         self._clear_issue(ISSUE_ATTESTATION)
@@ -521,18 +578,38 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         self._snapshot = snapshot
         self._reset_backoff()
         await self._store.async_save(snapshot)
+        if self._backoff is not None:
+            self._backoff = None
+            await self._store.async_save_backoff(None)
         return snapshot
 
-    def _fetch_failed(
-        self, err: EcotricityError, translation_key: str, placeholders: dict[str, str] | None
+    async def _async_fetch_failed(
+        self,
+        now: datetime,
+        err: EcotricityError,
+        translation_key: str,
+        placeholders: dict[str, str] | None,
+        *,
+        required: bool,
     ) -> None:
-        """Back off, and fall back to the saved pricing or fail the update if there isn't any."""
+        """Back off, and fall back to the saved pricing, or fail the update if there isn't any.
+
+        A `required` fetch fails the update even with saved pricing. Setup is retried with a new
+        coordinator, so the failures are saved for the next one.
+        """
         self._fetch_failures += 1
-        retry = min(
-            PRICING_RETRY_INTERVAL * 2 ** (self._fetch_failures - 1), PRICING_RETRY_MAX_INTERVAL
-        )
+        retry = _retry_delay(self._fetch_failures)
         self.update_interval = retry
-        if self._snapshot is None:
+        if required:
+            self._backoff = FetchBackoff(
+                icp=self.icp,
+                plan_id=self._chosen_plan_id(),
+                fetch_failures=self._fetch_failures,
+                attestation_failures=self._attestation_failures,
+                failed_at=now,
+            )
+            await self._store.async_save_backoff(self._backoff)
+        if self._snapshot is None or required:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key=translation_key,
@@ -593,14 +670,17 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                         charts[path] = saved[path]
         return charts
 
+    def _chosen_plan_id(self) -> str:
+        """Return the plan chosen in the options, or an empty string if none was."""
+        return str(self.config_entry.options.get(CONF_PLAN_ID, ""))
+
     def _select_plan(self, plans: PlanList) -> Plan:
         """Return the plan chosen in the options.
 
         If Ecotricity stops offering that plan for the ICP, fall back to the site's default plan
         and raise a repair issue asking for a new choice.
         """
-        plan_id = str(self.config_entry.options.get(CONF_PLAN_ID, ""))
-        if (plan := plans.find(plan_id)) is not None:
+        if (plan := plans.find(self._chosen_plan_id())) is not None:
             self._clear_issue(ISSUE_PLAN_NOT_FOUND)
             return plan
         self._raise_issue(ISSUE_PLAN_NOT_FOUND, {"default": plans.default.name})
@@ -752,20 +832,39 @@ def _ended_periods(plan: Plan, day: date, alignments: tuple[Alignment, Alignment
     return buckets
 
 
-def _day_costs(charts: Mapping[str, ChartReading], plan: Plan, day: date) -> DayCosts | None:
-    """Return what a day's usage is priced with, or None if no published season covers it."""
+def _retry_delay(failures: int) -> timedelta:
+    """Return how long to wait to fetch pricing again after a number of failures in a row."""
+    delay: timedelta = PRICING_RETRY_INTERVAL * 2 ** (failures - 1)
+    return min(delay, PRICING_RETRY_MAX_INTERVAL)
+
+
+def _day_costs(
+    charts: Mapping[str, ChartReading], plan: Plan, day: date, explained: _Explained
+) -> DayCosts | None:
+    """Return what a day's usage is priced with, or None if no published season covers it.
+
+    Every day of a season with the same rates has the same half-hours, so each side's charts are
+    only explained once for them, and kept in `explained`.
+    """
     season = season_for(plan, day)
     if season is None:
         return None
-    sides: list[DaySlots | None] = []
-    for export in (False, True):
-        try:
-            slots, _missing = season_slots(charts, plan, season, day, export=export)
-        except ChartReadError as err:
-            LOGGER.debug("Can't price %s %s: %s", "export" if export else "import", day, err)
-            slots = None
-        sides.append(slots)
-    return DayCosts(sides[0], sides[1], daily_charges(plan, day))
+    key = (
+        season,
+        tuple(rate for rate in plan.rates if rate.applies_on(day)),
+        tuple(rate for rate in chart_plan(plan).rates if rate.applies_on(day)),
+    )
+    if key not in explained:
+        sides: list[DaySlots | None] = []
+        for export in (False, True):
+            try:
+                slots, _missing = season_slots(charts, plan, season, day, export=export)
+            except ChartReadError as err:
+                LOGGER.debug("Can't price %s %s: %s", "export" if export else "import", day, err)
+                slots = None
+            sides.append(slots)
+        explained[key] = (sides[0], sides[1])
+    return DayCosts(*explained[key], daily_charges(plan, day))
 
 
 def _pricing_plan(plan: Plan, plans: PlanList, icp: IcpDetails) -> Plan:
@@ -809,6 +908,7 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         self._portal = portal
         self._pricing = pricing
         self._local_tz = local_tz
+        self._cost_store = CostStore(hass, entry.entry_id)
         # How far each series has been read this session, for series with no statistic yet.
         self._scanned_until: dict[Series, datetime] = {}
         self._import_requested = False
@@ -980,11 +1080,12 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
 
         Both are None when nothing can be priced: no import series, no saved pricing, or no day
         it can price. Every cost statistic is a checkpoint, so they carry on from the one
-        furthest behind, and one that fell behind (or is new) catches up. One without any hours
-        yet starts at the first day the saved pricing can price, rather than reading the
-        portal's whole history again, unless its usage series has been read to the end this
-        session without any readings (see `_scanned_until`), so it isn't read again every day.
-        Their last points go in `points`.
+        furthest behind, and one that fell behind catches up, but never into hours another plan
+        costed (see `_async_side_points`). One on a side without any costs yet starts at the
+        first day the saved pricing can price, rather than reading the portal's whole history
+        again, unless its usage series has been read to the end this session without any
+        readings (see `_scanned_until`), so it isn't read again every day. Their last points go
+        in `points`.
         """
         keys = self._pricing.cost_keys() if IMPORT in last_points else None
         if keys is None:
@@ -994,9 +1095,8 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             sides.append((EXPORT, keys.statistic_keys(export=True)))
         first_start: datetime | None = None
         starts: list[datetime] = []
-        for usage, side_keys in sides:
-            for key in sorted(side_keys):
-                point = await async_last_point(self.hass, statistic_id(self.icp, cost_series(key)))
+        for usage, side_points in (await self._async_cost_points(sides)).items():
+            for key, point in side_points.items():
                 points[key] = point
                 if point is not None:
                     starts.append(point.start + timedelta(hours=1))
@@ -1005,13 +1105,40 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
                     continue
                 if first_start is None:
                     last_day = data_end.astimezone(self._local_tz).date()
-                    if (first := self._pricing.earliest_priced_day(last_day)) is None:
+                    if (first := await self._pricing.async_earliest_priced_day(last_day)) is None:
                         continue
                     first_start = max(data_start, self._day_start(first))
                 starts.append(first_start)
         if not starts:
             return None, None
         return keys, min(starts)
+
+    async def _async_cost_points(
+        self, sides: Sequence[tuple[Series, frozenset[str]]]
+    ) -> dict[Series, dict[str, StatisticPoint | None]]:
+        """Return where each side's cost statistics carry on from, saving where they start."""
+        saved = await self._cost_store.async_load()
+        cost_starts = dict(saved)
+        last = {
+            usage: {
+                key: await async_last_point(self.hass, statistic_id(self.icp, cost_series(key)))
+                for key in sorted(keys)
+            }
+            for usage, keys in sides
+        }
+        # A side with no costs whose plan changed (one with no export rates to one with them,
+        # say) can't tell from its own statistics which hours the old plan was chosen for.
+        costed = max(
+            (point.start for side in last.values() for point in side.values() if point),
+            default=None,
+        )
+        points = {
+            usage: _side_points(usage, last[usage], keys, cost_starts, costed)
+            for usage, keys in sides
+        }
+        if cost_starts != saved:
+            await self._cost_store.async_save(cost_starts)
+        return points
 
     async def _async_import_costs(
         self,
@@ -1084,3 +1211,42 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             carbon_savings_kg=total(carbon),
             hours_imported=hours_imported,
         )
+
+
+def _side_points(
+    usage: Series,
+    points: dict[str, StatisticPoint | None],
+    keys: frozenset[str],
+    cost_starts: dict[str, CostStart],
+    costed: datetime | None,
+) -> dict[str, StatisticPoint | None]:
+    """Return where each of a side's cost statistics carries on from.
+
+    When the side's statistics change (another plan is chosen, or the plan's rates change),
+    the side's latest costed hour is kept in `cost_starts`, as the hours up to it were costed
+    by statistics the plan may not have. A side that had no costed hours, or no statistics at
+    all (the old plan had no rates for it), takes the latest hour costed on any side, `costed`,
+    if that's later, since its own statistics stopped when the old plan was chosen.
+    None of the plan's statistics carries on from before it: one with no hours yet starts from
+    nothing after it, and one with hours from a plan chosen before carries on from that hour.
+    Either way, it doesn't cost hours that are already costed. One that fell behind since then
+    still catches up.
+    """
+    latest = max((point.start for point in points.values() if point), default=None)
+    start = cost_starts.get(usage.key)
+    if start is None or start.keys != keys:
+        after = latest
+        if start is not None and (latest is None or not start.keys):
+            after = max((hour for hour in (latest, costed) if hour is not None), default=None)
+        start = cost_starts[usage.key] = CostStart(keys, after)
+    after = start.after
+    resumed: dict[str, StatisticPoint | None] = {}
+    for key, point in points.items():
+        if point is None:
+            begin = latest if latest is not None else after
+            resumed[key] = None if begin is None else StatisticPoint(begin, 0.0, row=False)
+        elif after is not None and point.start < after:
+            resumed[key] = StatisticPoint(after, point.sum, row=False)
+        else:
+            resumed[key] = point
+    return resumed

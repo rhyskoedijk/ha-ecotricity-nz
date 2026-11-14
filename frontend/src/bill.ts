@@ -219,13 +219,13 @@ function sum(values: number[]): number {
 /** Show an amount the way the bill does: "$1.39", or "($0.45)" for a credit. */
 export function formatAmount(amount: number): string {
   const text = `$${Math.abs(amount).toFixed(2)}`;
-  return isCredit(amount) ? `(${text})` : text;
+  return isCredit(amount, text) ? `(${text})` : text;
 }
 
 /** Show a rate in dollars the way the bill does: up to four places, "(0.21)" for a credit. */
 export function formatRate(rate: number): string {
   const text = trimZeros(Math.abs(rate).toFixed(4));
-  return isCredit(rate) ? `(${text})` : text;
+  return isCredit(rate, text) ? `(${text})` : text;
 }
 
 /** Show a quantity: kWh to two places, days whole unless a day was only partly charged. */
@@ -236,9 +236,9 @@ export function formatQuantity(quantity: number, unit: "kWh" | "days"): string {
   return quantity.toFixed(2);
 }
 
-/** Whether an amount shows as a credit, once rounded to what's shown. */
-function isCredit(amount: number): boolean {
-  return amount < 0 && Math.abs(amount) >= 0.00005;
+/** Whether an amount shows as a credit, once rounded to `shown`: one that rounds to nothing doesn't. */
+function isCredit(amount: number, shown: string): boolean {
+  return amount < 0 && /[1-9]/.test(shown);
 }
 
 /** Drop trailing zeros past two decimal places: 0.1800 is 0.18, 0.0251 stays. */

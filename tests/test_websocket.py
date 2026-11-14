@@ -24,7 +24,7 @@ from custom_components.ecotricity_nz.const import (
 )
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.costs import LINE_ENERGY_SUFFIX, daily_key, levy_key
-from custom_components.ecotricity_nz.statistics import IMPORT, cost_series, statistic_id
+from custom_components.ecotricity_nz.statistics import cost_series, statistic_id
 from custom_components.ecotricity_nz.tariff import (
     ComponentKind,
     DailyCharge,
@@ -117,7 +117,8 @@ async def test_bill_lists_every_rate_as_a_line_in_its_section(
         elif part.kind is ComponentKind.LEVY:
             section, line = lines[levy_key(part)]
             assert section == "other"
-            assert line["usage_statistic_id"] == statistic_id(TEST_ICP, IMPORT)
+            # Its own kWh, so hours that weren't costed don't count.
+            assert line["usage_statistic_id"] == _stat(levy_key(part) + LINE_ENERGY_SUFFIX)
             assert (line["kind"], line["part"]) == ("levy", component_key(part))
         else:
             key = line_key(part, export=rate.is_export)

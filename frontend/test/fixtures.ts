@@ -8,6 +8,8 @@ export const LAYOUT: BillLayout = {
   icp: "0000123456AB1C2",
   network_name: "Example Lines",
   loss_factor: LOSS_FACTOR,
+  // Export has had no losses on the ICPs seen so far.
+  export_loss_factor: 1,
   // Each line's name is what a network might call it, which the card mustn't show.
   sections: [
     {
@@ -23,13 +25,13 @@ export const LAYOUT: BillLayout = {
       section: "energy",
       lines: [
         usage("line_import_supplier_charge_24", "import", "anytime", "Anytime usage", true),
-        usage("line_export_supplier_charge_low", "export", "off_peak", "Off Peak Export"),
+        usage("line_export_supplier_charge_low", "export", "off_peak", "Off Peak Export", true),
       ],
     },
     {
       section: "other",
       lines: [
-        { ...line("import_cost_ea_levy", "energy_imported"), kind: "levy", part: "ea_levy", period: null, name: "EA Levy" },
+        { ...line("line_import_ea_levy", "energy_imported"), kind: "levy", part: "ea_levy", period: null, name: "EA Levy" },
         daily("daily_charge_metering", "metering", "Metering Fee"),
         daily("daily_charge_supplier", "supplier", "Admin & climate positive certification"),
       ],
@@ -64,7 +66,7 @@ export const CHANGES = new Map<string, number | null>([
   ["s:line_import_supplier_charge_24_energy", 7.3],
   ["s:line_export_supplier_charge_low", 5.71 * -0.16],
   ["s:line_export_supplier_charge_low_energy", 5.71],
-  ["s:import_cost_ea_levy", 7.3 * 0.002],
+  ["s:line_import_ea_levy", 7.3 * 0.002],
   ["s:energy_imported", 7.3],
   ["s:daily_charge_metering", 0.35],
   ["s:daily_charge_supplier", 0.3],

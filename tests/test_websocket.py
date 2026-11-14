@@ -23,7 +23,7 @@ from custom_components.ecotricity_nz.const import (
     GST_FACTOR,
 )
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
-from custom_components.ecotricity_nz.costs import LINE_ENERGY_SUFFIX, daily_key, import_key
+from custom_components.ecotricity_nz.costs import LINE_ENERGY_SUFFIX, daily_key, levy_key
 from custom_components.ecotricity_nz.statistics import IMPORT, cost_series, statistic_id
 from custom_components.ecotricity_nz.tariff import (
     ComponentKind,
@@ -89,6 +89,7 @@ async def test_bill_lists_every_rate_as_a_line_in_its_section(
     assert result["icp"] == TEST_ICP
     assert result["network_name"] == icp.network_name
     assert result["loss_factor"] == icp.loss_factor_consumption
+    assert result["export_loss_factor"] == (icp.loss_factor_generation or 1.0)
     assert result["gst_rate"] == pytest.approx(GST_FACTOR - 1)
     # Sections come in the bill's order.
     order = [section["section"] for section in result["sections"]]
@@ -114,7 +115,7 @@ async def test_bill_lists_every_rate_as_a_line_in_its_section(
             assert line["kind"] == "daily"
             assert line["part"] == daily_charge_key(charge).removesuffix("_rate")
         elif part.kind is ComponentKind.LEVY:
-            section, line = lines[import_key(part)]
+            section, line = lines[levy_key(part)]
             assert section == "other"
             assert line["usage_statistic_id"] == statistic_id(TEST_ICP, IMPORT)
             assert (line["kind"], line["part"]) == ("levy", component_key(part))
@@ -124,8 +125,8 @@ async def test_bill_lists_every_rate_as_a_line_in_its_section(
             section, line = lines[key]
             assert section == ("network" if rate.is_network else "energy")
             assert line["usage_statistic_id"] == _stat(key + LINE_ENERGY_SUFFIX)
-            # Ecotricity's import is charged on usage plus losses.
-            assert line["losses"] is (not rate.is_network and not rate.is_export)
+            # Ecotricity's import and export are charged on the kWh plus losses.
+            assert line["losses"] is not rate.is_network
             # Named by side and period, like the price sensors, not by the plan's wording.
             assert line["kind"] == "usage"
             assert line["part"] == ("export" if rate.is_export else "import")
@@ -134,6 +135,27 @@ async def test_bill_lists_every_rate_as_a_line_in_its_section(
         # GST is charged on the bill's total, not line by line.
         assert "gst" not in line
         assert line["statistic_id"] == _stat(line["key"])
+
+
+@pytest.mark.freeze_time(WINTER_PEAK)
+async def test_bill_sends_the_icps_loss_factors_for_each_side(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    # The card adds export losses from the generation factor, so one other than 1 must reach it
+    # as it is, apart from the consumption factor.
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(
+        icp, loss_factor_consumption=1.05, loss_factor_generation=1.02
+    )
+    await _setup(hass, config_entry)
+
+    response = await _bill(hass_ws_client, hass)
+    assert response["success"]
+    assert response["result"]["loss_factor"] == 1.05
+    assert response["result"]["export_loss_factor"] == 1.02
 
 
 def test_bill_lists_daily_charges_then_import_then_export_in_each_section() -> None:

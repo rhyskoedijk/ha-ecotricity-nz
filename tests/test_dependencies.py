@@ -24,8 +24,8 @@ def test_frontend_matches_the_home_assistant_tests_run_on() -> None:
 
 
 def test_hacs_minimum_is_the_release_tests_run_on() -> None:
-    # HACS offers the integration to every Home Assistant version from this one, so it must be
-    # the monthly release the `pytest-homeassistant-custom-component` pin tests against.
+    # The Marketplace offers the integration to every Home Assistant version from this one, so it
+    # must be the monthly release the `pytest-homeassistant-custom-component` pin tests against.
     hacs = json.loads((Path(__file__).parents[1] / "hacs.json").read_text(encoding="utf-8"))
     year, month, _ = hacs["homeassistant"].split(".")
 

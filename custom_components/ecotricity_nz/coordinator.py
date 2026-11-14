@@ -277,10 +277,16 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
         )
 
     @property
-    def loss_factor(self) -> float:
-        """Return the ICP's consumption loss factor, which bills apply to Ecotricity's rates."""
+    def import_loss_factor(self) -> float:
+        """Return the ICP's consumption loss factor, which bills apply to Ecotricity's import."""
         icp = self._snapshot.icp if self._snapshot else None
         return (icp.loss_factor_consumption if icp else None) or 1.0
+
+    @property
+    def export_loss_factor(self) -> float:
+        """Return the ICP's generation loss factor, applied to Ecotricity's export the same way."""
+        icp = self._snapshot.icp if self._snapshot else None
+        return (icp.loss_factor_generation if icp else None) or 1.0
 
     def _cost_plan(self, snapshot: PricingSnapshot) -> Plan:
         """Return the plan usage is priced with: the one the sensors price."""
@@ -988,7 +994,8 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
             self._pricing.day_costs,
             keys,
             tz=self._local_tz,
-            loss_factor=self._pricing.loss_factor,
+            import_loss_factor=self._pricing.import_loss_factor,
+            export_loss_factor=self._pricing.export_loss_factor,
             settled_before=settled_before,
         )
         for key, hours in costs.items():

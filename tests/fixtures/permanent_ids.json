@@ -43,22 +43,13 @@
     "daily_charge_metering",
     "daily_charge_network",
     "daily_charge_supplier",
-    "daily_charge_total",
     "energy_exported",
     "energy_imported",
-    "export_gst",
-    "export_network",
-    "export_supplier",
-    "export_total",
-    "gst",
-    "import_cost_ea_levy",
-    "import_cost_network",
-    "import_cost_supplier",
-    "import_cost_total",
     "line_export_network_charge_high",
     "line_export_network_charge_high_energy",
     "line_export_supplier_charge_24",
     "line_export_supplier_charge_24_energy",
+    "line_import_ea_levy",
     "line_import_network_charge_low",
     "line_import_network_charge_low_energy",
     "line_import_supplier_charge_4",
@@ -66,7 +57,6 @@
     "line_import_supplier_charge_high",
     "line_import_supplier_charge_high_energy",
     "total_electricity_compensation",
-    "total_electricity_cost",
-    "total_electricity_net_billed"
+    "total_electricity_cost"
   ]
 }

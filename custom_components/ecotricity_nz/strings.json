@@ -10,7 +10,7 @@
           "password": "Portal password"
         },
         "data_description": {
-          "icp": "The 15-character ICP number from your bill, for example 0000123456AB1C2.",
+          "icp": "The 15-character ICP number on the Electricity Usage Details page of your bill, for example `ICP 0000123456AB1C2`.",
           "account_number": "Optional. The account number you log in to the Ecotricity customer portal with. If you leave this blank, no usage data will be imported.",
           "password": "Optional. Your Ecotricity customer portal password. If you leave this blank, no usage data will be imported."
         }

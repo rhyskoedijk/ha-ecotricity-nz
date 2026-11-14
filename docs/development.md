@@ -86,7 +86,7 @@ Any one of these works:
 
 - Copy `custom_components/ecotricity_nz` into the `custom_components` folder of your Home Assistant config directory, then restart.
 - Download `ha_ecotricity_nz.zip` from a GitHub release and unzip it into `custom_components/ecotricity_nz`.
-- In HACS, add this repository as a custom repository, then pick a branch or pre-release from the download dialog. A branch has no built bill card, so it's left out until you build it (`npm run build --prefix frontend`) and copy `custom_components/ecotricity_nz/frontend` across.
+- In the Marketplace (**Settings > Marketplace**, or HACS before 2026.11), add this repository as a custom repository, then pick a branch from the download dialog, or turn on the repository's **Pre-release** switch to be offered pre-releases. A branch has no built bill card, so it's left out until you build it (`npm run build --prefix frontend`) and copy `custom_components/ecotricity_nz/frontend` across.
 
 ## Live smoke test
 
@@ -205,6 +205,6 @@ The git tag is the only place the version is set. `manifest.json` and `pyproject
 
 1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section.
 2. Create a GitHub release with a tag like `0.2.0` (no `v` prefix).
-3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, builds the bill card, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which HACS installs.
+3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, builds the bill card, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which the Marketplace installs (`zip_release` in `hacs.json`).
 
 Nothing is committed, pushed or released without the maintainer's approval.

@@ -2,7 +2,6 @@
   "name": "Ecotricity NZ",
   "country": "NZ",
   "homeassistant": "2026.10.4",
-  "render_readme": true,
   "zip_release": true,
   "filename": "ha_ecotricity_nz.zip"
 }

@@ -56,6 +56,22 @@ describe("buildBill", () => {
     expect(bill.sections[0]?.lines[1]?.quantity).toBeCloseTo(6.64);
   });
 
+  it("shows no losses where the loss factor is 1", () => {
+    // Ecotricity's export is charged on losses too, but this ICP's generation factor adds none.
+    expect(bill.sections[1]?.lines[1]?.losses).toBeNull();
+    const lossless = buildBill({ ...LAYOUT, loss_factor: 1 }, CHANGES, 1);
+    expect(lossless.sections[1]?.lines[0]?.losses).toBeNull();
+  });
+
+  it("credits Ecotricity's export on the export plus losses, with the generation loss factor", () => {
+    const factor = 1.02;
+    const credited = new Map([...CHANGES, ["s:line_export_supplier_charge_low", 5.71 * factor * -0.16]]);
+    const credit = buildBill({ ...LAYOUT, export_loss_factor: factor }, credited, 1).sections[1]?.lines[1];
+    expect(credit?.quantity).toBeCloseTo(5.71);
+    expect(credit?.losses).toBeCloseTo(5.71 * (factor - 1));
+    expect(credit?.rate).toBeCloseTo(-0.16);
+  });
+
   it("charges every line its units, plus any losses, at its unit price", () => {
     for (const line of bill.sections.flatMap((section) => section.lines)) {
       expect((line.quantity + (line.losses ?? 0)) * (line.rate ?? 0)).toBeCloseTo(line.amount);

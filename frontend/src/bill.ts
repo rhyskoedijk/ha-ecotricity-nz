@@ -25,7 +25,7 @@ export interface LayoutLine {
   statistic_id: string;
   /** The kWh it's charged on, or null for a daily charge. */
   usage_statistic_id: string | null;
-  /** Whether it's charged on the usage plus line losses. */
+  /** Whether it's charged on the kWh plus line losses, as Ecotricity's import and export are. */
   losses: boolean;
 }
 
@@ -33,7 +33,10 @@ export interface LayoutLine {
 export interface BillLayout {
   icp: string;
   network_name: string;
+  /** The consumption loss factor, for import. */
   loss_factor: number;
+  /** The generation loss factor, for export. */
+  export_loss_factor: number;
   sections: { section: SectionKind; lines: LayoutLine[] }[];
   /** The GST rate charged on the total, such as 0.15. */
   gst_rate: number;
@@ -47,7 +50,7 @@ interface BillLine {
   /** What it's charged on: kWh used, or days. Any losses are charged on top. */
   quantity: number;
   unit: "kWh" | "days";
-  /** kWh of line losses charged on top of the quantity, for Ecotricity's import, or null. */
+  /** kWh of line losses charged on top of the quantity, or null where there are none. */
   losses: number | null;
   /** The average rate over the range, in dollars excluding GST, or null with nothing to charge on. */
   rate: number | null;
@@ -176,7 +179,8 @@ export function buildBill(layout: BillLayout, changes: Changes, days: number, op
       if (!amount && !usage && !options.showEmptyLines) {
         continue;
       }
-      const losses = line.losses ? usage * (layout.loss_factor - 1) : null;
+      const factor = line.part === "export" ? layout.export_loss_factor : layout.loss_factor;
+      const losses = line.losses && factor !== 1 ? usage * (factor - 1) : null;
       const charged = usage + (losses ?? 0);
       lines.push({
         label: lineLabel(line),

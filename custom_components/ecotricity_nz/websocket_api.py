@@ -27,11 +27,11 @@ from homeassistant.util import dt as dt_util
 from .api.models import RateUnit
 from .const import CONF_ICP, DOMAIN, GST_FACTOR
 from .costs import (
-    DAILY_CHARGE_TOTAL,
     LINE_ENERGY_SUFFIX,
+    TOTAL_ELECTRICITY_COST,
     charged_days,
     daily_key,
-    import_key,
+    levy_key,
 )
 from .statistics import IMPORT, cost_series, statistic_id
 from .tariff import (
@@ -101,7 +101,7 @@ class BillLine:
     usage: str | None
     """The key of the kWh it's charged on, or None for a daily charge."""
     losses: bool
-    """Whether it's charged on the usage plus line losses."""
+    """Whether it's charged on the kWh plus line losses: Ecotricity's import and export are."""
     order: int
     """Daily charges first, then import, then export, as the bill lists them."""
 
@@ -162,7 +162,7 @@ def _line(rate: Rate, names: dict[str, str]) -> BillLine | None:
             return None
         return BillLine(
             BillSection.OTHER,
-            import_key(part),
+            levy_key(part),
             LineKind.LEVY,
             part=component_key(part),
             period=None,
@@ -183,7 +183,7 @@ def _line(rate: Rate, names: dict[str, str]) -> BillLine | None:
         period=bucket_period(part.bucket, names),
         name=bucket_name(part.bucket, names),
         usage=key + LINE_ENERGY_SUFFIX,
-        losses=part.kind is ComponentKind.SUPPLIER and not rate.is_export,
+        losses=part.kind is ComponentKind.SUPPLIER,
         order=2 if rate.is_export else 1,
     )
 
@@ -240,6 +240,7 @@ def ws_bill(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
             "icp": icp.icp,
             "network_name": icp.network_name,
             "loss_factor": icp.loss_factor_consumption or 1.0,
+            "export_loss_factor": icp.loss_factor_generation or 1.0,
             "sections": [
                 {"section": section, "lines": lines} for section, lines in sections.items()
             ],
@@ -266,6 +267,7 @@ async def ws_bill_days(
     Daily charges are only charged for days whose usage has been imported, so a range reaching
     past the latest import, or into a gap, has fewer days than it spans. Each priced hour carries
     its share of its NZ day (see `charged_days`), the same way the cost statistics spread them.
+    The total cost has a row for every priced hour, so its hours are the ones charged.
     """
     entry = _entry_for(hass, connection, msg)
     if entry is None:
@@ -275,7 +277,7 @@ async def ws_bill_days(
     if start is None or end is None:
         connection.send_error(msg["id"], ERR_INVALID_FORMAT, "Invalid start or end time")
         return
-    stat_id = statistic_id(entry.data[CONF_ICP], cost_series(DAILY_CHARGE_TOTAL))
+    stat_id = statistic_id(entry.data[CONF_ICP], cost_series(TOTAL_ELECTRICITY_COST))
     rows = await get_instance(hass).async_add_executor_job(
         statistics_during_period, hass, start, end, {stat_id}, "hour", None, {"change"}
     )

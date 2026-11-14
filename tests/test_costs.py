@@ -9,26 +9,19 @@ import pytest
 
 from custom_components.ecotricity_nz.api import IntervalReading, RateUnit
 from custom_components.ecotricity_nz.costs import (
-    DAILY_CHARGE_TOTAL,
-    EXPORT_GST,
-    EXPORT_TOTAL,
     EXPORT_TOTALS,
-    GST,
-    IMPORT_COST_TOTAL,
     IMPORT_TOTALS,
     LINE_ENERGY_SUFFIX,
     TOTAL_ELECTRICITY_COMPENSATION,
     TOTAL_ELECTRICITY_COST,
-    TOTAL_ELECTRICITY_NET_BILLED,
     CostKeys,
     DayCosts,
     charged_days,
     cost_keys,
     cost_label,
-    export_key,
     hourly_costs,
-    import_key,
     is_line_energy,
+    levy_key,
 )
 from custom_components.ecotricity_nz.tariff import (
     ComponentKind,
@@ -52,27 +45,33 @@ from tests.conftest import (
 )
 
 HALF_HOUR = timedelta(minutes=30)
-SUPPLIER = PriceComponent(ComponentKind.SUPPLIER, "Uncontrolled Usage", 20.0)
-NETWORK = PriceComponent(ComponentKind.NETWORK, "Uncontrolled Usage", 10.0)
+SUPPLIER = PriceComponent(ComponentKind.SUPPLIER, "Uncontrolled Usage", 20.0, "CHARGE_24")
+NETWORK = PriceComponent(ComponentKind.NETWORK, "Uncontrolled Usage", 10.0, "CHARGE_24")
 LEVY = PriceComponent(ComponentKind.LEVY, "EA Levy", 0.1)
-EXPORT_CREDIT = PriceComponent(ComponentKind.SUPPLIER, "Export", -12.0)
-EXPORT_FEE = PriceComponent(ComponentKind.NETWORK, "Export Fee", 1.5)
+EXPORT_CREDIT = PriceComponent(ComponentKind.SUPPLIER, "Export", -12.0, "EG_CHARGE_24")
+EXPORT_FEE = PriceComponent(ComponentKind.NETWORK, "Export Fee", 1.5, "EG_CHARGE_24")
 DAILY = (
     DailyCharge("Daily Network Charges", 96.0, is_network=True),
     DailyCharge("Metering Fee", 48.0, is_network=False),
 )
+
+
+def _line(part: PriceComponent, *, export: bool = False) -> str:
+    line = line_key(part, export=export)
+    assert line is not None
+    return line
+
+
+SUPPLIER_LINE = _line(SUPPLIER)
+NETWORK_LINE = _line(NETWORK)
+CREDIT_LINE = _line(EXPORT_CREDIT, export=True)
+FEE_LINE = _line(EXPORT_FEE, export=True)
 KEYS = CostKeys(
     import_keys=IMPORT_TOTALS
-    | frozenset(
-        {
-            "import_cost_supplier",
-            "import_cost_network",
-            "import_cost_ea_levy",
-            "daily_charge_network",
-            "daily_charge_metering",
-        }
-    ),
-    export_keys=EXPORT_TOTALS | frozenset({"export_supplier", "export_network"}),
+    | frozenset({"line_import_ea_levy", "daily_charge_network", "daily_charge_metering"}),
+    export_keys=EXPORT_TOTALS,
+    import_lines=frozenset({SUPPLIER_LINE, NETWORK_LINE}),
+    export_lines=frozenset({CREDIT_LINE, FEE_LINE}),
 )
 # The portal's latest data is well after the test days, so every gap counts as settled.
 SETTLED = datetime(2000, 1, 1, tzinfo=UTC)
@@ -101,7 +100,8 @@ def _costs(
     exported: list[IntervalReading] | None = None,
     days: dict[date, DayCosts] | None = None,
     *,
-    loss_factor: float = 1.0,
+    import_loss_factor: float = 1.0,
+    export_loss_factor: float = 1.0,
     settled_before: datetime = SETTLED,
 ) -> dict[str, dict[datetime, float]]:
     priced = days or {}
@@ -111,7 +111,8 @@ def _costs(
         priced.get,
         KEYS,
         tz=NZ,
-        loss_factor=loss_factor,
+        import_loss_factor=import_loss_factor,
+        export_loss_factor=export_loss_factor,
         settled_before=settled_before,
     )
 
@@ -125,22 +126,40 @@ def test_each_hour_is_split_into_supplier_network_and_levy_costs() -> None:
 
     hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
     # Two half-hours of 1 kWh each, in NZD.
-    assert costs["import_cost_supplier"][hour] == pytest.approx(2 * SUPPLIER.price / 100)
-    assert costs["import_cost_network"][hour] == pytest.approx(2 * NETWORK.price / 100)
-    assert costs["import_cost_ea_levy"][hour] == pytest.approx(2 * LEVY.price / 100)
-    assert len(costs["import_cost_supplier"]) == 24
+    assert costs[SUPPLIER_LINE][hour] == pytest.approx(2 * SUPPLIER.price / 100)
+    assert costs[NETWORK_LINE][hour] == pytest.approx(2 * NETWORK.price / 100)
+    assert costs["line_import_ea_levy"][hour] == pytest.approx(2 * LEVY.price / 100)
+    assert len(costs[SUPPLIER_LINE]) == 24
 
 
-def test_loss_factor_applies_to_supplier_import_only() -> None:
+def test_consumption_loss_factor_applies_to_supplier_import_only() -> None:
     without = _costs(_readings(DAY), _readings(DAY), PRICED)
-    with_losses = _costs(_readings(DAY), _readings(DAY), PRICED, loss_factor=1.05)
+    with_losses = _costs(_readings(DAY), _readings(DAY), PRICED, import_loss_factor=1.05)
 
     hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
-    assert with_losses["import_cost_supplier"][hour] == pytest.approx(
-        without["import_cost_supplier"][hour] * 1.05
-    )
-    for key in ("import_cost_network", "import_cost_ea_levy", "export_supplier"):
+    assert with_losses[SUPPLIER_LINE][hour] == pytest.approx(without[SUPPLIER_LINE][hour] * 1.05)
+    # The losses are charged on top of the usage, which stays as it was.
+    energy = SUPPLIER_LINE + LINE_ENERGY_SUFFIX
+    assert with_losses[energy][hour] == pytest.approx(without[energy][hour])
+    for key in (NETWORK_LINE, "line_import_ea_levy", CREDIT_LINE):
         assert with_losses[key][hour] == pytest.approx(without[key][hour])
+
+
+def test_generation_loss_factor_applies_to_supplier_export_only() -> None:
+    # Like import, Ecotricity's export rates are charged on the export plus losses, and the
+    # network's on the export alone.
+    priced = {DAY: DayCosts(_all_day(SUPPLIER), _all_day(EXPORT_CREDIT, EXPORT_FEE), ())}
+    without = _costs(_readings(DAY), _readings(DAY), priced)
+    with_losses = _costs(_readings(DAY), _readings(DAY), priced, export_loss_factor=1.02)
+
+    hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
+    assert with_losses[CREDIT_LINE][hour] == pytest.approx(without[CREDIT_LINE][hour] * 1.02)
+    energy = CREDIT_LINE + LINE_ENERGY_SUFFIX
+    assert with_losses[energy][hour] == pytest.approx(without[energy][hour])
+    for key in (FEE_LINE, SUPPLIER_LINE, TOTAL_ELECTRICITY_COST):
+        assert with_losses[key][hour] == pytest.approx(without[key][hour])
+    credited = 2 * (EXPORT_CREDIT.price * 1.02 + EXPORT_FEE.price) / 100
+    assert with_losses[TOTAL_ELECTRICITY_COMPENSATION][hour] == pytest.approx(-credited * 1.15)
 
 
 def test_gst_is_added_to_import_daily_charges_and_export() -> None:
@@ -149,55 +168,31 @@ def test_gst_is_added_to_import_daily_charges_and_export() -> None:
     hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
     energy = 2 * (SUPPLIER.price + NETWORK.price + LEVY.price) / 100
     daily = sum(charge.price for charge in DAILY) / 24 / 100
-    assert costs[IMPORT_COST_TOTAL][hour] == pytest.approx(energy)
-    assert costs[DAILY_CHARGE_TOTAL][hour] == pytest.approx(daily)
-    assert costs[GST][hour] == pytest.approx((energy + daily) * 0.15)
     # Everything charged for using electricity, for the Energy dashboard.
     assert costs[TOTAL_ELECTRICITY_COST][hour] == pytest.approx((energy + daily) * 1.15)
-    # Export parts exclude GST, like import's. Its GST is its own statistic, adding to the credit
-    # as bills charge GST on the net total, and import's GST is the same with or without export.
+    # Export lines exclude GST, like import's. Bills charge GST on the net total, so it adds to
+    # the credit, and the import side's cost is the same with or without export.
     credit = 2 * EXPORT_CREDIT.price / 100
-    assert costs["export_supplier"][hour] == pytest.approx(credit)
-    assert costs[EXPORT_TOTAL][hour] == pytest.approx(credit)
-    assert costs[EXPORT_GST][hour] == pytest.approx(credit * 0.15)
-    assert costs[EXPORT_GST][hour] < 0
-    assert costs[GST] == _costs(_readings(DAY), days=PRICED)[GST]
+    assert costs[CREDIT_LINE][hour] == pytest.approx(credit)
+    assert costs[TOTAL_ELECTRICITY_COMPENSATION][hour] == pytest.approx(-credit * 1.15)
+    alone = _costs(_readings(DAY), days=PRICED)
+    assert costs[TOTAL_ELECTRICITY_COST] == alone[TOTAL_ELECTRICITY_COST]
 
 
-def test_net_billed_takes_export_credits_off_everything_charged() -> None:
-    costs = _costs(_readings(DAY), _readings(DAY), PRICED)
-
-    hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
-    charged = (2 * (SUPPLIER.price + NETWORK.price + LEVY.price) + 144.0 / 24) * 1.15 / 100
-    credit = 2 * EXPORT_CREDIT.price * 1.15 / 100
-    assert credit < 0
-    assert costs[TOTAL_ELECTRICITY_NET_BILLED][hour] == pytest.approx(charged + credit)
-    assert costs[TOTAL_ELECTRICITY_NET_BILLED][hour] == pytest.approx(
-        costs[TOTAL_ELECTRICITY_COST][hour] + costs[EXPORT_TOTAL][hour] + costs[EXPORT_GST][hour]
+def test_lines_levies_and_daily_charges_add_up_to_the_energy_dashboards_totals() -> None:
+    # Nothing worked out from the other statistics is stored, so these must give the bill.
+    costs = _costs(
+        _readings(DAY), _readings(DAY), PRICED, import_loss_factor=1.05, export_loss_factor=1.02
     )
 
-
-def test_net_billed_without_export_is_the_total_cost() -> None:
-    costs = _costs(_readings(DAY), days=PRICED)
-
-    assert costs[TOTAL_ELECTRICITY_NET_BILLED] == costs[TOTAL_ELECTRICITY_COST]
-
-
-def test_net_billed_waits_for_a_recent_hours_export() -> None:
-    # The last hour's import is complete, but its export is a half-hour short.
-    last_hour = datetime.combine(DAY, time(23), NZ).astimezone(UTC)
-    exported = _readings(DAY)[:-1]
-
-    recent = _costs(_readings(DAY), exported, PRICED, settled_before=last_hour)
-    settled = _costs(
-        _readings(DAY), exported, PRICED, settled_before=last_hour + timedelta(hours=1)
-    )
-
-    assert last_hour in recent[TOTAL_ELECTRICITY_COST]
-    assert last_hour not in recent[TOTAL_ELECTRICITY_NET_BILLED]
-    assert settled[TOTAL_ELECTRICITY_NET_BILLED][last_hour] == pytest.approx(
-        settled[TOTAL_ELECTRICITY_COST][last_hour] + EXPORT_CREDIT.price * 1.15 / 100
-    )
+    # Levies, daily charges and lines; a line's kWh isn't an amount.
+    imported = (KEYS.import_keys - IMPORT_TOTALS) | KEYS.import_lines
+    for hour, total in costs[TOTAL_ELECTRICITY_COST].items():
+        charged = sum(costs[key][hour] for key in imported)
+        assert total == pytest.approx(charged * 1.15)
+    for hour, compensation in costs[TOTAL_ELECTRICITY_COMPENSATION].items():
+        credited = sum(costs[key][hour] for key in KEYS.export_lines)
+        assert compensation == pytest.approx(-credited * 1.15)
 
 
 def test_export_keeps_its_sign() -> None:
@@ -206,16 +201,12 @@ def test_export_keeps_its_sign() -> None:
 
     hour = datetime.combine(DAY, time(8), NZ).astimezone(UTC)
     # A credit is negative, and a network that charges to export is a positive cost.
-    assert costs["export_supplier"][hour] == pytest.approx(2 * EXPORT_CREDIT.price / 100)
-    assert costs["export_supplier"][hour] < 0
-    assert costs["export_network"][hour] == pytest.approx(2 * EXPORT_FEE.price / 100)
-    assert costs[EXPORT_TOTAL][hour] == pytest.approx(
-        2 * (EXPORT_CREDIT.price + EXPORT_FEE.price) / 100
-    )
+    assert costs[CREDIT_LINE][hour] == pytest.approx(2 * EXPORT_CREDIT.price / 100)
+    assert costs[CREDIT_LINE][hour] < 0
+    assert costs[FEE_LINE][hour] == pytest.approx(2 * EXPORT_FEE.price / 100)
     # The Energy dashboard counts money received as positive compensation, GST included.
-    assert costs[EXPORT_GST][hour] == pytest.approx(costs[EXPORT_TOTAL][hour] * 0.15)
     assert costs[TOTAL_ELECTRICITY_COMPENSATION][hour] == pytest.approx(
-        -costs[EXPORT_TOTAL][hour] * 1.15
+        -2 * (EXPORT_CREDIT.price + EXPORT_FEE.price) * 1.15 / 100
     )
 
 
@@ -251,7 +242,7 @@ def test_side_without_pricing_is_left_out() -> None:
     costs = _costs(_readings(DAY), _readings(DAY), priced)
 
     assert TOTAL_ELECTRICITY_COST in costs
-    assert not EXPORT_TOTALS & costs.keys()
+    assert not (EXPORT_TOTALS | KEYS.export_lines) & costs.keys()
 
 
 def test_recent_hour_missing_a_half_hour_is_left_out_until_settled() -> None:
@@ -262,7 +253,7 @@ def test_recent_hour_missing_a_half_hour_is_left_out_until_settled() -> None:
     settled = _costs(readings, days=PRICED, settled_before=last_hour + timedelta(hours=1))
 
     assert last_hour not in recent[TOTAL_ELECTRICITY_COST]
-    assert settled["import_cost_supplier"][last_hour] == pytest.approx(SUPPLIER.price / 100)
+    assert settled[SUPPLIER_LINE][last_hour] == pytest.approx(SUPPLIER.price / 100)
 
 
 def test_parts_that_dont_apply_are_zero_in_priced_hours() -> None:
@@ -271,9 +262,9 @@ def test_parts_that_dont_apply_are_zero_in_priced_hours() -> None:
     priced = {DAY: DayCosts(_all_day(SUPPLIER, NETWORK), _all_day(EXPORT_CREDIT), ())}
     costs = _costs(_readings(DAY), _readings(DAY), priced)
 
-    assert set(costs["import_cost_ea_levy"].values()) == {0.0}
-    assert set(costs["export_network"].values()) == {0.0}
-    assert len(costs["import_cost_ea_levy"]) == 24
+    assert set(costs["line_import_ea_levy"].values()) == {0.0}
+    assert set(costs[FEE_LINE].values()) == {0.0}
+    assert len(costs["line_import_ea_levy"]) == 24
 
 
 def test_price_combines_supplier_and_network_rates_from_different_periods() -> None:
@@ -289,13 +280,13 @@ def test_price_combines_supplier_and_network_rates_from_different_periods() -> N
     costs = _costs(readings, days=priced)
 
     # Each half-hour is charged its own supplier and network rate, whatever their periods.
-    expected: dict[str, dict[datetime, float]] = defaultdict(lambda: defaultdict(float))
+    expected: dict[datetime, float] = defaultdict(float)
     for reading in readings:
         for part in slots[False].at(reading.start.astimezone(NZ)).components:
-            hour = reading.start.replace(minute=0)
-            expected[import_key(part)][hour] += reading.value * part.price / 100
-    for key, hours in expected.items():
-        assert costs[key] == pytest.approx(dict(hours))
+            expected[reading.start.replace(minute=0)] += reading.value * part.price / 100
+    assert costs[TOTAL_ELECTRICITY_COST] == pytest.approx(
+        {hour: cost * 1.15 for hour, cost in expected.items()}
+    )
 
 
 def test_each_rate_is_a_bill_line_charged_on_its_own_usage() -> None:
@@ -313,7 +304,8 @@ def test_each_rate_is_a_bill_line_charged_on_its_own_usage() -> None:
         {day: DayCosts(slots, None, ())}.get,
         keys,
         tz=NZ,
-        loss_factor=1.0,
+        import_loss_factor=1.0,
+        export_loss_factor=1.0,
         settled_before=SETTLED,
     )
 
@@ -326,11 +318,10 @@ def test_each_rate_is_a_bill_line_charged_on_its_own_usage() -> None:
                 expected[line + LINE_ENERGY_SUFFIX][hour] += reading.value
     for key, hours in expected.items():
         assert costs[key] == pytest.approx(dict(hours)), key
-    # The lines of each kind add up to its part of the bill, and their kWh to the usage.
+    # The lines of each kind charge for all of the usage.
     for kind in (ComponentKind.SUPPLIER, ComponentKind.NETWORK):
         lines = [key for key in keys.import_lines if f"_{kind}_" in key]
-        for hour, value in costs[f"import_cost_{kind}"].items():
-            assert sum(costs[line][hour] for line in lines) == pytest.approx(value)
+        for hour in costs[TOTAL_ELECTRICITY_COST]:
             usage = sum(r.value for r in readings if r.start.replace(minute=0) == hour)
             assert sum(costs[line + LINE_ENERGY_SUFFIX][hour] for line in lines) == pytest.approx(
                 usage
@@ -350,7 +341,8 @@ def test_two_rates_in_one_bucket_are_one_line_charged_on_the_usage_once() -> Non
         {DAY: DayCosts(_all_day(first, second), None, ())}.get,
         keys,
         tz=NZ,
-        loss_factor=1.0,
+        import_loss_factor=1.0,
+        export_loss_factor=1.0,
         settled_before=SETTLED,
     )
 
@@ -383,12 +375,13 @@ def test_cost_keys_come_from_the_plans_rates() -> None:
         if not rate.price or rate.is_controlled or rate.unit is not RateUnit.PER_KWH:
             continue
         part = rate_component(rate)
-        if rate.is_export:
-            assert export_key(part) in keys.export_keys
+        if part.kind is ComponentKind.LEVY:
+            assert (levy_key(part) in keys.import_keys) is not rate.is_export
         else:
-            assert import_key(part) in keys.import_keys
+            assert line_key(part, export=rate.is_export) in keys.import_lines | keys.export_lines
     assert keys.import_keys >= IMPORT_TOTALS
-    assert keys.export_keys >= EXPORT_TOTALS
+    assert keys.export_lines
+    assert keys.export_keys == EXPORT_TOTALS
     assert any(key.startswith("daily_charge_") for key in keys.import_keys)
 
 
@@ -409,42 +402,39 @@ def test_daily_charge_priced_at_nothing_has_no_statistic() -> None:
     costs = _costs(_readings(DAY), days=priced)
 
     assert "daily_charge_supplier" not in costs
-    assert sum(costs[DAILY_CHARGE_TOTAL].values()) == pytest.approx(
-        sum(charge.price for charge in DAILY) / 100
+    charged = sum(
+        sum(costs[key].values()) for key in ("daily_charge_network", "daily_charge_metering")
     )
+    assert charged == pytest.approx(sum(charge.price for charge in DAILY) / 100)
 
 
 def test_export_without_export_statistics_is_left_out() -> None:
     # Export rates priced at nothing give no export statistics, though the half-hours are priced.
     free = PriceComponent(ComponentKind.SUPPLIER, "Export", 0.0)
     priced = {DAY: DayCosts(_all_day(SUPPLIER), _all_day(free), ())}
-    keys = CostKeys(import_keys=KEYS.import_keys, export_keys=frozenset())
+    keys = CostKeys(
+        import_keys=KEYS.import_keys, export_keys=frozenset(), import_lines=KEYS.import_lines
+    )
     costs = hourly_costs(
         _readings(DAY),
         _readings(DAY),
         priced.get,
         keys,
         tz=NZ,
-        loss_factor=1.0,
+        import_loss_factor=1.0,
+        export_loss_factor=1.0,
         settled_before=SETTLED,
     )
 
-    assert not EXPORT_TOTALS & costs.keys()
-    assert costs[TOTAL_ELECTRICITY_NET_BILLED] == costs[TOTAL_ELECTRICITY_COST]
+    assert not (EXPORT_TOTALS | KEYS.export_lines) & costs.keys()
+    assert TOTAL_ELECTRICITY_COST in costs
 
 
 def test_cost_labels() -> None:
-    assert cost_label("import_cost_ea_levy") == "import cost (ea levy)"
+    assert cost_label("line_import_ea_levy") == "line (import ea levy)"
     assert cost_label("daily_charge_metering") == "daily charge (metering)"
-    assert cost_label("export_supplier") == "export (supplier)"
-    assert cost_label(IMPORT_COST_TOTAL) == "import cost total"
-    assert cost_label(DAILY_CHARGE_TOTAL) == "daily charge total"
     assert cost_label(TOTAL_ELECTRICITY_COST) == "total electricity cost"
     assert cost_label(TOTAL_ELECTRICITY_COMPENSATION) == "total electricity compensation"
-    assert cost_label(TOTAL_ELECTRICITY_NET_BILLED) == "total electricity net billed"
-    assert cost_label(EXPORT_TOTAL) == "export total"
-    assert cost_label(GST) == "GST"
-    assert cost_label(EXPORT_GST) == "export GST"
     assert cost_label("line_import_network_charge_high") == "line (import network charge high)"
     energy = "line_import_network_charge_high" + LINE_ENERGY_SUFFIX
     assert is_line_energy(energy)

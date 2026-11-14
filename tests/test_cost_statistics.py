@@ -12,6 +12,7 @@ import pytest
 from homeassistant.components.recorder.statistics import (
     get_last_statistics,
     get_metadata,
+    statistic_during_period,
     statistics_during_period,
 )
 from homeassistant.helpers import issue_registry as ir
@@ -36,20 +37,13 @@ from custom_components.ecotricity_nz.const import (
 )
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
 from custom_components.ecotricity_nz.costs import (
-    DAILY_CHARGE_TOTAL,
-    EXPORT_GST,
-    EXPORT_TOTAL,
-    GST,
-    IMPORT_COST_TOTAL,
     LINE_ENERGY_SUFFIX,
     TOTAL_ELECTRICITY_COMPENSATION,
     TOTAL_ELECTRICITY_COST,
-    TOTAL_ELECTRICITY_NET_BILLED,
     cost_keys,
     daily_key,
-    export_key,
-    import_key,
     is_line_energy,
+    levy_key,
 )
 from custom_components.ecotricity_nz.statistics import (
     COST_UNIT,
@@ -119,15 +113,17 @@ async def _sums(hass: HomeAssistant) -> dict[str, float]:
 
 
 def _expected(
-    plan: Plan, day: date, loss_factor: float, billed: Plan | None = None
+    plan: Plan, day: date, loss_factors: tuple[float, float], billed: Plan | None = None
 ) -> dict[str, float]:
     """Return what the portal fixture's day costs, part by part, from the plan's own charts.
 
     Each half-hour is priced with its rates as the season's chart explains them. Ecotricity's
-    import rates are charged on usage plus losses; GST is added to import, daily charges and export.
+    rates are charged on the kWh plus losses, with `loss_factors` (import's, then export's); GST is
+    added to import, daily charges and export.
     With `billed`, the plan as it's billed (see `billed_plan`), its network rates are used instead
     of the chart's.
     """
+    charged = {False: 0.0, True: 0.0}
     season = season_for(plan, day)
     assert season is not None
     chart = chart_file(season_chart_name(plan, season, weekend=day.weekday() >= 5))
@@ -141,15 +137,16 @@ def _expected(
         for reading in readings:
             local = reading.start.astimezone(NZ)
             for part in slots[local.hour * 2 + local.minute // 30].components:
-                losses = not export and part.kind is ComponentKind.SUPPLIER
-                key = export_key(part) if export else import_key(part)
-                cost = reading.value * part.price * (loss_factor if losses else 1) / 100
-                totals[key] += cost
+                losses = loss_factors[export] if part.kind is ComponentKind.SUPPLIER else 1.0
+                cost = reading.value * part.price * losses / 100
+                charged[export] += cost
+                if part.kind is ComponentKind.LEVY:
+                    if not export:
+                        totals[levy_key(part)] += cost
                 # A free rate isn't a bill line, so its kWh aren't counted.
-                if part.price and (line := line_key(part, export=export)) is not None:
+                elif part.price and (line := line_key(part, export=export)) is not None:
                     totals[line] += cost
                     totals[line + LINE_ENERGY_SUFFIX] += reading.value
-    energy = sum(value for key, value in totals.items() if key.startswith("import_cost_"))
     # Every line the plan has gets a statistic, zero where it never applied.
     plan = billed or plan
     keys = cost_keys(plan)
@@ -160,22 +157,21 @@ def _expected(
     for charge in daily_charges(plan, day):
         totals[daily_key(charge)] += charge.price / 100
         daily += charge.price / 100
-    exported = sum(
-        value for key, value in totals.items() if key.startswith("export_") and key != EXPORT_TOTAL
-    )
-    totals[IMPORT_COST_TOTAL] = energy
-    totals[DAILY_CHARGE_TOTAL] = daily
-    totals[GST] = (energy + daily) * (GST_FACTOR - 1)
-    totals[TOTAL_ELECTRICITY_COST] = (energy + daily) * GST_FACTOR
-    totals[EXPORT_TOTAL] = exported
-    totals[EXPORT_GST] = exported * (GST_FACTOR - 1)
-    totals[TOTAL_ELECTRICITY_COMPENSATION] = -exported * GST_FACTOR
-    totals[TOTAL_ELECTRICITY_NET_BILLED] = totals[TOTAL_ELECTRICITY_COST] + exported * GST_FACTOR
+    totals[TOTAL_ELECTRICITY_COST] = (charged[False] + daily) * GST_FACTOR
+    totals[TOTAL_ELECTRICITY_COMPENSATION] = -charged[True] * GST_FACTOR
     return dict(totals)
 
 
-def _loss_factor(entry: MockConfigEntry) -> float:
-    return entry.runtime_data.pricing.loss_factor
+def _lines(sums: dict[str, float], prefix: str) -> float:
+    """Return what the bill lines starting with a prefix, such as line_import_network_, add to."""
+    return sum(
+        value for key, value in sums.items() if key.startswith(prefix) and not is_line_energy(key)
+    )
+
+
+def _loss_factors(entry: MockConfigEntry) -> tuple[float, float]:
+    pricing = entry.runtime_data.pricing
+    return pricing.import_loss_factor, pricing.export_loss_factor
 
 
 @pytest.mark.usefixtures("mock_onboarding", "mock_portal")
@@ -185,26 +181,52 @@ async def test_usage_is_priced_into_hourly_cost_statistics(
     freezer.move_to(WINTER_PEAK)
     await _setup(hass, portal_config_entry)
 
-    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factor(portal_config_entry))
+    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factors(portal_config_entry))
     sums = await _sums(hass)
     assert {key for key, value in expected.items() if value} <= sums.keys() <= expected.keys()
     for key, value in expected.items():
         assert sums.get(key, 0.0) == pytest.approx(value), key
     # A credit stays negative, so it's drawn below zero in a stacked chart, except in the Energy
     # dashboard's compensation, which counts money received as positive.
-    assert sums[EXPORT_TOTAL] < 0
+    assert _lines(sums, "line_export_") < 0
     assert sums[TOTAL_ELECTRICITY_COMPENSATION] > 0
 
     metadata = await get_instance(hass).async_add_executor_job(get_metadata, hass)
-    network = statistic_id(TEST_ICP, cost_series("import_cost_network"))
-    assert metadata[network][1]["name"] == f"Ecotricity {TEST_ICP} import cost (network)"
-    assert metadata[network][1]["unit_class"] is None
+    levy = statistic_id(TEST_ICP, cost_series("line_import_ea_levy"))
+    assert metadata[levy][1]["name"] == f"Ecotricity {TEST_ICP} line (import ea levy)"
+    assert metadata[levy][1]["unit_class"] is None
 
     # A second run adds nothing: every hour is already priced.
     await portal_config_entry.runtime_data.consumption.async_refresh()
     await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
     assert await _sums(hass) == sums
+
+
+@pytest.mark.usefixtures("mock_portal")
+async def test_export_is_credited_with_the_icps_generation_losses(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Like the consumption loss factor on import, a generation loss factor other than 1 applies
+    # to Ecotricity's export rates.
+    freezer.move_to(WINTER_PEAK)
+    icp = mock_onboarding.async_get_icp.return_value
+    mock_onboarding.async_get_icp.return_value = replace(icp, loss_factor_generation=1.02)
+    await _setup(hass, portal_config_entry)
+
+    loss_factors = _loss_factors(portal_config_entry)
+    assert loss_factors[True] == 1.02
+    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, loss_factors)
+    without = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, (loss_factors[False], 1.0))
+    assert expected[TOTAL_ELECTRICITY_COMPENSATION] != pytest.approx(
+        without[TOTAL_ELECTRICITY_COMPENSATION]
+    )
+    sums = await _sums(hass)
+    for key, value in expected.items():
+        assert sums.get(key, 0.0) == pytest.approx(value), key
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -257,14 +279,14 @@ async def test_plan_for_another_category_is_costed_with_the_icps_network_rates(
     await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
 
-    loss_factor = _loss_factor(portal_config_entry)
-    expected = _expected(plan, PORTAL_DAY, loss_factor, billed)
+    loss_factors = _loss_factors(portal_config_entry)
+    expected = _expected(plan, PORTAL_DAY, loss_factors, billed)
     sums = await _sums(hass)
     for key, value in expected.items():
         assert sums.get(key, 0.0) == pytest.approx(value), key
-    advertised = _expected(plan, PORTAL_DAY, loss_factor)
-    network = "import_cost_network"
-    assert sums[network] != pytest.approx(advertised[network])
+    advertised = _expected(plan, PORTAL_DAY, loss_factors)
+    network = "line_import_network_"
+    assert _lines(sums, network) != pytest.approx(_lines(advertised, network))
 
 
 @pytest.mark.usefixtures("mock_portal")
@@ -291,7 +313,7 @@ async def test_ended_seasons_charts_are_downloaded_once_to_price_past_usage(
         ]
 
     assert sorted(downloads()) == sorted(ended_charts)
-    expected = _expected(plan, PORTAL_DAY, _loss_factor(portal_config_entry))
+    expected = _expected(plan, PORTAL_DAY, _loss_factors(portal_config_entry))
     sums = await _sums(hass)
     for key, value in expected.items():
         assert sums.get(key, 0.0) == pytest.approx(value), key
@@ -353,7 +375,8 @@ async def test_icp_without_an_export_register_has_no_export_costs(
 
     sums = await _sums(hass)
     assert TOTAL_ELECTRICITY_COST in sums
-    assert not [key for key in sums if key.startswith("export_")]
+    assert TOTAL_ELECTRICITY_COMPENSATION not in sums
+    assert not [key for key in sums if key.startswith("line_export_")]
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -391,7 +414,7 @@ async def test_costs_start_once_the_usage_can_be_priced(
     first = min(season.start for season in plan.seasons)
     start, _ = mock_portal.async_get_half_hourly.await_args_list[0].args
     assert start == datetime.combine(first, time.min, NZ)
-    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factor(portal_config_entry))
+    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factors(portal_config_entry))
     sums = await _sums(hass)
     assert sums[TOTAL_ELECTRICITY_COST] == pytest.approx(expected[TOTAL_ELECTRICITY_COST])
 
@@ -404,8 +427,8 @@ async def test_cost_statistic_that_fell_behind_the_others_catches_up(
     freezer: FrozenDateTimeFactory,
 ) -> None:
     # The portal's latest day comes after the day with readings, so that day isn't fetched
-    # again for the daily sensors. The net billed total stops partway through it while every
-    # other part is written.
+    # again for the daily sensors. The total cost stops partway through it while every other part
+    # is written.
     freezer.move_to(WINTER_PEAK)
     indicator = mock_portal.async_get_indicator.return_value
     mock_portal.async_get_indicator.return_value = replace(
@@ -416,17 +439,15 @@ async def test_cost_statistic_that_fell_behind_the_others_catches_up(
 
     def stalling(*args: Any, **kwargs: Any) -> dict[str, dict[datetime, float]]:
         costs = price(*args, **kwargs)
-        net = costs[TOTAL_ELECTRICITY_NET_BILLED]
-        costs[TOTAL_ELECTRICITY_NET_BILLED] = {hour: v for hour, v in net.items() if hour < stalled}
+        total = costs[TOTAL_ELECTRICITY_COST]
+        costs[TOTAL_ELECTRICITY_COST] = {hour: v for hour, v in total.items() if hour < stalled}
         return costs
 
     with patch.object(coordinator_module, "hourly_costs", side_effect=stalling):
         await _setup(hass, portal_config_entry)
-    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factor(portal_config_entry))
+    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factors(portal_config_entry))
     behind = await _sums(hass)
-    assert behind[TOTAL_ELECTRICITY_NET_BILLED] != pytest.approx(
-        expected[TOTAL_ELECTRICITY_NET_BILLED]
-    )
+    assert behind[TOTAL_ELECTRICITY_COST] != pytest.approx(expected[TOTAL_ELECTRICITY_COST])
 
     # The next sync carries on from the statistic furthest behind, so it fills in the rest of
     # the day, and the parts already written aren't added twice.
@@ -480,6 +501,14 @@ def _daily_total(plan: Plan, day: date) -> float:
     return sum(charge.price for charge in daily_charges(plan, day)) / 100
 
 
+async def _daily_charged(hass: HomeAssistant, plan: Plan, day: date, start: datetime) -> float:
+    """Return what the daily charge items' statistics have charged from `start`."""
+    charged = 0.0
+    for key in sorted({daily_key(charge) for charge in daily_charges(plan, day)}):
+        charged += sum(row["change"] for row in await _hours(hass, key, start))
+    return charged
+
+
 @pytest.mark.usefixtures("mock_onboarding")
 async def test_usage_before_the_pricing_year_gets_no_costs(
     hass: HomeAssistant,
@@ -503,8 +532,9 @@ async def test_usage_before_the_pricing_year_gets_no_costs(
     costs = await _hours(hass, TOTAL_ELECTRICITY_COST, since)
     priced_from = datetime.combine(first, time.min, NZ).astimezone(UTC)
     assert datetime.fromtimestamp(costs[0]["start"], UTC) == priced_from
-    daily = await _hours(hass, DAILY_CHARGE_TOTAL, since)
-    assert sum(row["change"] for row in daily) == pytest.approx(_daily_total(plan, first))
+    assert await _daily_charged(hass, plan, first, since) == pytest.approx(
+        _daily_total(plan, first)
+    )
 
 
 @pytest.mark.usefixtures("mock_onboarding")
@@ -524,11 +554,9 @@ async def test_day_daylight_saving_starts_is_imported_and_priced_in_23_hours(
     energy = await _hours(hass, IMPORT.key, since)
     assert len(energy) == 23
     assert sum(row["change"] for row in energy) == pytest.approx(46 * 0.5)
-    daily = await _hours(hass, DAILY_CHARGE_TOTAL, since)
-    assert len(daily) == 23
-    assert sum(row["change"] for row in daily) == pytest.approx(
-        _daily_total(find_plan(ANYTIME_PLAN), day)
-    )
+    assert len(await _hours(hass, TOTAL_ELECTRICITY_COST, since)) == 23
+    plan = find_plan(ANYTIME_PLAN)
+    assert await _daily_charged(hass, plan, day, since) == pytest.approx(_daily_total(plan, day))
 
 
 _ONBOARDING_CALLS = ("async_get_icp", "async_get_plans", "async_get_plan_titles", "async_get_chart")
@@ -561,7 +589,7 @@ async def test_costs_are_worked_out_from_saved_pricing_with_no_requests(
     await async_wait_recording_done(hass)
 
     assert {name: getattr(mock_onboarding, name).await_count for name in _ONBOARDING_CALLS} == calls
-    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factor(portal_config_entry))
+    expected = _expected(find_plan(ANYTIME_PLAN), PORTAL_DAY, _loss_factors(portal_config_entry))
     assert (await _sums(hass))[TOTAL_ELECTRICITY_COST] == pytest.approx(
         expected[TOTAL_ELECTRICITY_COST]
     )
@@ -606,12 +634,66 @@ async def test_choosing_another_plan_prices_later_usage_with_it(
     season = season_for(new_plan, later)
     assert season is not None
     _rates, slots = explained_chart(chart_file(season_chart_name(new_plan, season)))[False]
-    loss = _loss_factor(portal_config_entry)
+    loss, _export_loss = _loss_factors(portal_config_entry)
     supplier = sum(
         0.5 * part.price * loss / 100
         for slot in slots
         for part in slot.components
         if part.kind is ComponentKind.SUPPLIER
     )
-    after = await _sums(hass)
-    assert after["import_cost_supplier"] - before["import_cost_supplier"] == pytest.approx(supplier)
+    since = datetime.combine(later, time.min, NZ).astimezone(UTC)
+    charged = 0.0
+    for key in await _sums(hass):
+        if key.startswith("line_import_supplier_") and not is_line_energy(key):
+            charged += sum(row["change"] for row in await _hours(hass, key, since))
+    assert charged == pytest.approx(supplier)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
+async def test_hours_a_rate_isnt_charged_in_are_left_out_without_changing_any_ranges_cost(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # On a time-of-use plan each of Ecotricity's rates applies only in some hours. Those hours
+    # get no row, but the recorder works out a range's change from the row before it, so a range
+    # starting at any hour must still cost what its hours do.
+    day = date(2026, 6, 15)
+    freezer.move_to(datetime(2026, 6, 17, 20, 0, tzinfo=UTC))
+    _serve(mock_portal, day)
+    portal_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        portal_config_entry,
+        options={**portal_config_entry.options, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
+    )
+    assert await hass.config_entries.async_setup(portal_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    plan = find_plan(TIME_OF_USE_PLAN)
+    season = season_for(plan, day)
+    assert season is not None
+    _rates, slots = explained_chart(chart_file(season_chart_name(plan, season)))[False]
+    loss, _export_loss = _loss_factors(portal_config_entry)
+    # Each supplier line's cost in every hour of the day, zero where it doesn't apply.
+    start = datetime.combine(day, time.min, NZ).astimezone(UTC)
+    hours = [start + timedelta(hours=hour) for hour in range(24)]
+    expected: dict[str, dict[datetime, float]] = defaultdict(lambda: dict.fromkeys(hours, 0.0))
+    for index, slot in enumerate(slots):
+        for part in slot.components:
+            line = line_key(part, export=False)
+            if part.kind is ComponentKind.SUPPLIER and part.price and line is not None:
+                expected[line][hours[index // 2]] += 0.5 * part.price * loss / 100
+    assert len(expected) > 1
+    end = start + timedelta(days=1)
+    for line, costs in expected.items():
+        stat_id = statistic_id(TEST_ICP, cost_series(line))
+        rows = await _hours(hass, line, start)
+        assert len(rows) < len(hours), line
+        for hour in hours:
+            result = await get_instance(hass).async_add_executor_job(
+                statistic_during_period, hass, hour, end, stat_id, {"change"}, None
+            )
+            remaining = sum(cost for when, cost in costs.items() if when >= hour)
+            assert result["change"] == pytest.approx(remaining, abs=1e-6), (line, hour)

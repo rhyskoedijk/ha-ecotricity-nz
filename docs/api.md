@@ -105,7 +105,7 @@ Bills confirm the combinations. The kWh charged at each of Ecotricity's periods 
 
 ### Line losses
 
-Bills charge Ecotricity's energy rates on usage plus line losses (each line shows the kWh used, the kWh of losses and the rate), and the network's rates and the levy on usage alone. Export had no losses. The loss percentage matches the ICP's loss factors, which the ICP details return under `pricing.myLossFactorCode` (`lossFactorConsumption`, such as 1.0450, and `lossFactorGeneration`, 1.0000 on the captured ICP). The charts' prices leave losses out, so the integration shows the factors as sensors for people to apply themselves.
+Bills charge Ecotricity's energy rates on usage plus line losses (each line shows the kWh used, the kWh of losses and the rate), and the network's rates and the levy on usage alone. Export had no losses, but the captured ICP's generation loss factor was 1.0000, so that says nothing about an ICP whose factor isn't. The integration assumes Ecotricity applies the generation factor to its export rates the way it applies the consumption factor to its import rates; this is unverified. The loss percentage matches the ICP's loss factors, which the ICP details return under `pricing.myLossFactorCode` (`lossFactorConsumption`, such as 1.0450, and `lossFactorGeneration`, 1.0000 on the captured ICP). The charts' prices leave losses out, so the integration shows the factors as sensors for people to apply themselves.
 
 ### Charge codes
 

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from custom_components.ecotricity_nz.api import EcotricityError, OnboardingClient, PortalClient
 from custom_components.ecotricity_nz.api.timeframes import read_chart
 from custom_components.ecotricity_nz.tariff import (
+    billed_plan,
     chart_seasons,
     day_windows,
     price_plan_day,
@@ -145,8 +146,10 @@ async def main() -> int:
                     )
 
         today = datetime.now(NZ).date()
-        # As the integration does, an ICP without an export register is priced without export.
-        priced = plan if icp.has_export else without_export(plan)
+        # As the integration does, the network rates are the ICP's registered category's, and an
+        # ICP without an export register is priced without export.
+        billed = billed_plan(plan, plans.all_plans, icp.price_category)
+        priced = billed if icp.has_export else without_export(billed)
         _print_pricing(priced, today, await _async_read_charts(onboarding, priced, today))
     return 0
 

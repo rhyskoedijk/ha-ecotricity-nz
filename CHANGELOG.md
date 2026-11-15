@@ -47,7 +47,7 @@ Some sensors have changed in ways that can affect automations, templates and das
 
 ### New features
 
-- **Network import loss factor** and **Network export loss factor** sensors show your connection's line loss factors. Ecotricity bills its energy rates on your usage times this factor, which the prices leave out; the README's [Known limitations](README.md#known-limitations) show how to include it.
+- **Network import loss factor** and **Network export loss factor** sensors show your connection's line loss factors. Ecotricity bills its energy rates on your usage times this factor, which the prices leave out.
 - Where Ecotricity's and your network's pricing periods don't line up, **Current supplier import period** and **Current network import period** sensors (and the export ones) show each side's own period. **Current import period** then shows the overall period: the one whose own price is nearest what you're paying. Plans whose periods line up exactly keep one period sensor per direction.
 
 ### Improvements

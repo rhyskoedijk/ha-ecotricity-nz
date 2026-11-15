@@ -320,9 +320,7 @@ def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
     features: set[str] = set()
     raw_features = indicator.get("features")
     for feature, entries in (raw_features if isinstance(raw_features, dict) else {}).items():
-        for entry in entries if isinstance(entries, list) else []:
-            if not isinstance(entry, dict):
-                continue
+        for entry in _dicts(entries):
             bounds = _range_bounds(entry.get("measuredValueRange"))
             if bounds is None:
                 continue
@@ -347,9 +345,7 @@ def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
 def _parse_feature_values(values: Any, tz: tzinfo) -> tuple[IntervalReading, ...]:
     readings: list[IntervalReading] = []
     last_start: datetime | None = None
-    for item in values if isinstance(values, list) else []:
-        if not isinstance(item, dict):
-            continue
+    for item in _dicts(values):
         bounds = _range_bounds(item.get("measuringPeriod"))
         value = item.get("value")
         if bounds is None or not isinstance(value, int | float):

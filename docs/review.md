@@ -211,7 +211,7 @@ Paths and how often they run:
 - `_async_new_day` at NZ midnight, updating every entity from the snapshot: daily.
 - The daily pricing check and, when due, the fetch and chart reading: daily, more often while charts are missing.
 - The consumption import: daily, plus a backfill of all history on the first run, pricing about a month of half-hours per chunk with `hourly_costs` in the executor.
-- The bill card: on each dashboard load and date range change, through the `ecotricity_nz/bill`, `bill_lines` and `bill_days` websocket commands and recorder statistics queries.
+- The bill card: on each dashboard load and date range change, through the `ecotricity_nz/bill` and `ecotricity_nz/bill_days` websocket commands (and `ecotricity_nz/icps` for its editor) and recorder statistics queries.
 - External statistics: one row an hour per dense series, so each new series adds about 8,760 rows a year.
 
 Typical sizes: the default fixture's plans and charts; a year of half-hourly readings (17,520 per series) for backfill; every sensor `sensor.py` creates for an ICP with export on a time-of-use plan.

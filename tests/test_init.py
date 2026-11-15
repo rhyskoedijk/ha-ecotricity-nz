@@ -71,6 +71,7 @@ from custom_components.ecotricity_nz.statistics import CARBON, EXPORT, IMPORT, s
 from custom_components.ecotricity_nz.tariff import (
     EXPORT_PREFIX,
     billed_plan,
+    daily_charges,
     day_slots,
     network_category,
     plan_alignment,
@@ -164,11 +165,11 @@ async def test_pricing_sensors(
 
 
 @pytest.mark.parametrize(
-    ("import_gst", "export_gst", "import_price", "export_price", "daily_charge"),
+    ("import_gst", "export_gst"),
     [
-        pytest.param(False, True, 0.3735, -0.181, 1.55, id="import without GST"),
-        pytest.param(True, False, 0.4295, -0.1574, 1.7825, id="export without GST"),
-        pytest.param(False, False, 0.3735, -0.1574, 1.55, id="neither with GST"),
+        pytest.param(False, True, id="import without GST"),
+        pytest.param(True, False, id="export without GST"),
+        pytest.param(False, False, id="neither with GST"),
     ],
 )
 @pytest.mark.usefixtures("mock_onboarding")
@@ -178,9 +179,6 @@ async def test_gst_options(
     freezer: FrozenDateTimeFactory,
     import_gst: bool,
     export_gst: bool,
-    import_price: float,
-    export_price: float,
-    daily_charge: float,
 ) -> None:
     freezer.move_to(WINTER_PEAK)
     await _setup(
@@ -193,10 +191,28 @@ async def test_gst_options(
         },
     )
 
-    # Each side follows its own option; daily charges go with import.
-    assert float(_state(hass, "current_import_price")) == pytest.approx(import_price)
-    assert float(_state(hass, "current_export_price")) == pytest.approx(export_price)
-    assert float(_state(hass, "daily_charge")) == pytest.approx(daily_charge)
+    # Each side follows its own option; daily charges go with import. The prices are the plan's
+    # own, from its chart explained with its rates, in cents excluding GST.
+    plan = find_plan(TIME_OF_USE_PLAN)
+    local = WINTER_PEAK.astimezone(NZ)
+    chart = chart_reading(chart_file(chart_name(plan, local.date())))
+
+    def price(*, export: bool) -> float:
+        rates = side_rates(plan, local.date(), export=export)
+        return day_slots(rates, chart, chart, export=export).at(local).price
+
+    daily = sum(charge.price for charge in daily_charges(plan, local.date()))
+    import_factor = GST_FACTOR if import_gst else 1.0
+    export_factor = GST_FACTOR if export_gst else 1.0
+    assert float(_state(hass, "current_import_price")) == pytest.approx(
+        price(export=False) * import_factor / 100, abs=1e-4
+    )
+    assert float(_state(hass, "current_export_price")) == pytest.approx(
+        price(export=True) * export_factor / 100, abs=1e-4
+    )
+    assert float(_state(hass, "daily_charge")) == pytest.approx(
+        daily * import_factor / 100, abs=1e-4
+    )
 
 
 @pytest.mark.usefixtures("mock_onboarding")

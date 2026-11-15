@@ -3,7 +3,7 @@
  *
  * The integration says which statistics make up each line (`ecotricity_nz/bill`), and the card
  * reads each one's change over the range from the recorder. With a `collection_key`, the range
- * follows the energy date picker that shares it; otherwise it's this month so far.
+ * follows the energy date picker that shares it; otherwise it's the current billing period so far.
  */
 
 import {
@@ -165,7 +165,7 @@ export class EcotricityBillCard extends LitElement {
       // Moved in the page, such as when the dashboard's view changes: follow the range again,
       // as leaving stopped it.
       this._followRange();
-    } else if (this.hass && this._config) {
+    } else {
       void this._start();
     }
   }
@@ -196,12 +196,7 @@ export class EcotricityBillCard extends LitElement {
   }
 
   protected override updated(changed: PropertyValues): void {
-    if (
-      (changed.has("hass") || changed.has("_config")) &&
-      !this._layout &&
-      !this._loading &&
-      Date.now() >= this._retryAt
-    ) {
+    if (changed.has("hass") || changed.has("_config")) {
       void this._start();
     }
   }
@@ -263,8 +258,8 @@ export class EcotricityBillCard extends LitElement {
     this._stopListening();
     const key = this._config?.collection_key;
     if (!key) {
-      // This month so far: it moves on as time passes, picking up statistics imported since,
-      // and into the next billing period once it starts.
+      // The current billing period so far: it moves on as time passes, picking up statistics
+      // imported since, and into the next billing period once it starts.
       const thisPeriod = (refresh: boolean): void => {
         const now = new Date();
         const day = this._config?.billing_period_start_day ?? 1;

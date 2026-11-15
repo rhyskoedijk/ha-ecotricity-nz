@@ -13,7 +13,7 @@ Base URL `https://onboarding.ecotricity.co.nz`. This is the Angular sign-up app.
 | Monthly estimate | `/cgi-bin/RESTMONTHLYESTIMATE/monthlyestimate/` |
 | Sign-up session  | `/cgi-bin/RESTUSER/user/`                       |
 
-The integration only reads ICP details, plans and timeframe charts. Every request carries the headers the web app sends: `Accept: application/json, text/plain, */*` (`image/png` for charts), and `Origin` and `Referer` set to the site.
+The integration only reads ICP details, plans and timeframe charts. Every request carries the headers the web app sends: `Accept: application/json, text/plain, */*` (`image/png,image/*;q=0.8` for charts), and `Origin` and `Referer` set to the site.
 
 The monthly estimate service returns `"Please Call"` for residential ICPs, so it's unused.
 

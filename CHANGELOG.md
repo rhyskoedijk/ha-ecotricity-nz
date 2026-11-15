@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 (2026-11-15)
+
 ![Example Dashboard](/docs/screenshots/screenshot.dashboard.with.bill.card.png)
 
 ### Breaking changes

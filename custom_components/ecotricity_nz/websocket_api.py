@@ -28,6 +28,7 @@ from .api.models import RateUnit
 from .const import CONF_ICP, DOMAIN, GST_FACTOR
 from .costs import (
     LINE_ENERGY_SUFFIX,
+    TOTAL_ELECTRICITY_COMPENSATION,
     TOTAL_ELECTRICITY_COST,
     charged_days,
     daily_key,
@@ -201,7 +202,9 @@ def ws_bill(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
 
     With no config entry given, the only loaded one is used. Like a bill, lines exclude GST and
     GST is added at the end, on the total with export credits taken off, whatever the entry's
-    options for its sensors: `gst_rate` is the rate charged.
+    options for its sensors: `gst_rate` is the rate charged. `totals` are the two Energy
+    dashboard statistics, which cost every hour whatever plan it was costed with, so the bill's
+    total includes plans that have no lines now.
     """
     entry = _entry_for(hass, connection, msg)
     if entry is None:
@@ -241,6 +244,10 @@ def ws_bill(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
                 {"section": section, "lines": lines} for section, lines in sections.items()
             ],
             "gst_rate": round(GST_FACTOR - 1, 4),
+            "totals": {
+                "cost": stat(TOTAL_ELECTRICITY_COST),
+                "compensation": stat(TOTAL_ELECTRICITY_COMPENSATION),
+            },
         },
     )
 

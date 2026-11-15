@@ -38,6 +38,7 @@ export const LAYOUT: BillLayout = {
     },
   ],
   gst_rate: 0.15,
+  totals: { cost: "s:total_electricity_cost", compensation: "s:total_electricity_compensation" },
 };
 
 function line(key: string, usageKey: string | null, losses = false) {
@@ -54,7 +55,7 @@ function usage(key: string, side: string, period: string, name: string, losses =
 }
 
 /** One day's statistics: 7.30 kWh imported (6.64 off-peak, 0.66 peak), 2.12 + 5.71 exported. */
-export const CHANGES = new Map<string, number | null>([
+export const CHANGES = withTotals([
   ["s:daily_charge_network", 1.5951],
   ["s:line_import_network_charge_low", 6.64 * 0.0251],
   ["s:line_import_network_charge_low_energy", 6.64],
@@ -71,3 +72,19 @@ export const CHANGES = new Map<string, number | null>([
   ["s:daily_charge_metering", 0.35],
   ["s:daily_charge_supplier", 0.3],
 ]);
+
+/** Return the statistics with the Energy dashboard's totals worked out from the same hours. */
+export function withTotals(statistics: Iterable<[string, number | null]>): Map<string, number | null> {
+  const totals = new Set(Object.values(LAYOUT.totals));
+  const changes = [...statistics].filter(([id]) => !totals.has(id));
+  const charged = (side: string) =>
+    changes
+      .filter(([id]) => id !== "s:energy_imported" && !id.endsWith("_energy"))
+      .filter(([id]) => (side === "export") === id.startsWith("s:line_export_"))
+      .reduce((total, [, value]) => total + (value ?? 0), 0);
+  return new Map<string, number | null>([
+    ...changes,
+    [LAYOUT.totals.cost, charged("import") * (1 + LAYOUT.gst_rate)],
+    [LAYOUT.totals.compensation, -charged("export") * (1 + LAYOUT.gst_rate)],
+  ]);
+}

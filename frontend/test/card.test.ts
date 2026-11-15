@@ -351,8 +351,39 @@ describe("ecotricity-bill-card", () => {
     expect(commands.length).toBeGreaterThan(asked);
   });
 
+  it("asks for the new ICP's bill when the ICP changes while the old one's is loading", async () => {
+    const { hass: base, commands } = fakeHass({ _energy_bill: new FakeCollection() });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+    const hass: HomeAssistant = {
+      ...base,
+      async callWS<T>(message: Record<string, unknown>): Promise<T> {
+        if (message.type === "ecotricity_nz/bill" && first) {
+          first = false;
+          const reply = base.callWS<T>(message);
+          await held;
+          return reply;
+        }
+        return base.callWS<T>(message);
+      },
+    };
+    const card = await mount({ collection_key: "energy_bill", icp: "0000123456AB1C2" }, hass);
+
+    card.setConfig({ type: `custom:${CARD_TYPE}`, collection_key: "energy_bill", icp: "0000654321AB1C2" });
+    release();
+    await settle(card);
+
+    const asked = (type: string) =>
+      commands.filter((command) => command.type === type).map((command) => command.icp);
+    expect(asked("ecotricity_nz/bill")).toEqual(["0000123456AB1C2", "0000654321AB1C2"]);
+    expect(asked("ecotricity_nz/bill_days").every((icp) => icp === "0000654321AB1C2")).toBe(true);
+  });
+
   it.each([
-    [{ billing_period_start_day: 0 }, "billing_period_start_day must be a whole number from 1 to 28"],
+    [{ billing_period_start_day: 0 },"billing_period_start_day must be a whole number from 1 to 28"],
     [{ billing_period_start_day: 31 }, "billing_period_start_day must be a whole number from 1 to 28"],
     [{ billing_period_start_day: 1.5 }, "billing_period_start_day must be a whole number from 1 to 28"],
   ])("rejects an option it can't use: %o", (option, message) => {

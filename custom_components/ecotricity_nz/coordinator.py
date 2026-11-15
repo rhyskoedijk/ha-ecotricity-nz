@@ -292,8 +292,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
             return None
         return cost_keys(self._cost_plan(self._snapshot))
 
-    async def async_earliest_priced_day(self, until: date) -> date | None:
-        """Return the first day, up to `until`, whose import the saved pricing can price.
+    async def async_earliest_priced_day(self, until: date, *, export: bool = False) -> date | None:
+        """Return the first day, up to `until`, whose import or export the saved pricing can price.
 
         Each season's charts are explained to find out, so that runs in the executor.
         """
@@ -308,7 +308,8 @@ class PricingCoordinator(DataUpdateCoordinator[PricingData]):
                 (
                     day
                     for day in starts
-                    if (costs := pricer(day)) is not None and costs.import_slots is not None
+                    if (costs := pricer(day)) is not None
+                    and (costs.export_slots if export else costs.import_slots) is not None
                 ),
                 None,
             )
@@ -834,8 +835,15 @@ def _ended_periods(plan: Plan, day: date, alignments: tuple[Alignment, Alignment
 
 
 def _retry_delay(failures: int) -> timedelta:
-    """Return how long to wait to fetch pricing again after a number of failures in a row."""
-    delay: timedelta = PRICING_RETRY_INTERVAL * 2 ** (failures - 1)
+    """Return how long to wait to fetch pricing again after a number of failures in a row.
+
+    It stops doubling at the cap, as a long outage would otherwise overflow `timedelta`.
+    """
+    delay = PRICING_RETRY_INTERVAL
+    for _ in range(1, failures):
+        if delay >= PRICING_RETRY_MAX_INTERVAL:
+            break
+        delay *= 2
     return min(delay, PRICING_RETRY_MAX_INTERVAL)
 
 
@@ -1084,10 +1092,10 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         it can price. Every cost statistic is a checkpoint, so they carry on from the one
         furthest behind, and one that fell behind catches up, but never into hours another plan
         costed (see `_side_points`). One on a side without any costs yet starts at the
-        first day the saved pricing can price, rather than reading the portal's whole history
-        again, unless its usage series has been read to the end this session without any
-        readings (see `_scanned_until`), so it isn't read again every day. Their last points go
-        in `points`.
+        first day the saved pricing can price that side, rather than reading the portal's whole
+        history again, unless its usage series has been read to the end this session without
+        any readings (see `_scanned_until`), so it isn't read again every day. If no day of the
+        side can be priced, it doesn't hold the others back. Their last points go in `points`.
         """
         keys = self._pricing.cost_keys() if IMPORT in last_points else None
         if keys is None:
@@ -1095,19 +1103,24 @@ class ConsumptionCoordinator(DataUpdateCoordinator[ConsumptionSummary]):
         sides = [(IMPORT, keys.statistic_keys(export=False))]
         if EXPORT in last_points:
             sides.append((EXPORT, keys.statistic_keys(export=True)))
-        first_start: datetime | None = None
+        last_day = data_end.astimezone(self._local_tz).date()
         starts: list[datetime] = []
         for usage, side_points in (await self._async_cost_points(sides)).items():
+            first_start: datetime | None = None
+            unpriced = False
             for key, point in side_points.items():
                 points[key] = point
                 if point is not None:
                     starts.append(point.start + timedelta(hours=1))
                     continue
-                if last_points.get(usage) is None and usage in self._scanned_until:
+                if unpriced or (last_points.get(usage) is None and usage in self._scanned_until):
                     continue
                 if first_start is None:
-                    last_day = data_end.astimezone(self._local_tz).date()
-                    if (first := await self._pricing.async_earliest_priced_day(last_day)) is None:
+                    first = await self._pricing.async_earliest_priced_day(
+                        last_day, export=usage is EXPORT
+                    )
+                    if first is None:
+                        unpriced = True
                         continue
                     first_start = max(data_start, self._day_start(first))
                 starts.append(first_start)

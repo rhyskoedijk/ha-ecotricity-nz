@@ -28,6 +28,7 @@
 - A usage series whose first readings arrived with a half-hour missing (such as export on a new solar install) skipped those readings for good once the portal filled the gap. They're now read again and imported.
 - A chart image with marks the chart reader didn't expect could stop the whole pricing update, making every pricing sensor unavailable. It's now treated as an unreadable chart, so its saved reading is kept and everything else carries on.
 - Choosing another plan in the options while Ecotricity's website couldn't be reached loaded the integration anyway, pricing the new plan with the old plan's time-of-use charts. Setup now retries until the new plan's pricing can be fetched, backing off between fetches as it does when the site is down. Setup with no saved pricing yet now backs off between retries too, rather than trying again every few minutes.
+- After about 11 days of failed pricing fetches in a row, such as when Ecotricity changes its website's browser check, every pricing sensor became unavailable instead of carrying on with the saved pricing. Fetches now keep retrying every 8 hours for as long as the outage lasts.
 
 ## 0.4.0 (2026-10-21)
 

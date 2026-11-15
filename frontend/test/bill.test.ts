@@ -10,7 +10,7 @@ import {
   statisticIds,
   wholeHours,
 } from "../src/bill";
-import { CHANGES, LAYOUT, LOSS_FACTOR } from "./fixtures";
+import { CHANGES, LAYOUT, LOSS_FACTOR, withTotals } from "./fixtures";
 
 describe("buildBill", () => {
   const bill = buildBill(LAYOUT, CHANGES, 1);
@@ -27,7 +27,7 @@ describe("buildBill", () => {
 
   it("charges daily items per day charged, not per day in the range", () => {
     // A month's range with usage imported for 23 days: the rate is the daily charge itself.
-    const month = buildBill(LAYOUT, new Map([...CHANGES, ["s:daily_charge_network", 23 * 1.035]]), 23);
+    const month = buildBill(LAYOUT, withTotals([...CHANGES, ["s:daily_charge_network", 23 * 1.035]]), 23);
     expect(month.sections[0]?.lines[0]).toMatchObject({ quantity: 23, unit: "days" });
     expect(month.sections[0]?.lines[0]?.rate).toBeCloseTo(1.035);
   });
@@ -41,7 +41,7 @@ describe("buildBill", () => {
     const daily = bill.sections[0]?.lines[0];
     expect(daily).toMatchObject({ quantity: 1, unit: "days", losses: null });
     expect(daily?.rate).toBeCloseTo(1.5951);
-    const week = buildBill(LAYOUT, new Map([...CHANGES, ["s:daily_charge_network", 7 * 1.5951]]), 7);
+    const week = buildBill(LAYOUT, withTotals([...CHANGES, ["s:daily_charge_network", 7 * 1.5951]]), 7);
     expect(week.sections[0]?.lines[0]?.rate).toBeCloseTo(1.5951);
     expect(week.sections[0]?.lines[0]?.quantity).toBe(7);
   });
@@ -65,7 +65,7 @@ describe("buildBill", () => {
 
   it("credits Ecotricity's export on the export plus losses, with the generation loss factor", () => {
     const factor = 1.02;
-    const credited = new Map([...CHANGES, ["s:line_export_supplier_charge_low", 5.71 * factor * -0.16]]);
+    const credited = withTotals([...CHANGES, ["s:line_export_supplier_charge_low", 5.71 * factor * -0.16]]);
     const credit = buildBill({ ...LAYOUT, export_loss_factor: factor }, credited, 1).sections[1]?.lines[1];
     expect(credit?.quantity).toBeCloseTo(5.71);
     expect(credit?.losses).toBeCloseTo(5.71 * (factor - 1));
@@ -74,7 +74,7 @@ describe("buildBill", () => {
 
   it("charges every line its units, plus any losses, at its unit price", () => {
     for (const line of bill.sections.flatMap((section) => section.lines)) {
-      expect((line.quantity + (line.losses ?? 0)) * (line.rate ?? 0)).toBeCloseTo(line.amount);
+      expect(((line.quantity ?? 0) + (line.losses ?? 0)) * (line.rate ?? 0)).toBeCloseTo(line.amount);
     }
   });
 
@@ -102,7 +102,7 @@ describe("buildBill", () => {
     quiet.set("s:line_import_supplier_charge_24", null);
     quiet.set("s:line_import_supplier_charge_24_energy", null);
     quiet.set("s:daily_charge_metering", 0);
-    const trimmed = buildBill(LAYOUT, quiet, 1);
+    const trimmed = buildBill(LAYOUT, withTotals(quiet), 1);
     expect(trimmed.sections.map((section) => section.kind)).toEqual(["network", "other"]);
     expect(trimmed.sections[1]?.lines.map((line) => line.label)).toEqual([
       "Electricity Authority (EA) Levy",
@@ -129,11 +129,50 @@ describe("buildBill", () => {
     // A bill of only export credits has negative GST, adding to the credit.
     const exportOnly = buildBill(
       LAYOUT,
-      new Map([...CHANGES].map(([id, value]) => [id, id.includes("export") ? value : 0])),
+      new Map(
+        [...CHANGES].map(([id, value]) => [
+          id,
+          id.includes("export") || id === LAYOUT.totals.compensation ? value : 0,
+        ]),
+      ),
       1,
     );
     expect(exportOnly.charges).toBeLessThan(0);
     expect(exportOnly.gst).toBeCloseTo(exportOnly.charges * 0.15);
+  });
+
+  it("adds up every line without a line for earlier plans when the plan hasn't changed", () => {
+    const labels = bill.sections.flatMap((section) => section.lines.map((line) => line.label));
+    expect(labels).not.toContain("Earlier Plans");
+    const lines = bill.sections.reduce((total, section) => total + section.total, 0);
+    expect(bill.charges).toBeCloseTo(lines);
+  });
+
+  it("includes what an earlier plan charged in the range, on a line of its own", () => {
+    // A peak supplier rate only the earlier plan had: its line statistic changed, and so did
+    // the totals, but the current plan's layout has no line for it.
+    const earlier = 2.5;
+    const changes = new Map(CHANGES);
+    changes.set("s:line_import_supplier_charge_high", earlier);
+    changes.set(LAYOUT.totals.cost, (CHANGES.get(LAYOUT.totals.cost) ?? 0) + earlier * 1.15);
+    const changed = buildBill(LAYOUT, changes, 1);
+    expect(changed.charges).toBeCloseTo(bill.charges + earlier);
+    expect(changed.total).toBeCloseTo((bill.charges + earlier) * 1.15);
+    const other = changed.sections.find((section) => section.kind === "other");
+    const line = other?.lines.at(-1);
+    expect(line?.label).toBe("Earlier Plans");
+    expect(line?.amount).toBeCloseTo(earlier);
+    const lines = changed.sections.reduce((total, section) => total + section.total, 0);
+    expect(lines).toBeCloseTo(changed.charges);
+  });
+
+  it("shows an earlier plan's charges in a range the current plan charged nothing in", () => {
+    const changed = buildBill(LAYOUT, new Map([[LAYOUT.totals.cost, 1.15]]), 1);
+    expect(changed.sections.map((section) => section.kind)).toEqual(["other"]);
+    expect(changed.sections[0]?.lines.map((line) => [line.label, line.amount])).toEqual([
+      ["Earlier Plans", expect.closeTo(1)],
+    ]);
+    expect(changed.total).toBeCloseTo(1.15);
   });
 
   it("has a total of nothing with no statistics", () => {
@@ -194,7 +233,7 @@ describe("statisticIds", () => {
 
 describe("bill options", () => {
   it("lists lines that charged nothing when asked to", () => {
-    const quiet = new Map([...CHANGES].map(([id, value]) => [id, id.includes("supplier") ? 0 : value]));
+    const quiet = withTotals([...CHANGES].map(([id, value]) => [id, id.includes("supplier") ? 0 : value]));
     const hidden = buildBill(LAYOUT, quiet, 1).sections.flatMap((section) => section.lines);
     const shown = buildBill(LAYOUT, quiet, 1, { showEmptyLines: true }).sections.flatMap(
       (section) => section.lines,

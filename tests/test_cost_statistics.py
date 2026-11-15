@@ -426,6 +426,43 @@ async def test_costs_start_once_the_usage_can_be_priced(
 
 
 @pytest.mark.usefixtures("mock_onboarding")
+async def test_export_that_cant_be_priced_doesnt_hold_back_the_next_sync(
+    hass: HomeAssistant,
+    portal_config_entry: MockConfigEntry,
+    mock_portal: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # The export side's charts can't be explained, so its cost statistics never get an hour.
+    # The next sync still carries on from where import got to, rather than reading the portal
+    # again from the first day the pricing covers.
+    days = [date(2026, 6, 1) + timedelta(days=offset) for offset in range(30)]
+    freezer.move_to(datetime(2026, 7, 2, 20, 0, tzinfo=UTC))
+    _serve(mock_portal, *days, export=True)
+    pricer = PricingCoordinator.cost_pricer
+
+    def import_only(self: PricingCoordinator) -> Any:
+        price = pricer(self)
+        assert price is not None
+        return lambda day: (
+            None if (costs := price(day)) is None else replace(costs, export_slots=None)
+        )
+
+    with patch.object(PricingCoordinator, "cost_pricer", import_only):
+        await _setup(hass, portal_config_entry)
+        sums = await _sums(hass)
+        assert sums[TOTAL_ELECTRICITY_COST]
+        assert not sums.get(TOTAL_ELECTRICITY_COMPENSATION)
+
+        mock_portal.async_get_half_hourly.reset_mock()
+        consumption = portal_config_entry.runtime_data.consumption
+        assert await consumption.async_fetch_now()
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    start, _ = mock_portal.async_get_half_hourly.await_args_list[0].args
+    assert start == datetime.combine(days[-1], time.min, NZ)
+
+
+@pytest.mark.usefixtures("mock_onboarding")
 async def test_charts_are_explained_once_for_the_days_of_a_season_with_the_same_rates(
     hass: HomeAssistant,
     portal_config_entry: MockConfigEntry,

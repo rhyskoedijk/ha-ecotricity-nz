@@ -23,7 +23,13 @@ from custom_components.ecotricity_nz.const import (
     GST_FACTOR,
 )
 from custom_components.ecotricity_nz.coordinator import PricingCoordinator
-from custom_components.ecotricity_nz.costs import LINE_ENERGY_SUFFIX, daily_key, levy_key
+from custom_components.ecotricity_nz.costs import (
+    LINE_ENERGY_SUFFIX,
+    TOTAL_ELECTRICITY_COMPENSATION,
+    TOTAL_ELECTRICITY_COST,
+    daily_key,
+    levy_key,
+)
 from custom_components.ecotricity_nz.statistics import cost_series, statistic_id
 from custom_components.ecotricity_nz.tariff import (
     ComponentKind,
@@ -91,6 +97,10 @@ async def test_bill_lists_every_rate_as_a_line_in_its_section(
     assert result["loss_factor"] == icp.loss_factor_consumption
     assert result["export_loss_factor"] == (icp.loss_factor_generation or 1.0)
     assert result["gst_rate"] == pytest.approx(GST_FACTOR - 1)
+    assert result["totals"] == {
+        "cost": _stat(TOTAL_ELECTRICITY_COST),
+        "compensation": _stat(TOTAL_ELECTRICITY_COMPENSATION),
+    }
     # Sections come in the bill's order.
     order = [section["section"] for section in result["sections"]]
     assert order == [section for section in BillSection if section in order]

@@ -803,6 +803,25 @@ async def test_failed_fetches_back_off(
     assert coordinator.update_interval == PRICING_CHECK_INTERVAL
 
 
+async def test_long_outage_keeps_waiting_the_maximum(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_onboarding: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Weeks of failed fetches keep waiting the maximum, and the saved pricing keeps working.
+    freezer.move_to(WINTER_PEAK)
+    await _setup(hass, config_entry)
+    coordinator = config_entry.runtime_data.pricing
+    _go_offline(mock_onboarding)
+    freezer.tick(PRICING_FETCH_INTERVAL)
+    for _ in range(64):
+        await coordinator.async_refresh()
+    assert coordinator.last_update_success
+    assert coordinator.update_interval == PRICING_RETRY_MAX_INTERVAL
+    assert _state(hass, "current_import_price") != "unavailable"
+
+
 async def test_failed_fetch_without_saved_pricing_says_when_to_retry(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,

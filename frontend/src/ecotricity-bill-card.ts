@@ -119,6 +119,8 @@ export class EcotricityBillCard extends LitElement {
   private _waitTimer?: ReturnType<typeof setTimeout>;
   private _refreshTimer?: ReturnType<typeof setInterval>;
   private _loading = false;
+  /** Counts configs that change what's fetched, so a layout asked for before is dropped. */
+  private _targets = 0;
   /** When the bill can be asked for again after it failed. */
   private _retryAt = 0;
   /** Counts fetches, so a slow one doesn't overwrite a newer range's bill. */
@@ -144,6 +146,7 @@ export class EcotricityBillCard extends LitElement {
     if (previous && FETCH_OPTIONS.every((option) => previous[option] === config[option])) {
       return;
     }
+    this._targets++;
     this._layout = undefined;
     this._data = undefined;
     this._range = undefined;
@@ -215,20 +218,32 @@ export class EcotricityBillCard extends LitElement {
       return;
     }
     this._loading = true;
+    const targets = this._targets;
+    let layout: BillLayout;
     try {
-      this._layout = await this.hass.callWS<BillLayout>({
+      layout = await this.hass.callWS<BillLayout>({
         type: "ecotricity_nz/bill",
         ...this._target(),
       });
-      this._error = undefined;
-      this._retryAt = 0;
     } catch (err) {
-      this._error = errorMessage(err);
-      this._retryAt = Date.now() + RETRY_MS;
+      if (targets === this._targets) {
+        this._error = errorMessage(err);
+        this._retryAt = Date.now() + RETRY_MS;
+      }
       return;
     } finally {
       this._loading = false;
+      if (targets !== this._targets) {
+        // The config changed what's fetched while this was asked for, so ask again for it.
+        void this._start();
+      }
     }
+    if (targets !== this._targets) {
+      return;
+    }
+    this._layout = layout;
+    this._error = undefined;
+    this._retryAt = 0;
     this._followRange();
   }
 
@@ -422,7 +437,9 @@ export class EcotricityBillCard extends LitElement {
             <tr>
               <td class="label">${line.label}</td>
               <td class="quantity">
-                ${formatQuantity(line.quantity, line.unit)} ${line.unit}
+                ${line.quantity === null || line.unit === null
+                  ? nothing
+                  : `${formatQuantity(line.quantity, line.unit)} ${line.unit}`}
               </td>
               <td class="losses">
                 ${line.losses === null

@@ -40,6 +40,11 @@ export interface BillLayout {
   sections: { section: SectionKind; lines: LayoutLine[] }[];
   /** The GST rate charged on the total, such as 0.15. */
   gst_rate: number;
+  /**
+   * The Energy dashboard's totals, including GST, which cost every hour whatever plan costed
+   * it: what's charged, and what's credited for export (positive for a credit).
+   */
+  totals: { cost: string; compensation: string };
 }
 
 /** Each statistic's change over the bill's range, null where it has no data. */
@@ -47,9 +52,9 @@ export type Changes = ReadonlyMap<string, number | null>;
 
 interface BillLine {
   label: string;
-  /** What it's charged on: kWh used, or days. Any losses are charged on top. */
-  quantity: number;
-  unit: "kWh" | "days";
+  /** What it's charged on: kWh used, or days, or null for earlier plans. Losses are on top. */
+  quantity: number | null;
+  unit: "kWh" | "days" | null;
   /** kWh of line losses charged on top of the quantity, or null where there are none. */
   losses: number | null;
   /** The average rate over the range, in dollars excluding GST, or null with nothing to charge on. */
@@ -137,7 +142,7 @@ export function wholeHours(start: Date, end: Date): { start: Date; end: Date } {
 
 /** Return every statistic a bill needs, each once. */
 export function statisticIds(layout: BillLayout): string[] {
-  const ids = new Set<string>();
+  const ids = new Set<string>([layout.totals.cost, layout.totals.compensation]);
   for (const section of layout.sections) {
     for (const line of section.lines) {
       ids.add(line.statistic_id);
@@ -195,9 +200,42 @@ export function buildBill(layout: BillLayout, changes: Changes, days: number, op
       sections.push({ kind: section.section, lines, total: sum(lines.map((line) => line.amount)) });
     }
   }
-  const charges = sum(sections.map((section) => section.total));
+  const lined = sum(sections.map((section) => section.total));
+  const charges = billedCharges(layout, changes) ?? lined;
+  // The lines are the current plan's, so what an earlier plan charged in the range has none.
+  const earlier = charges - lined;
+  if (Math.abs(earlier) >= HALF_CENT) {
+    const line: BillLine = {
+      label: "Earlier Plans",
+      quantity: null,
+      unit: null,
+      losses: null,
+      rate: null,
+      amount: earlier,
+    };
+    const other = sections.find((section) => section.kind === "other");
+    if (other) {
+      other.lines.push(line);
+      other.total += earlier;
+    } else {
+      sections.push({ kind: "other", lines: [line], total: earlier });
+    }
+  }
   const gst = charges * layout.gst_rate;
   return { sections, charges, gst, total: charges + gst };
+}
+
+/** Less than this rounds to nothing on the bill. */
+const HALF_CENT = 0.005;
+
+/** Return what the range was charged excluding GST, from the totals, or null without them. */
+function billedCharges(layout: BillLayout, changes: Changes): number | null {
+  const cost = changes.get(layout.totals.cost);
+  const compensation = changes.get(layout.totals.compensation);
+  if ((cost ?? null) === null && (compensation ?? null) === null) {
+    return null;
+  }
+  return ((cost ?? 0) - (compensation ?? 0)) / (1 + layout.gst_rate);
 }
 
 /** The integration's statistics and daily charges run on New Zealand days, wherever the browser is. */

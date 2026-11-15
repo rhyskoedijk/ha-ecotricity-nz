@@ -1,0 +1,313 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  billingPeriodStart,
+  buildBill,
+  formatAmount,
+  formatQuantity,
+  formatRate,
+  lineLabel,
+  statisticIds,
+  wholeHours,
+} from "../src/bill";
+import { CHANGES, LAYOUT, LOSS_FACTOR, withTotals } from "./fixtures";
+
+describe("buildBill", () => {
+  const bill = buildBill(LAYOUT, CHANGES, 1);
+
+  it("keeps the bill's sections and lines in order", () => {
+    expect(bill.sections.map((section) => section.kind)).toEqual(["network", "energy", "other"]);
+    expect(bill.sections[0]?.lines.map((line) => line.label)).toEqual([
+      "Daily Charges",
+      "Import - Off-peak Usage",
+      "Import - Peak Usage",
+      "Export - Peak Usage",
+    ]);
+  });
+
+  it("charges daily items per day charged, not per day in the range", () => {
+    // A month's range with usage imported for 23 days: the rate is the daily charge itself.
+    const month = buildBill(LAYOUT, withTotals([...CHANGES, ["s:daily_charge_network", 23 * 1.035]]), 23);
+    expect(month.sections[0]?.lines[0]).toMatchObject({ quantity: 23, unit: "days" });
+    expect(month.sections[0]?.lines[0]?.rate).toBeCloseTo(1.035);
+  });
+
+  it("has no daily rate with no days charged", () => {
+    const none = buildBill(LAYOUT, CHANGES, 0);
+    expect(none.sections[0]?.lines[0]?.rate).toBeNull();
+  });
+
+  it("charges daily items per day", () => {
+    const daily = bill.sections[0]?.lines[0];
+    expect(daily).toMatchObject({ quantity: 1, unit: "days", losses: null });
+    expect(daily?.rate).toBeCloseTo(1.5951);
+    const week = buildBill(LAYOUT, withTotals([...CHANGES, ["s:daily_charge_network", 7 * 1.5951]]), 7);
+    expect(week.sections[0]?.lines[0]?.rate).toBeCloseTo(1.5951);
+    expect(week.sections[0]?.lines[0]?.quantity).toBe(7);
+  });
+
+  it("charges Ecotricity's import on usage plus losses", () => {
+    // Losses are charged on top of the usage.
+    const usage = bill.sections[1]?.lines[0];
+    expect(usage?.quantity).toBeCloseTo(7.3);
+    expect(usage?.losses).toBeCloseTo(7.3 * (LOSS_FACTOR - 1));
+    expect(usage?.rate).toBeCloseTo(0.18);
+    expect(bill.sections[0]?.lines[1]?.losses).toBeNull();
+    expect(bill.sections[0]?.lines[1]?.quantity).toBeCloseTo(6.64);
+  });
+
+  it("shows no losses where the loss factor is 1", () => {
+    // Ecotricity's export is charged on losses too, but this ICP's generation factor adds none.
+    expect(bill.sections[1]?.lines[1]?.losses).toBeNull();
+    const lossless = buildBill({ ...LAYOUT, loss_factor: 1 }, CHANGES, 1);
+    expect(lossless.sections[1]?.lines[0]?.losses).toBeNull();
+  });
+
+  it("credits Ecotricity's export on the export plus losses, with the generation loss factor", () => {
+    const factor = 1.02;
+    const credited = withTotals([...CHANGES, ["s:line_export_supplier_charge_low", 5.71 * factor * -0.16]]);
+    const credit = buildBill({ ...LAYOUT, export_loss_factor: factor }, credited, 1).sections[1]?.lines[1];
+    expect(credit?.quantity).toBeCloseTo(5.71);
+    expect(credit?.losses).toBeCloseTo(5.71 * (factor - 1));
+    expect(credit?.rate).toBeCloseTo(-0.16);
+  });
+
+  it("charges every line its units, plus any losses, at its unit price", () => {
+    for (const line of bill.sections.flatMap((section) => section.lines)) {
+      expect(((line.quantity ?? 0) + (line.losses ?? 0)) * (line.rate ?? 0)).toBeCloseTo(line.amount);
+    }
+  });
+
+  it("keeps a credit negative", () => {
+    const credit = bill.sections[1]?.lines[1];
+    expect(credit?.amount).toBeLessThan(0);
+    expect(credit?.rate).toBeCloseTo(-0.16);
+  });
+
+  it("adds up each section, and every line", () => {
+    for (const section of bill.sections) {
+      const lines = section.lines.reduce((total, line) => total + line.amount, 0);
+      expect(section.total).toBeCloseTo(lines);
+    }
+    const all = bill.sections.reduce((total, section) => total + section.total, 0);
+    expect(bill.charges).toBeCloseTo(all);
+    expect(bill.total).toBeCloseTo(bill.charges + bill.gst);
+  });
+
+  it("leaves out lines with nothing charged, and sections left empty", () => {
+    const quiet = new Map(CHANGES);
+    for (const key of ["s:line_export_supplier_charge_low", "s:line_export_supplier_charge_low_energy"]) {
+      quiet.set(key, 0);
+    }
+    quiet.set("s:line_import_supplier_charge_24", null);
+    quiet.set("s:line_import_supplier_charge_24_energy", null);
+    quiet.set("s:daily_charge_metering", 0);
+    const trimmed = buildBill(LAYOUT, withTotals(quiet), 1);
+    expect(trimmed.sections.map((section) => section.kind)).toEqual(["network", "other"]);
+    expect(trimmed.sections[1]?.lines.map((line) => line.label)).toEqual([
+      "Electricity Authority (EA) Levy",
+      "Daily Charges - Ecotricity",
+    ]);
+  });
+
+  it("has no rate for a line charged without usage", () => {
+    const odd = buildBill(LAYOUT, new Map([...CHANGES, ["s:line_import_network_charge_high_energy", 0]]), 1);
+    expect(odd.sections[0]?.lines[2]?.rate).toBeNull();
+  });
+
+  it("shows each line without GST, whatever the integration's option", () => {
+    // The plan's own rates, as the fixture's statistics were charged at.
+    const lines = bill.sections.flatMap((section) => section.lines);
+    expect(lines.find((line) => line.label === "Import - Anytime Usage")?.rate).toBeCloseTo(0.18);
+    expect(lines.find((line) => line.label === "Electricity Authority (EA) Levy")?.rate).toBeCloseTo(0.002);
+    expect(lines.find((line) => line.label === "Daily Charges")?.rate).toBeCloseTo(1.5951);
+  });
+
+  it("adds GST once, on the total with export credits taken off", () => {
+    expect(bill.gst).toBeCloseTo(bill.charges * 0.15);
+    expect(bill.total).toBeCloseTo(bill.charges * 1.15);
+    // A bill of only export credits has negative GST, adding to the credit.
+    const exportOnly = buildBill(
+      LAYOUT,
+      new Map(
+        [...CHANGES].map(([id, value]) => [
+          id,
+          id.includes("export") || id === LAYOUT.totals.compensation ? value : 0,
+        ]),
+      ),
+      1,
+    );
+    expect(exportOnly.charges).toBeLessThan(0);
+    expect(exportOnly.gst).toBeCloseTo(exportOnly.charges * 0.15);
+  });
+
+  it("adds up every line without a line for earlier plans when the plan hasn't changed", () => {
+    const labels = bill.sections.flatMap((section) => section.lines.map((line) => line.label));
+    expect(labels).not.toContain("Earlier Plans");
+    const lines = bill.sections.reduce((total, section) => total + section.total, 0);
+    expect(bill.charges).toBeCloseTo(lines);
+  });
+
+  it("includes what an earlier plan charged in the range, on a line of its own", () => {
+    // A peak supplier rate only the earlier plan had: its line statistic changed, and so did
+    // the totals, but the current plan's layout has no line for it.
+    const earlier = 2.5;
+    const changes = new Map(CHANGES);
+    changes.set("s:line_import_supplier_charge_high", earlier);
+    changes.set(LAYOUT.totals.cost, (CHANGES.get(LAYOUT.totals.cost) ?? 0) + earlier * 1.15);
+    const changed = buildBill(LAYOUT, changes, 1);
+    expect(changed.charges).toBeCloseTo(bill.charges + earlier);
+    expect(changed.total).toBeCloseTo((bill.charges + earlier) * 1.15);
+    const other = changed.sections.find((section) => section.kind === "other");
+    const line = other?.lines.at(-1);
+    expect(line?.label).toBe("Earlier Plans");
+    expect(line?.amount).toBeCloseTo(earlier);
+    const lines = changed.sections.reduce((total, section) => total + section.total, 0);
+    expect(lines).toBeCloseTo(changed.charges);
+  });
+
+  it("shows an earlier plan's charges in a range the current plan charged nothing in", () => {
+    const changed = buildBill(LAYOUT, new Map([[LAYOUT.totals.cost, 1.15]]), 1);
+    expect(changed.sections.map((section) => section.kind)).toEqual(["other"]);
+    expect(changed.sections[0]?.lines.map((line) => [line.label, line.amount])).toEqual([
+      ["Earlier Plans", expect.closeTo(1)],
+    ]);
+    expect(changed.total).toBeCloseTo(1.15);
+  });
+
+  it("has a total of nothing with no statistics", () => {
+    const empty = buildBill(LAYOUT, new Map(), 1);
+    expect(empty.sections).toEqual([]);
+    expect(empty.charges).toBe(0);
+    expect(empty.gst).toBe(0);
+    expect(empty.total).toBe(0);
+  });
+});
+
+describe("lineLabel", () => {
+  const all = LAYOUT.sections.flatMap((section) => section.lines);
+
+  it("names every line the same way, whatever the network calls it", () => {
+    expect(all.map(lineLabel)).toEqual([
+      "Daily Charges",
+      "Import - Off-peak Usage",
+      "Import - Peak Usage",
+      "Export - Peak Usage",
+      "Import - Anytime Usage",
+      "Export - Off-peak Usage",
+      "Electricity Authority (EA) Levy",
+      "Daily Charges - Metering",
+      "Daily Charges - Ecotricity",
+    ]);
+    // None of the plan's own wording shows.
+    for (const line of all) {
+      expect(lineLabel(line)).not.toContain(line.name);
+    }
+  });
+
+  it("names periods the way the integration's period sensors do", () => {
+    const usage = all[1]!;
+    expect(lineLabel({ ...usage, period: "super_off_peak" })).toBe("Import - Super off-peak Usage");
+    expect(lineLabel({ ...usage, period: "shoulder_peak" })).toBe("Import - Shoulder peak Usage");
+  });
+
+  it("keeps the integration's or plan's name for what it has no name for", () => {
+    const [daily, usage] = all;
+    expect(lineLabel({ ...usage!, period: "charge_9", name: "Charge 9" })).toBe("Import - Charge 9 Usage");
+    expect(lineLabel({ ...daily!, part: "connection_fee", name: "Connection Fee" })).toBe(
+      "Daily Charges - Connection Fee",
+    );
+    const levy = all.find((line) => line.kind === "levy")!;
+    expect(lineLabel({ ...levy, part: "carbon_levy", name: "Carbon Levy" })).toBe("Carbon Levy");
+  });
+});
+
+describe("statisticIds", () => {
+  it("lists every statistic once", () => {
+    const ids = statisticIds(LAYOUT);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(expect.arrayContaining([...CHANGES.keys()]));
+    expect(ids).toHaveLength(CHANGES.size);
+  });
+});
+
+describe("bill options", () => {
+  it("lists lines that charged nothing when asked to", () => {
+    const quiet = withTotals([...CHANGES].map(([id, value]) => [id, id.includes("supplier") ? 0 : value]));
+    const hidden = buildBill(LAYOUT, quiet, 1).sections.flatMap((section) => section.lines);
+    const shown = buildBill(LAYOUT, quiet, 1, { showEmptyLines: true }).sections.flatMap(
+      (section) => section.lines,
+    );
+    expect(shown.length).toBeGreaterThan(hidden.length);
+    const empty = shown.find((line) => line.label === "Daily Charges - Ecotricity");
+    expect(empty).toMatchObject({ amount: 0, rate: null });
+  });
+});
+
+describe("billingPeriodStart", () => {
+  it("starts on the billing period start day this month, or last month's before it comes round", () => {
+    // New Zealand midnights: 15 October 2026 is daylight time (UTC+13), 15 September standard.
+    expect(billingPeriodStart(new Date("2026-10-26T20:30:00Z"), 15)).toEqual(new Date("2026-10-14T11:00:00Z"));
+    expect(billingPeriodStart(new Date("2026-10-09T20:30:00Z"), 15)).toEqual(new Date("2026-09-14T12:00:00Z"));
+    expect(billingPeriodStart(new Date("2026-01-02T11:00:00Z"), 15)).toEqual(new Date("2025-12-14T11:00:00Z"));
+    // Day 1 is the calendar month, starting at midnight on the day itself.
+    expect(billingPeriodStart(new Date("2026-09-30T11:00:00Z"), 1)).toEqual(new Date("2026-09-30T11:00:00Z"));
+  });
+
+  it("goes by the New Zealand date, whatever the browser's time zone", () => {
+    // 1 October in New Zealand, still 30 September in UTC and to its west.
+    expect(billingPeriodStart(new Date("2026-09-30T13:00:00Z"), 1)).toEqual(new Date("2026-09-30T11:00:00Z"));
+    // 30 September in New Zealand, already 1 October to its east (in UTC+14, say).
+    expect(billingPeriodStart(new Date("2026-09-30T10:30:00Z"), 1)).toEqual(new Date("2026-08-31T12:00:00Z"));
+  });
+
+  it("starts at midnight on the day daylight saving starts or ends", () => {
+    expect(billingPeriodStart(new Date("2026-09-28T00:00:00Z"), 27)).toEqual(new Date("2026-09-26T12:00:00Z"));
+    expect(billingPeriodStart(new Date("2026-04-06T00:00:00Z"), 5)).toEqual(new Date("2026-04-04T11:00:00Z"));
+  });
+});
+
+describe("wholeHours", () => {
+  it("takes in the last hour of a day the date picker ends at 23:59:59.999", () => {
+    // 23 October 2026 in New Zealand (UTC+13).
+    const day = wholeHours(new Date("2026-10-22T11:00:00Z"), new Date("2026-10-23T10:59:59.999Z"));
+    expect(day.start.toISOString()).toBe("2026-10-22T11:00:00.000Z");
+    expect(day.end.toISOString()).toBe("2026-10-23T11:00:00.000Z");
+  });
+
+  it("leaves whole hours as they are, and widens a range ending now to the hour", () => {
+    const whole = wholeHours(new Date("2026-10-22T11:00:00Z"), new Date("2026-10-23T11:00:00Z"));
+    expect(whole.end.toISOString()).toBe("2026-10-23T11:00:00.000Z");
+    const now = wholeHours(new Date("2026-10-22T11:20:00Z"), new Date("2026-10-26T09:42:13Z"));
+    expect(now.start.toISOString()).toBe("2026-10-22T11:00:00.000Z");
+    expect(now.end.toISOString()).toBe("2026-10-26T10:00:00.000Z");
+  });
+});
+
+describe("formatting", () => {
+  it("shows amounts like the bill, with credits in brackets", () => {
+    expect(formatAmount(1.3874)).toBe("$1.39");
+    expect(formatAmount(-0.9136)).toBe("($0.91)");
+    expect(formatAmount(0)).toBe("$0.00");
+    expect(formatAmount(-0.00001)).toBe("$0.00");
+    // A credit smaller than a cent rounds to nothing, so it isn't shown as one.
+    expect(formatAmount(-0.003)).toBe("$0.00");
+  });
+
+  it("shows rates to four places at most and two at least", () => {
+    expect(formatRate(0.18)).toBe("0.18");
+    expect(formatRate(0.0251)).toBe("0.0251");
+    expect(formatRate(1.5951)).toBe("1.5951");
+    expect(formatRate(0.3)).toBe("0.30");
+    expect(formatRate(-0.02)).toBe("(0.02)");
+    expect(formatRate(-0.00001)).toBe("0.00");
+    expect(formatRate(0.123456)).toBe("0.1235");
+  });
+
+  it("shows kWh to two places, and days whole unless one was partly charged", () => {
+    expect(formatQuantity(7.3, "kWh")).toBe("7.30");
+    expect(formatQuantity(3, "days")).toBe("3");
+    expect(formatQuantity(22.5, "days")).toBe("22.5");
+    expect(formatQuantity(1 / 3, "days")).toBe("0.33");
+  });
+});

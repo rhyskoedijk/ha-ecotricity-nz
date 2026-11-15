@@ -23,6 +23,7 @@ from custom_components.ecotricity_nz.api.timeframes import (
 from tests.conftest import (
     TIME_OF_USE_PLAN,
     chart_file,
+    chart_files,
     chart_name,
     explained_chart,
     find_chart_where,
@@ -45,7 +46,7 @@ def _edited(data: bytes, edit: object) -> bytes:
     """Return a chart with an edit applied to its pixels."""
     with Image.open(io.BytesIO(data)) as raw:
         image = raw.convert("RGB")
-    edit(image)  # type: ignore[operator]
+    edit(image)  # type: ignore[operator]  # each edit takes the image
     out = io.BytesIO()
     image.save(out, format="PNG")
     return out.getvalue()
@@ -100,7 +101,7 @@ def test_small_rendering_changes_still_read() -> None:
         assert pixels is not None
         for y in range(LEGEND_TOP, image.height):
             for x in range(image.width):
-                red, green, blue = pixels[x, y]  # type: ignore[misc]
+                red, green, blue = pixels[x, y]  # type: ignore[misc]  # an RGB pixel is a 3-tuple
                 pixels[x, y] = tuple(
                     255 - (255 - value) * 85 // 100 for value in (red, green, blue)
                 )
@@ -215,6 +216,35 @@ def test_glyph_templates_are_far_apart() -> None:
                 assert glyph_distance(glyph, template) > 0.3, (char, other)
 
 
+def test_every_legend_character_is_well_inside_the_matching_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A character near the limit, or nearly as close to another template, would misread after a
+    # small rendering change. Keep a quarter of the limit clear on both sides. Only characters
+    # that match count: the reader also tries the text above the legend, and skips what it
+    # can't read there.
+    glyphs: set[timeframes._Glyph] = set()
+    match = timeframes._match_glyph
+
+    def recording_match(glyph: timeframes._Glyph) -> str:
+        char = match(glyph)
+        glyphs.add(glyph)
+        return char
+
+    monkeypatch.setattr(timeframes, "_match_glyph", recording_match)
+    for chart in chart_files():
+        read_chart(chart.read_bytes())
+
+    limit = timeframes._MAX_GLYPH_DISTANCE
+    assert glyphs
+    for glyph in glyphs:
+        nearest, second = sorted(
+            glyph_distance(glyph, template) for template in timeframes._TEMPLATES.values()
+        )[:2]
+        assert nearest < limit * 0.75, nearest
+        assert second > limit * 1.25, second
+
+
 def test_unreadable_images_rejected() -> None:
     with pytest.raises(ChartReadError):
         read_chart(b"not an image")
@@ -223,6 +253,38 @@ def test_unreadable_images_rejected() -> None:
     Image.new("RGB", (200, 100), "white").save(blank, format="PNG")
     with pytest.raises(ChartReadError, match="no legend"):
         read_chart(blank.getvalue())
+
+
+def _png(image: Image.Image) -> bytes:
+    data = io.BytesIO()
+    image.save(data, format="PNG")
+    return data.getvalue()
+
+
+def _ink_below_its_line_top() -> bytes:
+    """A mark whose ink starts further below its line's top than a character is tall."""
+    image = Image.new("RGB", (200, 60), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((10, 30, 13, 49), fill="black")
+    draw.rectangle((100, 5, 103, 49), fill="black")
+    return _png(image)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(_png(Image.new("RGB", (40, 40), "white"))[:60], id="truncated"),
+        pytest.param(_png(Image.new("P", (40, 40), 0)), id="palette"),
+        pytest.param(_png(Image.new("L", (40, 40), 0)), id="greyscale_all_ink"),
+        pytest.param(_ink_below_its_line_top(), id="ink_below_its_line_top"),
+    ],
+)
+def test_any_unreadable_image_raises_chart_read_error(data: bytes) -> None:
+    # Anything else would escape the coordinator, which only expects the API's own errors, and
+    # make every pricing sensor unavailable instead of keeping the saved reading.
+    with pytest.raises(ChartReadError):
+        read_chart(data)
 
 
 def test_unknown_character_rejected() -> None:
@@ -275,3 +337,63 @@ def test_entry_slots() -> None:
     entry = LegendEntry(start=420, end=570, text="-28.34")
     assert entry.slots == range(14, 19)
     assert LegendEntry(start=0, end=30, text="-2", clipped=True).price is None
+
+
+def test_image_too_large_to_be_a_chart_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pillow refuses a decompression bomb before decoding it; that's an unreadable chart too.
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+    image = io.BytesIO()
+    Image.new("L", (100, 100), 255).save(image, format="PNG")
+
+    with pytest.raises(ChartReadError, match="not a readable image"):
+        read_chart(image.getvalue())
+
+
+def test_blank_glyphs_are_as_different_as_can_be() -> None:
+    assert glyph_distance(((0, 0),), ((0, 0),)) == 1.0
+
+
+def test_one_cell_line_keeps_its_pitch() -> None:
+    runs = [(0, 4), (1, 3)]
+    assert timeframes._line_cells(runs, 2, 10) == {0: runs}
+
+
+def test_pitch_that_doesnt_fit_the_line_is_kept() -> None:
+    # A refit more than a tenth away from the heading's pitch is a misread, so it isn't used.
+    runs = [(0, 0), (0, 0), (34, 34)]
+    assert timeframes._line_cells(runs, 0, 10) == {0: runs[:2], 3: runs[2:]}
+
+
+def test_text_above_the_legend_is_skipped() -> None:
+    # A line of digits above the headings, such as an axis label, isn't the legend.
+    def label(image: Image.Image) -> None:
+        digits = image.crop((10, 555, 60, 571))
+        ImageDraw.Draw(image).rectangle((0, 0, image.width, 30), fill="white")
+        image.paste(digits, (10, 5))
+
+    expected = read_chart(_chart())
+    assert read_chart(_edited(_chart(), label)) == expected
+
+
+def test_ink_before_a_columns_first_cell_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ink the cell fit places before a column's first character is left out of its text.
+    expected = read_chart(_chart())
+    line_cells = timeframes._line_cells
+
+    def with_stray(
+        runs: list[tuple[int, int]], origin: float, pitch: float
+    ) -> dict[int, list[tuple[int, int]]]:
+        cells = line_cells(runs, origin, pitch)
+        return {-1: cells[min(cells)], **cells}
+
+    monkeypatch.setattr(timeframes, "_line_cells", with_stray)
+    assert read_chart(_chart()) == expected
+
+
+def test_text_before_a_window_rejected() -> None:
+    with pytest.raises(ChartReadError, match="unexpected text"):
+        timeframes._entries(["x 12am - 12am : 21.00c"])
+
+
+def test_chart_without_bars_has_no_bar_heights() -> None:
+    assert timeframes._bar_heights(Image.new("RGB", (100, 100), "white")) is None

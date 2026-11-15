@@ -34,6 +34,11 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    """Return the objects in a list, skipping anything else, or none if it isn't a list."""
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
 def _content(payload: Any) -> Any:
     if not isinstance(payload, dict):
         raise EcotricityResponseError("Response was not a JSON object")
@@ -145,7 +150,7 @@ def _rate_unit(raw: str) -> RateUnit:
 def _parse_rate(raw: dict[str, Any], *, network: bool) -> Rate:
     unit = str(raw.get("unit") or "")
     return Rate(
-        description=str(raw.get("charge_description") or raw.get("rate_description") or ""),
+        description=str(raw.get("charge_description") or ""),
         charge=raw.get("charge") or None,
         register_type=raw.get("register_type") or None,
         unit=_rate_unit(unit),
@@ -154,6 +159,7 @@ def _parse_rate(raw: dict[str, Any], *, network: bool) -> Rate:
         season=raw.get("season") or None,
         valid_start=_parse_date(raw.get("valid_start")),
         valid_end=_parse_date(raw.get("valid_end")),
+        price_category=raw.get("price_category") or None,
     )
 
 
@@ -312,8 +318,9 @@ def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
     starts: list[datetime] = []
     ends: list[datetime] = []
     features: set[str] = set()
-    for feature, entries in (indicator.get("features") or {}).items():
-        for entry in entries if isinstance(entries, list) else []:
+    raw_features = indicator.get("features")
+    for feature, entries in (raw_features if isinstance(raw_features, dict) else {}).items():
+        for entry in _dicts(entries):
             bounds = _range_bounds(entry.get("measuredValueRange"))
             if bounds is None:
                 continue
@@ -338,7 +345,7 @@ def parse_indicator(payload: Any, tz: tzinfo) -> PortalIndicator:
 def _parse_feature_values(values: Any, tz: tzinfo) -> tuple[IntervalReading, ...]:
     readings: list[IntervalReading] = []
     last_start: datetime | None = None
-    for item in values if isinstance(values, list) else []:
+    for item in _dicts(values):
         bounds = _range_bounds(item.get("measuringPeriod"))
         value = item.get("value")
         if bounds is None or not isinstance(value, int | float):
@@ -357,8 +364,8 @@ def parse_values(payload: Any, tz: tzinfo) -> ConsumptionData:
     if not isinstance(payload, dict):
         raise EcotricityResponseError("valueRequest response was not an object")
     series: dict[str, tuple[IntervalReading, ...]] = {}
-    for indicator in payload.get("indicatorValueResponses") or []:
-        for feature in indicator.get("featureValueResponses") or []:
+    for indicator in _dicts(payload.get("indicatorValueResponses")):
+        for feature in _dicts(indicator.get("featureValueResponses")):
             series[str(feature.get("featureID"))] = _parse_feature_values(feature.get("values"), tz)
     return ConsumptionData(
         imported_kwh=series.get(FEATURE_IMPORT, ()),

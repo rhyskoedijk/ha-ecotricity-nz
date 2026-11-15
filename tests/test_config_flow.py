@@ -19,7 +19,8 @@ from custom_components.ecotricity_nz.api import (
 from custom_components.ecotricity_nz.const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_EXPORT,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PASSWORD,
     CONF_PLAN_ID,
     DOMAIN,
@@ -59,8 +60,28 @@ async def test_user_without_credentials_picks_plan(hass: HomeAssistant) -> None:
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_ICP: TEST_ICP}
-    assert result["options"] == {CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)}
+    assert result["options"] == {
+        CONF_INCLUDE_GST_IMPORT: True,
+        CONF_INCLUDE_GST_EXPORT: True,
+        CONF_PLAN_ID: plan_id(ANYTIME_PLAN),
+    }
     assert result["result"].unique_id == TEST_ICP
+
+
+async def test_plans_are_listed_by_their_internal_names_when_their_names_cant_be_fetched(
+    hass: HomeAssistant, mock_onboarding: MagicMock
+) -> None:
+    # The plan names are a separate file, so failing to fetch them doesn't stop setup.
+    mock_onboarding.async_get_plan_titles.side_effect = EcotricityConnectionError("down")
+    flow_id = await _start(hass)
+
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_ICP: TEST_ICP})
+
+    assert result["step_id"] == "plan"
+    selector = result["data_schema"].schema[CONF_PLAN_ID]
+    labels = {option["label"] for option in selector.config["options"]}
+    plans = mock_onboarding.async_get_plans.return_value.all_plans
+    assert labels == {plan.description for plan in plans}
 
 
 async def test_user_with_credentials(hass: HomeAssistant, mock_portal: MagicMock) -> None:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from http import HTTPStatus
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -21,6 +23,7 @@ from custom_components.ecotricity_nz.api import (
     EcotricityResponseError,
     PortalClient,
 )
+from custom_components.ecotricity_nz.api.portal import LOGIN_RETRY_DELAY
 from tests.conftest import load_json_fixture
 
 BASE = "https://portal.test"
@@ -28,6 +31,13 @@ PORTAL = f"{BASE}/powercommerce/eco/fo/portal/"
 JSON = {"Content-Type": "application/json;charset=UTF-8"}
 NZ = ZoneInfo("Pacific/Auckland")
 BERLIN = ZoneInfo("Europe/Berlin")
+
+
+@pytest.fixture(autouse=True)
+def mock_sleep() -> Iterator[AsyncMock]:
+    """Skip the wait before a rejected login is tried again."""
+    with patch("custom_components.ecotricity_nz.api.portal.asyncio.sleep") as sleep:
+        yield sleep
 
 
 def _client(hass: HomeAssistant) -> PortalClient:
@@ -51,20 +61,58 @@ def _mock_login(aioclient_mock: AiohttpClientMocker, target: str = "home") -> No
     )
 
 
-async def test_login_success(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+async def test_login_success(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mock_sleep: AsyncMock
+) -> None:
     _mock_login(aioclient_mock)
 
     await _client(hass).async_login()
+
+    mock_sleep.assert_not_awaited()
 
     _, _, data, _ = aioclient_mock.mock_calls[1]
     assert data == {"login": "123456", "password": "secret"}
 
 
-async def test_login_rejected(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+def _login_attempts(aioclient_mock: AiohttpClientMocker) -> int:
+    return sum(call[1].path.endswith("loginProcess") for call in aioclient_mock.mock_calls)
+
+
+async def test_login_rejected_twice_is_auth_error(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mock_sleep: AsyncMock
+) -> None:
     _mock_login(aioclient_mock, target="start")
 
     with pytest.raises(AuthError):
         await _client(hass).async_login()
+    assert _login_attempts(aioclient_mock) == 2
+    mock_sleep.assert_awaited_once_with(LOGIN_RETRY_DELAY)
+
+
+async def test_login_rejected_once_is_tried_again(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mock_sleep: AsyncMock
+) -> None:
+    """The portal can briefly send a correct login back to the start page."""
+    targets = iter(["start", "home"])
+
+    async def login(method: str, url: URL, data: object) -> AiohttpClientMockResponse:
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            status=HTTPStatus.FOUND,
+            headers={"Location": f"http://portal.test/powercommerce/eco/fo/portal/{next(targets)}"},
+        )
+
+    aioclient_mock.get(PORTAL, text="<html></html>")
+    aioclient_mock.post(f"{PORTAL}loginProcess", side_effect=login)
+
+    await _client(hass).async_login()
+
+    assert _login_attempts(aioclient_mock) == 2
+    mock_sleep.assert_awaited_once_with(LOGIN_RETRY_DELAY)
+    # The second attempt starts a new session from the start page.
+    paths = [call[1].path.rsplit("/", 1)[-1] for call in aioclient_mock.mock_calls]
+    assert paths == ["", "loginProcess", "", "loginProcess"]
 
 
 @pytest.mark.parametrize(
@@ -115,11 +163,13 @@ def _mock_analysis(aioclient_mock: AiohttpClientMocker) -> None:
     _mock_login(aioclient_mock)
     aioclient_mock.get(f"{PORTAL}consumptionDetails", text="<html>consumption</html>")
     aioclient_mock.post(
-        f"{PORTAL}analysis/initData", json=load_json_fixture("portal_init_data.json"), headers=JSON
+        f"{PORTAL}analysis/initData",
+        json=load_json_fixture("ecotricity/portal_init_data.json"),
+        headers=JSON,
     )
     aioclient_mock.post(
         f"{PORTAL}analysis/valueRequest",
-        json=load_json_fixture("portal_values_dst_end.json"),
+        json=load_json_fixture("ecotricity/portal_values_dst_end.json"),
         headers=JSON,
     )
 
@@ -162,7 +212,7 @@ async def test_consumption_page_errors(
         await _client(hass).async_get_indicator()
 
 
-async def test_error_body_is_logged(
+async def test_error_is_logged_without_its_body(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     caplog: pytest.LogCaptureFixture,
@@ -172,13 +222,15 @@ async def test_error_body_is_logged(
     aioclient_mock.post(
         f"{PORTAL}analysis/initData",
         status=HTTPStatus.SERVICE_UNAVAILABLE,
-        text="Service temporarily unavailable",
+        text="Account 123456 is temporarily unavailable",
     )
     caplog.set_level("DEBUG", logger="custom_components.ecotricity_nz.api.portal")
 
     with pytest.raises(EcotricityConnectionError):
         await _client(hass).async_get_indicator()
-    assert "Service temporarily unavailable" in caplog.text
+    # The status is logged, but not the page, which can show the customer's account.
+    assert "analysis/initData returned HTTP 503" in caplog.text
+    assert "123456" not in caplog.text
 
 
 async def test_half_hourly_request(
@@ -222,7 +274,10 @@ async def test_expired_session_logs_in_again(
         [
             AiohttpClientMockResponse("post", URL(PORTAL), text="<html>login</html>"),
             AiohttpClientMockResponse(
-                "post", URL(PORTAL), json=load_json_fixture("portal_init_data.json"), headers=JSON
+                "post",
+                URL(PORTAL),
+                json=load_json_fixture("ecotricity/portal_init_data.json"),
+                headers=JSON,
             ),
         ]
     )

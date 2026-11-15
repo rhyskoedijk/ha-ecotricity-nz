@@ -33,4 +33,10 @@ logger:
 YAML
 fi
 
-exec uv run hass --config config --debug
+# Build the frontend before Home Assistant starts, then rebuild it as its source changes.
+npm run build --prefix frontend
+npm run watch --prefix frontend &
+trap 'kill $!' EXIT
+
+# pyproject.toml overrides Home Assistant's Pillow pin, so don't let it try to install its own.
+uv run hass --config config --debug --skip-pip-packages Pillow

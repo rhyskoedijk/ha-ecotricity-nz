@@ -6,20 +6,26 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
 from homeassistant.const import __version__ as HA_VERSION  # noqa: N812 - Home Assistant convention
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import (
     async_create_clientsession,
     async_get_clientsession,
 )
+from homeassistant.helpers.start import async_at_started
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from .api import OnboardingClient, PortalClient
+from .card import async_register_card
 from .const import (
     CONF_ACCOUNT_NUMBER,
+    CONF_INCLUDE_GST_EXPORT,
     CONF_PASSWORD,
+    DEFAULT_INCLUDE_GST,
     DOMAIN,
     LOCAL_TIME_ZONE,
+    LOGGER,
     PORTAL_SERVER_TIME_ZONE,
 )
 from .coordinator import (
@@ -29,7 +35,8 @@ from .coordinator import (
     PricingCoordinator,
 )
 from .services import async_setup_services
-from .store import PricingStore
+from .store import CostStore, PricingStore
+from .websocket_api import async_setup_websocket
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -41,8 +48,13 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001 - signature set by Home Assistant
-    """Register the integration's actions, so they exist even while no entry is loaded."""
+    """Register the integration's actions and the bill card, with its websocket command.
+
+    They're registered here so they exist even while no entry is loaded.
+    """
     async_setup_services(hass)
+    async_setup_websocket(hass)
+    await async_register_card(hass)
     return True
 
 
@@ -75,24 +87,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -
     pricing.async_start_half_hour_updates()
 
     consumption = (
-        ConsumptionCoordinator(hass, entry, portal, local_tz) if portal is not None else None
+        ConsumptionCoordinator(hass, entry, portal, local_tz, pricing)
+        if portal is not None
+        else None
     )
     entry.runtime_data = EcotricityRuntimeData(
         pricing=pricing, consumption=consumption, local_tz=local_tz
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    if consumption is not None:
-        # A first run can backfill years of history, so don't hold up setup for it.
+    async def _async_after_start() -> None:
+        # Pricing first, so the import prices usage with whatever it fetches.
+        await pricing.async_fetch_deferred()
+        if consumption is not None:
+            await consumption.async_refresh()
+
+    @callback
+    def _async_started(_hass: HomeAssistant) -> None:
+        # A fetch can take a while, and a first import can backfill years of history, so
+        # neither holds up setup or Home Assistant's startup.
         entry.async_create_background_task(
-            hass, consumption.async_refresh(), f"{DOMAIN} consumption import"
+            hass, _async_after_start(), f"{DOMAIN} pricing fetch and consumption import"
         )
+
+    entry.async_on_unload(async_at_started(hass, _async_started))
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> bool:
+    """Bring an entry's options up to the current version.
+
+    Version 2 added the export GST option. Export prices left GST out before it, but it's on by
+    default, as Ecotricity's bills charge GST on export credits.
+    """
+    if entry.version == 1:
+        options = {CONF_INCLUDE_GST_EXPORT: DEFAULT_INCLUDE_GST, **entry.options}
+        hass.config_entries.async_update_entry(entry, options=options, version=2)
+        LOGGER.debug("Migrated config entry %s to version 2", entry.entry_id)
     return True
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> None:
-    """Delete the saved pricing when the entry is removed."""
+    """Delete the saved pricing, and where the costs start, when the entry is removed."""
     await PricingStore(hass, entry.entry_id).async_remove()
+    await CostStore(hass, entry.entry_id).async_remove()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EcotricityConfigEntry) -> bool:

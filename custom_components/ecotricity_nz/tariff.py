@@ -204,6 +204,8 @@ class PriceComponent:
     kind: ComponentKind
     description: str
     price: float
+    bucket: str = ""
+    """The rate's bucket code, with its group's prefix (see `resolve_bucket`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +379,7 @@ def side_rates(plan: Plan, day: date, *, export: bool) -> SideRates:
     supplier: dict[str, tuple[PriceComponent, ...]] = {}
     network: dict[str, tuple[PriceComponent, ...]] = {}
     for rate in rates:
-        part = _component(rate)
+        part = rate_component(rate)
         if rate.is_levy:
             # Levies apply to every kWh imported, never to export.
             if not export:
@@ -404,19 +406,114 @@ def without_export(plan: Plan) -> Plan:
             rate for rate in rates if not (rate.is_export and rate.unit is RateUnit.PER_KWH)
         )
 
+    chart = plan.chart_network_rates
     return replace(
-        plan, retail_rates=kept(plan.retail_rates), network_rates=kept(plan.network_rates)
+        plan,
+        retail_rates=kept(plan.retail_rates),
+        network_rates=kept(plan.network_rates),
+        chart_network_rates=None if chart is None else kept(chart),
     )
 
 
-def _component(rate: Rate) -> PriceComponent:
+def _rate_shape(rates: Iterable[Rate]) -> set[tuple[object, ...]]:
+    """Return what a set of network rates covers: each bucket, unit, season and validity."""
+    return {
+        (resolve_bucket(rate), rate.unit, rate.season, rate.valid_start, rate.valid_end)
+        for rate in rates
+    }
+
+
+def network_category(plan: Plan) -> str | None:
+    """Return the price category the plan's network rates are for, or None if they don't say."""
+    categories = {rate.price_category for rate in plan.network_rates}
+    return categories.pop() if len(categories) == 1 else None
+
+
+def billed_plan(plan: Plan, plans: Iterable[Plan], category: str) -> Plan:
+    """Return the plan with the network rates of the ICP's price category, as it's billed.
+
+    Each plan is published with the network rates of the category it needs, whatever the ICP's
+    is: a low-user plan has the low-user category's, and needs Ecotricity to ask the network to
+    move the ICP. Until the network does, it charges the ICP's registered category. The plan's
+    charts show its own network rates, so they're kept as `chart_network_rates` to read them with.
+
+    Another plan in the list carries the registered category's rates. The plan is returned
+    unchanged if its rates are already that category's, don't say, or no plan carries that
+    category's rates for the same buckets and dates.
+    """
+    own = network_category(plan)
+    if own is None or own == category:
+        return plan
+    shape = _rate_shape(plan.network_rates)
+    billed = next(
+        (
+            other.network_rates
+            for other in plans
+            if other.network == plan.network
+            and network_category(other) == category
+            and _rate_shape(other.network_rates) == shape
+        ),
+        None,
+    )
+    if billed is None:
+        return plan
+    return replace(plan, network_rates=billed, chart_network_rates=plan.network_rates)
+
+
+def chart_plan(plan: Plan) -> Plan:
+    """Return the plan with the network rates its charts were drawn with."""
+    if plan.chart_network_rates is None:
+        return plan
+    return replace(plan, network_rates=plan.chart_network_rates, chart_network_rates=None)
+
+
+def rebill(slots: DaySlots, rates: SideRates) -> DaySlots:
+    """Return half-hours explained with a chart's network rates, priced with `rates`' instead.
+
+    Each half-hour keeps its periods, and its network parts become the billed rates of the same
+    bucket (none for a half-hour with no network rate), plus any anytime network rates.
+    `billed_plan` only swaps in rates that cover the same buckets.
+    """
+    anytime = tuple(part for part in rates.always if part.kind is ComponentKind.NETWORK)
+
+    def billed(slot: Slot) -> Slot:
+        parts = (
+            *(part for part in slot.components if part.kind is not ComponentKind.NETWORK),
+            *rates.network.get(slot.network, ()),
+            *anytime,
+        )
+        return replace(
+            slot, price=round(sum(part.price for part in parts), _PRICE_PRECISION), components=parts
+        )
+
+    return DaySlots(
+        weekday=tuple(billed(slot) for slot in slots.weekday),
+        weekend=tuple(billed(slot) for slot in slots.weekend),
+    )
+
+
+def rate_component(rate: Rate) -> PriceComponent:
+    """Return a rate as a part of a price."""
     if rate.is_levy:
         kind = ComponentKind.LEVY
     elif rate.is_network:
         kind = ComponentKind.NETWORK
     else:
         kind = ComponentKind.SUPPLIER
-    return PriceComponent(kind, rate.description, rate.price)
+    return PriceComponent(kind, rate.description, rate.price, resolve_bucket(rate))
+
+
+def line_key(part: PriceComponent, *, export: bool) -> str | None:
+    """Return the key of the bill line a price part is charged on, or None for a levy.
+
+    A bill has a line for each of Ecotricity's and the network's rates, for example
+    line_import_network_charge_high. Levies are one line already, and have no bucket.
+    """
+    if part.kind is ComponentKind.LEVY or not part.bucket:
+        return None
+    side = "export" if export else "import"
+    code = part.bucket.removeprefix(EXPORT_PREFIX if export else "")
+    return f"line_{side}_{part.kind}_{slug(code)}"
 
 
 def _slot(candidate: _Candidate) -> Slot:
@@ -625,8 +722,8 @@ def _own_slots(slots: DaySlots, alignment: Alignment) -> dict[str, Slot]:
         found = _most_common(
             slot for slot in every if slot.supplier == bucket and slot.network == bucket
         ) or _most_common(slot for slot in every if bucket in (slot.supplier, slot.network))
-        if found is not None:
-            own[bucket] = found
+        assert found is not None  # noqa: S101 - every bucket was taken from a slot
+        own[bucket] = found
     # A season where neither has periods (one price all day) falls back to Ecotricity's.
     return own or {slot.supplier: slot for slot in every}
 
@@ -679,7 +776,7 @@ def controlled_prices(
         if rate.applies_on(day) and rate.unit is RateUnit.PER_KWH and rate.is_controlled
     ]
     levies = tuple(
-        _component(rate)
+        rate_component(rate)
         for rate in plan.rates
         if rate.applies_on(day) and rate.unit is RateUnit.PER_KWH and rate.is_levy
     )
@@ -688,7 +785,7 @@ def controlled_prices(
         if rate.is_levy:
             continue
         bucket = resolve_bucket(rate)
-        buckets[bucket] = (*buckets.get(bucket, ()), _component(rate))
+        buckets[bucket] = (*buckets.get(bucket, ()), rate_component(rate))
     anytime = CONTROLLED_PREFIX + ANYTIME
     if anytime in buckets and len(buckets) > 1:
         always = buckets.pop(anytime)
@@ -723,11 +820,7 @@ def price_day(
         rates = side_rates(plan, day, export=export)
         if slots is None and not rates.is_empty:
             rate_buckets.update(rate_periods(rates, alignment))
-    daily = tuple(
-        DailyCharge(rate.description, rate.price, is_network=rate.is_network)
-        for rate in plan.rates
-        if rate.applies_on(day) and rate.unit is RateUnit.PER_DAY
-    )
+    daily = daily_charges(plan, day)
     controlled, controlled_components = controlled_prices(plan, day)
     return DayPricing(
         import_side=price_side(import_slots, alignments[0]) if import_slots else None,
@@ -737,6 +830,54 @@ def price_day(
         daily_charges=daily,
         rate_buckets=rate_buckets,
     )
+
+
+def daily_charges(plan: Plan, day: date, *, controlled: bool = True) -> tuple[DailyCharge, ...]:
+    """Return the plan's fixed daily charges on a day, without controlled-load ones if asked."""
+    return tuple(
+        DailyCharge(rate.description, rate.price, is_network=rate.is_network)
+        for rate in plan.rates
+        if rate.applies_on(day)
+        and rate.unit is RateUnit.PER_DAY
+        and (controlled or not rate.is_controlled)
+    )
+
+
+def component_key(part: PriceComponent) -> str:
+    """Return a stable key for a price part.
+
+    Keys don't include the period, so they stay the same as the time of day changes:
+    supplier_rate, network_rate, and ea_levy (other levies get a key from their description).
+    """
+    if part.kind is ComponentKind.SUPPLIER:
+        return "supplier_rate"
+    if part.kind is ComponentKind.NETWORK:
+        return "network_rate"
+    key = slug(part.description)
+    return "ea_levy" if key in ("ea_levy", "electricity_authority_levy") else key
+
+
+def daily_charge_key(charge: DailyCharge) -> str:
+    """Return a stable key for a daily charge item.
+
+    The network's charges are network_rate. Of Ecotricity's items, the metering fee is shown on
+    its own (metering_rate), like the EA levy on import prices, and the admin fee is
+    Ecotricity's own charge (supplier_rate). Any other item gets a key from its description,
+    so a new kind of charge is never hidden inside another.
+    """
+    if charge.is_network:
+        return "network_rate"
+    description = charge.description.lower()
+    if "meter" in description:
+        return "metering_rate"
+    if "admin" in description:
+        return "supplier_rate"
+    return slug(charge.description)
+
+
+def slug(text: str) -> str:
+    """Return a lower-case key for text, with every other character as an underscore."""
+    return "".join(char if char.isalnum() else "_" for char in text.lower()).strip("_")
 
 
 def season_for(plan: Plan, day: date) -> Season | None:
@@ -801,6 +942,18 @@ def chart_seasons(plan: Plan, day: date, *, upcoming: bool) -> list[Season | Non
     change = next_season_change(plan, day)
     following = season_for(plan, change) if change is not None else None
     return [item for item in (season, following) if item is not None]
+
+
+def ended_seasons(plan: Plan, day: date) -> list[Season]:
+    """Return the published seasons that ended before `day`, for pricing past days.
+
+    A plan whose charts don't depend on the season has none: its one set of charts covers them.
+    """
+    if not plan_needs_season(plan):
+        return []
+    return sorted(
+        (item for item in plan.seasons if item.end < day), key=lambda item: (item.start, item.end)
+    )
 
 
 def season_charts(plan: Plan, season: Season | None) -> list[str]:
@@ -872,8 +1025,14 @@ def season_slots(
             raise
         return _all_day(likely), str(err) if all(templates) else None
     readings = [charts.get(path) for path in paths]
+    # The charts show the plan's own network rates, which aren't always the ones it's billed.
+    drawn = (
+        rates
+        if plan.chart_network_rates is None
+        else side_rates(chart_plan(plan), day, export=export)
+    )
     try:
-        return day_slots(rates, *readings, export=export), None
+        slots = day_slots(drawn, *readings, export=export)
     except ChartReadError as err:
         entries = [
             entry
@@ -881,11 +1040,12 @@ def season_slots(
             if reading is not None
             for entry in (reading.export_entries if export else reading.import_entries)
         ]
-        if likely is None or _shows_varying_price(entries, rates):
+        if likely is None or _shows_varying_price(entries, drawn):
             raise
         # An anytime plan's price needs no chart, so one that's missing or doesn't match its
         # rates (drawn before a rate change, say) can't stop it working.
         return _all_day(likely), str(err)
+    return (slots if drawn is rates else rebill(slots, rates)), None
 
 
 def _shows_varying_price(entries: Sequence[LegendEntry], rates: SideRates) -> bool:

@@ -120,7 +120,7 @@ async def _plan_list(client: OnboardingClient, pace: Paced, network: str, catego
         "customerType": "Residential",
     }
     # The client's public method needs ICP details; the service itself doesn't.
-    raw = await client._async_gated_get(PLAN_PATH, "Plan list", params)  # noqa: SLF001
+    raw = await client._async_gated_get(PLAN_PATH, "Plan list", params)  # noqa: SLF001 - the public method needs ICP details
     plans = _plans(raw)
     if not plans:
         raise PlanListError(f"{network}/{category}: Ecotricity returned no plans")
@@ -228,7 +228,7 @@ async def main() -> int:
     """Build the fixture folder for one network."""
     # Print each line as it happens, even when the output goes to a file or pipe, so a long
     # paced run shows its progress and its end.
-    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]  # stdout is a TextIOWrapper, typed as TextIO
     args = _arguments()
     networks = json.loads(CATEGORIES.read_text(encoding="utf-8"))["networks"]
     pace = Paced(args.delay)

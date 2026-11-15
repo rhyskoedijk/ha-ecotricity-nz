@@ -36,10 +36,11 @@ from custom_components.ecotricity_nz.api.timeframes import (
     read_chart,
     shown_price,
 )
+from custom_components.ecotricity_nz.config_flow import EcotricityConfigFlow
 from custom_components.ecotricity_nz.const import (
     CONF_ACCOUNT_NUMBER,
     CONF_ICP,
-    CONF_INCLUDE_GST,
+    CONF_INCLUDE_GST_IMPORT,
     CONF_PASSWORD,
     CONF_PLAN_ID,
     DOMAIN,
@@ -50,6 +51,7 @@ from custom_components.ecotricity_nz.tariff import (
     Slot,
     explain,
     first_day,
+    network_category,
     period_for_bucket,
     resolve_bucket,
     season_for,
@@ -323,6 +325,23 @@ def has_clipped_price_needing_its_bar(chart: Path) -> bool:
     return False
 
 
+def needs_network_category_change(plan: Plan) -> bool:
+    """Return whether a plan is published with another price category's network rates.
+
+    A low-user plan listed for a standard-user ICP has the low-user category's rates, say, as
+    joining it needs the ICP moved.
+    """
+    return network_category(plan) not in (None, plan.price_category)
+
+
+def default_plan_where(scenario: Callable[[Plan], bool]) -> Plan:
+    """Return a plan in the default fixture, the test ICP's, that has a pricing scenario."""
+    plans = parse_plan_list(load_plan_list(DEFAULT_NETWORK, DEFAULT_PRICE_CATEGORY)).all_plans
+    plan = next((plan for plan in sorted(plans, key=lambda p: p.code) if scenario(plan)), None)
+    assert plan is not None, f"No default fixture plan has the {scenario.__name__} scenario"
+    return plan
+
+
 def has_overlapping_seasons(plan: Plan) -> bool:
     """Seasons that overlap, such as "Standard Rates" all year and a winter season inside it."""
     return any(
@@ -427,7 +446,7 @@ def mock_onboarding() -> Generator[MagicMock]:
     )
     client.async_get_chart = AsyncMock(side_effect=_chart_bytes)
     client.async_get_plan_titles = AsyncMock(
-        return_value=parse_plan_titles(load_json_fixture("plan_mappings.json"))
+        return_value=parse_plan_titles(load_json_fixture("ecotricity/plan_mappings.json"))
     )
     with (
         patch("custom_components.ecotricity_nz.OnboardingClient", return_value=client),
@@ -449,7 +468,7 @@ def mock_portal() -> Generator[MagicMock]:
             data_end=datetime(2026, 4, 6, 0, 0, tzinfo=NZ),
         )
     )
-    values = parse_values(load_json_fixture("portal_values_dst_end.json"), NZ)
+    values = parse_values(load_json_fixture("ecotricity/portal_values_dst_end.json"), NZ)
 
     async def half_hourly(start: datetime, end: datetime) -> Any:
         return type(values)(
@@ -471,10 +490,11 @@ def config_entry() -> MockConfigEntry:
     """A config entry without portal credentials, on the Low Off Peak plan."""
     return MockConfigEntry(
         domain=DOMAIN,
+        version=EcotricityConfigFlow.VERSION,
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP},
-        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
+        options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(TIME_OF_USE_PLAN)},
     )
 
 
@@ -483,10 +503,11 @@ def portal_config_entry() -> MockConfigEntry:
     """A config entry with portal credentials."""
     return MockConfigEntry(
         domain=DOMAIN,
+        version=EcotricityConfigFlow.VERSION,
         title=f"Ecotricity {TEST_ICP}",
         unique_id=TEST_ICP,
         data={CONF_ICP: TEST_ICP, CONF_ACCOUNT_NUMBER: "123456", CONF_PASSWORD: "secret"},
-        options={CONF_INCLUDE_GST: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)},
+        options={CONF_INCLUDE_GST_IMPORT: True, CONF_PLAN_ID: plan_id(ANYTIME_PLAN)},
     )
 
 

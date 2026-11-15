@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.ecotricity_nz.api import Plan, Rate, RateUnit, Season
+from custom_components.ecotricity_nz.api.parsers import parse_plan_list
 from custom_components.ecotricity_nz.api.timeframes import (
     MINUTES_PER_DAY,
     SLOTS_PER_DAY,
@@ -21,20 +22,28 @@ from custom_components.ecotricity_nz.api.timeframes import (
     LegendEntry,
     shown_price,
 )
+from custom_components.ecotricity_nz.costs import charged_days
 from custom_components.ecotricity_nz.tariff import (
     Alignment,
+    ComponentKind,
+    DailyCharge,
     DaySlots,
     SideRates,
     Slot,
     TouPeriod,
+    billed_plan,
     bucket_name,
     bucket_names,
     bucket_period,
+    chart_plan,
     chart_seasons,
+    daily_charge_key,
+    daily_charges,
     day_slots,
     day_windows,
     explain,
     first_day,
+    network_category,
     next_change,
     next_season_change,
     period_for_bucket,
@@ -60,16 +69,22 @@ from tests.conftest import (
     chart_files,
     chart_name,
     chart_reading,
+    default_plan_where,
     explained_chart,
     find_chart_where,
     find_plan,
     find_plan_where,
+    fixture_plans,
     has_capacity_charge,
     has_clipped_price_needing_its_bar,
     has_hours_without_a_network_rate,
     has_mixed_periods,
     has_overlapping_seasons,
     has_supplier_periods_and_anytime_network,
+    load_plan_list,
+    needs_network_category_change,
+    season_chart_name,
+    stored_charts,
 )
 
 NZ = ZoneInfo("Pacific/Auckland")
@@ -86,7 +101,7 @@ def _rate(**kwargs: object) -> Rate:
         "price": 1.0,
         "is_network": False,
     }
-    return Rate(**(defaults | kwargs))  # type: ignore[arg-type]
+    return Rate(**(defaults | kwargs))  # type: ignore[arg-type]  # tests pass each field's own type
 
 
 def _plan(*rates: Rate) -> Plan:
@@ -221,6 +236,41 @@ def test_next_season_change_with_overlapping_seasons() -> None:
     assert next_season_change(plan, date(2026, 1, 1)) == standard.start
 
 
+def test_season_change_at_the_new_year() -> None:
+    # Seasons can change between 31 December and 1 January.
+    plan = find_plan(TIME_OF_USE_PLAN)
+    december, january = date(2026, 12, 31), date(2027, 1, 1)
+    before, after = season_for(plan, december), season_for(plan, january)
+    assert before is not None
+    assert after is not None
+    assert (before.end, after.start) == (december, january)
+
+    assert next_season_change(plan, december) == january
+    assert first_day(plan, after, december) == january
+    assert chart_seasons(plan, december, upcoming=False) == [before, after]
+
+
+def test_leap_day_is_priced_like_any_other() -> None:
+    year = Season("All-Year Rates", date(2027, 4, 1), date(2028, 3, 31))
+    daily = _rate(
+        description="Daily Charge",
+        unit=RateUnit.PER_DAY,
+        price=90.0,
+        valid_start=year.start,
+        valid_end=year.end,
+    )
+    plan = replace(_plan(daily, _supplier("CHARGE_24", 20.0)), seasons=(year,))
+    leap = date(2028, 2, 29)
+
+    assert season_for(plan, leap) == year
+    assert next_season_change(plan, leap) == date(2028, 4, 1)
+    assert [charge.price for charge in daily_charges(plan, leap)] == [90.0]
+    assert charged_days(
+        [datetime(2028, 2, 28, 11, 0, tzinfo=UTC) + timedelta(hours=hour) for hour in range(24)],
+        NZ,
+    ) == pytest.approx(1)
+
+
 @pytest.mark.parametrize(
     ("rate", "bucket"),
     [
@@ -324,6 +374,12 @@ def test_bucket_name_fallbacks(rates: list[Rate], bucket: str, name: str, period
 
     assert bucket_name(bucket, names) == name
     assert bucket_period(bucket, names) == period
+
+
+def test_bucket_without_a_charge_code_or_name_is_named_from_its_description() -> None:
+    # A rate with no charge code is bucketed by its description (see `resolve_bucket`).
+    assert bucket_name("EG_NIGHT BOOST", {}) == "Night boost"
+    assert bucket_period("EG_NIGHT BOOST", {}) == "night_boost"
 
 
 def test_price_combines_supplier_and_network_rates_from_different_periods() -> None:
@@ -1079,3 +1135,181 @@ def test_plan_without_export_keeps_import_and_daily_rates() -> None:
     assert [rate for rate in plan.rates if rate not in stripped.rates] == [
         rate for rate in plan.rates if rate.is_export and rate.unit is RateUnit.PER_KWH
     ]
+
+
+def test_daily_charge_keys() -> None:
+    assert daily_charge_key(DailyCharge("Daily Network Charges", 90, is_network=True)) == (
+        "network_rate"
+    )
+    assert daily_charge_key(DailyCharge("Metering Fee", 35, is_network=False)) == ("metering_rate")
+    assert (
+        daily_charge_key(
+            DailyCharge("Admin & climate positive certification", 30, is_network=False)
+        )
+        == "supplier_rate"
+    )
+    # A kind of charge not seen before keeps its own key.
+    assert daily_charge_key(DailyCharge("Smart Home Bundle", 20, is_network=False)) == (
+        "smart_home_bundle"
+    )
+
+
+def _category_plans(plan: Plan) -> tuple[Plan, ...]:
+    """Return the plans listed with a fixture plan, for its network and queried category."""
+    return parse_plan_list(load_plan_list(plan.network, plan.price_category)).all_plans
+
+
+def test_plan_for_another_category_is_billed_the_registered_categorys_network_rates() -> None:
+    # The network charges the ICP's registered category until it's moved, whatever the plan
+    # was published with.
+    plan = find_plan_where(needs_network_category_change)
+    plans = _category_plans(plan)
+    registered = next(other for other in plans if network_category(other) == plan.price_category)
+
+    billed = billed_plan(plan, plans, plan.price_category)
+
+    assert billed.network_rates == registered.network_rates
+    assert billed.retail_rates == plan.retail_rates
+    assert billed.chart_network_rates == plan.network_rates
+    assert network_category(billed) == plan.price_category
+    assert chart_plan(billed) == plan
+
+
+def test_plan_for_the_registered_category_is_billed_as_published() -> None:
+    plan = find_plan_where(lambda plan: network_category(plan) == plan.price_category)
+
+    assert billed_plan(plan, _category_plans(plan), plan.price_category) is plan
+    assert chart_plan(plan) is plan
+
+
+def test_plan_is_kept_as_published_when_no_plan_has_the_registered_categorys_rates() -> None:
+    plan = find_plan_where(needs_network_category_change)
+
+    assert billed_plan(plan, (plan,), plan.price_category) is plan
+    # Rates that cover different periods can't stand in for the plan's.
+    others = tuple(
+        replace(other, network_rates=other.network_rates[1:]) for other in _category_plans(plan)
+    )
+    assert billed_plan(plan, others, plan.price_category) is plan
+
+
+def test_plan_with_untagged_network_rates_is_billed_as_published() -> None:
+    plan = find_plan_where(needs_network_category_change)
+    untagged = replace(
+        plan, network_rates=tuple(replace(rate, price_category=None) for rate in plan.network_rates)
+    )
+
+    assert billed_plan(untagged, _category_plans(plan), plan.price_category) is untagged
+
+
+def _season_readings(plan: Plan) -> dict[str, ChartReading]:
+    """Return a plan's stored fixture charts, keyed by the paths the integration saves them by."""
+    readings: dict[str, ChartReading] = {}
+    for season in plan.seasons:
+        for weekend, path in enumerate(season_charts(plan, season)):
+            chart = chart_file(season_chart_name(plan, season, weekend=bool(weekend)))
+            if chart.exists():
+                readings[path] = chart_reading(chart)
+    return readings
+
+
+def test_chart_for_another_category_is_read_with_its_own_rates_and_billed_the_registered_ones() -> (
+    None
+):
+    plan = default_plan_where(needs_network_category_change)
+    plans = _category_plans(plan)
+    billed = billed_plan(plan, plans, plan.price_category)
+    charts = _season_readings(plan)
+    assert charts
+
+    days = [day for day, _chart in stored_charts(plan)]
+    explained = 0
+    # Only seasons with both their weekday and weekend charts stored.
+    for day in sorted({day for day in days if days.count(day) == 2}):
+        for export in (False, True):
+            advertised, gap = season_slots(charts, plan, season_for(plan, day), day, export=export)
+            slots, missing = season_slots(charts, billed, season_for(plan, day), day, export=export)
+            assert missing == gap
+            if advertised is None or gap is not None:
+                # No rates for the side, or a chart that needn't match them.
+                continue
+            assert slots is not None
+            rates = side_rates(billed, day, export=export)
+            for drawn, priced in zip(advertised.all, slots.all, strict=True):
+                # Same periods as the chart shows, priced with the billed network rates.
+                assert (priced.supplier, priced.network) == (drawn.supplier, drawn.network)
+                network = rates.network.get(priced.network, ())
+                expected = [p for p in drawn.components if p.kind is not ComponentKind.NETWORK]
+                assert list(priced.components) == [*expected, *network]
+                assert priced.price == pytest.approx(sum(p.price for p in priced.components))
+            explained += 1
+    assert explained
+
+
+def test_export_free_plan_drops_the_charts_export_network_rates_too() -> None:
+    plan = default_plan_where(needs_network_category_change)
+    billed = without_export(billed_plan(plan, _category_plans(plan), plan.price_category))
+
+    assert billed.chart_network_rates is not None
+    assert not any(rate.is_export for rate in billed.chart_network_rates)
+
+
+def _numbered_slots() -> DaySlots:
+    """Half-hours each with their own price, so the half-hour used shows in the price."""
+
+    def slots(base: float) -> tuple[Slot, ...]:
+        return tuple(
+            Slot(price=base + index, supplier="CHARGE_24", network="CHARGE_24", components=())
+            for index in range(SLOTS_PER_DAY)
+        )
+
+    return DaySlots(slots(0.0), slots(100.0))
+
+
+@pytest.mark.parametrize(
+    ("instant", "index"),
+    [
+        # Daylight saving starts on Sunday 2026-09-27: 01:30 NZST, then straight to 03:30 NZDT.
+        (datetime(2026, 9, 26, 13, 30, tzinfo=UTC), 3),
+        (datetime(2026, 9, 26, 14, 30, tzinfo=UTC), 7),
+        # It ends on Sunday 2027-04-04: 01:30 NZDT, 02:30 twice, then 03:30 NZST.
+        (datetime(2027, 4, 3, 12, 30, tzinfo=UTC), 3),
+        (datetime(2027, 4, 3, 13, 30, tzinfo=UTC), 5),
+        (datetime(2027, 4, 3, 14, 30, tzinfo=UTC), 5),
+        (datetime(2027, 4, 3, 15, 30, tzinfo=UTC), 7),
+    ],
+)
+def test_half_hour_follows_the_wall_clock_across_daylight_saving(
+    instant: datetime, index: int
+) -> None:
+    assert _numbered_slots().at(instant.astimezone(NZ)).price == 100.0 + index
+
+
+def _season_on(plan: Plan, day: date) -> Season | None:
+    """The season covering a day, preferring any but Standard Rates, worked out directly."""
+    covering = [season for season in plan.seasons if season.start <= day <= season.end]
+    others = [season for season in covering if season.name.strip().lower() != "standard rates"]
+    return (others or covering or [None])[0]
+
+
+@pytest.mark.parametrize("plan", fixture_plans(), ids=lambda plan: f"{plan.network}-{plan.code}")
+def test_seasons_around_every_boundary_match_a_day_by_day_search(plan: Plan) -> None:
+    days = sorted(
+        {
+            edge + timedelta(days=offset)
+            for season in plan.seasons
+            for edge in (season.start, season.end)
+            for offset in (-1, 0, 1)
+        }
+    )
+    last = max((season.end for season in plan.seasons), default=date.min) + timedelta(days=2)
+    for day in days:
+        current = _season_on(plan, day)
+        assert season_for(plan, day) == current
+        later = (day + timedelta(days=step) for step in range(1, (last - day).days + 1))
+        change = next((other for other in later if _season_on(plan, other) != current), None)
+        assert next_season_change(plan, day) == change, (plan.code, day)
+        for season in plan.seasons:
+            ahead = (day + timedelta(days=step) for step in range((season.end - day).days + 1))
+            start = next((other for other in ahead if _season_on(plan, other) == season), None)
+            assert first_day(plan, season, day) == start, (plan.code, season, day)

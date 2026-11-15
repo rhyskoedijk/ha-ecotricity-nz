@@ -2,9 +2,37 @@
 
 ## Unreleased
 
+![Example Dashboard](/docs/screenshots/screenshot.dashboard.with.bill.card.png)
+
+### Breaking changes
+
+- **Home Assistant 2026.10.4 or later is now required.**
+- **The `Plan` sensor's `code` attribute is now `internal_code`**, to match `internal_name`.
+
+### New features
+
+- **Cost statistics** have been added to show what your usage cost each hour, in dollars, for each daily charge, energy charge, lines charge and levy on your bill. These statistics can be used in charts to recreate your bill for any time period; the README has an example of how to do this. Costs are worked out from your plan's saved pricing and backfilled to the start of the current pricing year (usually 1 April), though not as far back as your full usage history goes. This feature requires your Ecotricity portal login to be configured.
+
+- **Bill card**: a dashboard card that lays out your costs like your Ecotricity bill, with network, energy and other charges, each rate's kWh (and line losses), rate and amount, and all totals. Pair it with an energy date picker with the same `collection_key` and it shows whatever day, week, month or range you pick. This feature requires your Ecotricity portal login to be configured.
+
+### Improvements
+
+- Home Assistant no longer waits for a pricing data fetch when it starts. The saved pricing is used straight away, and a fetch that's due runs in the background once startup has finished. Working out the cost of each month of usage now runs outside Home Assistant's event loop, so a long first import doesn't make the whole system sluggish on low-powered hardware.
+- The integration's reconfigure steps now explain each field more clearly.
+
+### Bug fixes
+
+- Export prices left GST out, but Ecotricity's bills charge GST on export credits whether or not the customer is GST-registered. Export prices now include GST, and a new **Include GST in export prices** option (on by default) turns it off; the existing option has been renamed to **Include GST in import prices**.
+- Network prices and costs could be wrong when your Ecotricity plan is for a different network price category than your ICP is registered on, such as a low-user plan on a standard-user ICP. Ecotricity lists each plan with its own category's network rates, but the network charges your ICP's registered category until it's moved. The integration now prices with your ICP's category, a repair notice explains the difference, and the **Plan** sensor's `expected_network_price_category` and `actual_network_price_category` attributes show both price categories, with `network_price_category_change_required` true while they differ.
+- A login the Ecotricity portal rejects is now tried once more after 10 seconds before a repair notice is raised, which avoids false alarms when the portal has intermittent problems.
+- A usage series whose first readings arrived with a half-hour missing (such as export on a new solar install) skipped those readings for good once the portal filled the gap. They're now read again and imported.
+- A chart image with marks the chart reader didn't expect could stop the whole pricing update, making every pricing sensor unavailable. It's now treated as an unreadable chart, so its saved reading is kept and everything else carries on.
+- Choosing another plan in the options while Ecotricity's website couldn't be reached loaded the integration anyway, pricing the new plan with the old plan's time-of-use charts. Setup now retries until the new plan's pricing can be fetched, backing off between fetches as it does when the site is down. Setup with no saved pricing yet now backs off between retries too, rather than trying again every few minutes.
+- After about 11 days of failed pricing fetches in a row, such as when Ecotricity changes its website's browser check, every pricing sensor became unavailable instead of carrying on with the saved pricing. Fetches now keep retrying every 8 hours for as long as the outage lasts.
+
 ## 0.4.0 (2026-10-21)
 
-Time-of-use pricing only worked on a handful of networks; on most, it was either unavailable or inaccurate. This release reads the exact prices printed under Ecotricity's time-of-use charts instead of working them out from the height of the bars, and has been checked against every chart Ecotricity publishes on every network as of October 2026.
+Time-of-use pricing only worked on a handful of networks; on most, it was either unavailable or inaccurate. This release reads the exact prices printed under Ecotricity's time-of-use charts instead of working them out from the height of the bars, and has been checked against every chart Ecotricity published on every network at the time.
 
 Some sensors have changed in ways that can affect automations, templates and dashboards, so please read the breaking changes before updating. These changes lay the groundwork for recreating Ecotricity's bills more accurately, which will continue in the next release.
 
@@ -19,7 +47,7 @@ Some sensors have changed in ways that can affect automations, templates and das
 
 ### New features
 
-- **Network import loss factor** and **Network export loss factor** sensors show your connection's line loss factors. Ecotricity bills its energy rates on your usage times this factor, which the prices leave out; the README's [Known limitations](README.md#known-limitations) show how to include it.
+- **Network import loss factor** and **Network export loss factor** sensors show your connection's line loss factors. Ecotricity bills its energy rates on your usage times this factor, which the prices leave out.
 - Where Ecotricity's and your network's pricing periods don't line up, **Current supplier import period** and **Current network import period** sensors (and the export ones) show each side's own period. **Current import period** then shows the overall period: the one whose own price is nearest what you're paying. Plans whose periods line up exactly keep one period sensor per direction.
 
 ### Improvements

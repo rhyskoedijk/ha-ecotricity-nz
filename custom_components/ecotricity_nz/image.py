@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from .api.onboarding import ONBOARDING_URL
 from .api.timeframes import ChartReadError, season_chart_path
-from .const import CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
+from .const import CONF_INCLUDE_GST_IMPORT, DEFAULT_INCLUDE_GST
 from .coordinator import PricingCoordinator
 from .entity import EcotricityEntity
 from .tariff import WEEKDAY_COUNT
@@ -43,8 +43,9 @@ async def async_setup_entry(
 class TimeOfUseChartImage(EcotricityEntity[PricingCoordinator], ImageEntity):
     """Ecotricity's chart of today's time-of-use prices, for the current season and day type.
 
-    The chart follows the GST option. Ecotricity's GST-inclusive charts also add GST to export
-    rows, unlike the integration's export price sensors.
+    The chart follows the import GST option. Ecotricity's GST-inclusive charts add GST to the
+    export rows too, so with only one of the GST options on, one side's rows differ from its
+    price sensors.
     """
 
     _attr_content_type = "image/png"
@@ -74,7 +75,7 @@ class TimeOfUseChartImage(EcotricityEntity[PricingCoordinator], ImageEntity):
             else data.plan.timeframe_chart_weekend
         )
         include_gst = self.coordinator.config_entry.options.get(
-            CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST
+            CONF_INCLUDE_GST_IMPORT, DEFAULT_INCLUDE_GST
         )
         try:
             path = season_chart_path(template, data.season, include_gst=include_gst)

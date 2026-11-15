@@ -6,6 +6,7 @@ This page explains how to build and test the integration locally, for contributo
 
 - Python 3.14 or later. `.python-version` pins the minor version, so uv uses 3.14 locally and in CI even when a newer Python is installed.
 - [uv](https://docs.astral.sh/uv/) package and project manager.
+- Node.js (the version in `frontend/.nvmrc`) and npm, for the bill card.
 
 ## Setup
 
@@ -13,7 +14,9 @@ This page explains how to build and test the integration locally, for contributo
 scripts/setup
 ```
 
-This installs Home Assistant, the test harness and the tools into `.venv`, and installs the pre-commit hooks.
+This installs Home Assistant, the test harness and the tools into `.venv`, installs the pre-commit hooks, and installs and builds the bill card.
+
+The integration depends on Home Assistant's `frontend` component, to serve the bill card, and the test harness doesn't install the package it needs, so `home-assistant-frontend` is a dev dependency of its own. When bumping `pytest-homeassistant-custom-component`, set it to the version in that Home Assistant's `package_constraints.txt`; without it, no test can set the integration up.
 
 ## Checks
 
@@ -21,13 +24,29 @@ This installs Home Assistant, the test harness and the tools into `.venv`, and i
 uv run pytest                                  # all tests
 uv run pytest --cov --cov-report=term-missing  # code coverage
 uv run ruff format . && uv run ruff check .    # formatting and linting
-uv run mypy custom_components                  # type checking (strict)
+uv run mypy                                    # type checking (strict)
 uv run pre-commit run --all-files              # git hook checks
 ```
 
-CI runs the same commands and fails below 95% code coverage. The pre-commit hooks run in CI too, so a commit made without them installed is still checked.
+The bill card has its own checks, run from `frontend/`:
 
-Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name (categories can contain hyphens, such as `T-1RL`, so it matches the name against the network's folders rather than splitting it). Most tests run against `CKHK` and `RLUTOU`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
+```bash
+npm run typecheck   # TypeScript, strict
+npm test            # vitest: bill.ts's logic, and the card rendered in happy-dom
+npm run build       # bundle into custom_components/ecotricity_nz/frontend/
+```
+
+CI runs the same commands. Below 95% code coverage, `pytest --cov` fails (`fail_under` in `pyproject.toml`), locally as in CI. The pre-commit hooks run in CI too, so a commit made without them installed is still checked, except for its message.
+
+Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, and there's no `Co-Authored-By` or AI tool line. `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
+
+Some of `CLAUDE.md`'s rules are tests rather than hooks, as they read the code:
+
+- `tests/test_conventions.py`: `api/`, `tariff.py` and `costs.py` have no Home Assistant imports, even through what they import, and nothing in `api/` imports the rest of the integration; `read_chart` only runs through `async_add_executor_job`; every `noqa` and `type: ignore` gives a reason; only `sensor.py` and `costs.py` convert cents to dollars; nothing turns off TLS checks, and every URL is HTTPS to a host `docs/security.md` lists; every public dataclass is frozen, apart from the config entry's runtime data; nothing is kept in `hass.data` per entry; tests name no fixture plan's ID or code, or chart's file name; the version stays at `0.0.0`; `manifest.json` has no `requirements`; `.env`, `.captures/` and the built card are git-ignored; a test names every fixture outside `tests/fixtures/networks`; the brand images keep their sizes; and every workflow action is pinned to a commit SHA with a version comment.
+- `tests/test_permanent_ids.py`: entity keys, statistic keys and the config entry and storage versions match `tests/fixtures/permanent_ids.json`. A renamed or removed key fails it, since users would lose history. A new one fails it too, until you add it to the file. Change a version there only once the migration it needs is in (`async_migrate_entry`, or `_SnapshotStore` for the snapshot).
+- `tests/test_dependencies.py`: the `home-assistant-frontend` pin and the minimum in `hacs.json` match the Home Assistant the tests run on.
+
+Tests never touch the network. The API client tests mock HTTP responses, and the integration tests mock the clients using fixtures in `tests/fixtures`. Each network has its own folder under `tests/fixtures/networks`, named by its distributor code (e.g. `CKHK`, `ORON`), with an `icp.json` where it has a test ICP, and a folder for its price category (e.g. `VECT/ARHLC/`) holding that category's `plan_list.json` and its timeframe charts in `charts/`. Usually a network has one price category folder; see [Choosing price categories](#choosing-price-categories). Load a plan list with `load_plan_list(network, category)`, and a chart with `chart_file(name)`, which finds the folder from the network and category at the start of the chart's name (categories can contain hyphens, such as `T-1RL`, so it matches the name against the network's folders rather than splitting it). Ecotricity's other responses (plan names, the attestation challenge and token, and the portal's) are in `tests/fixtures/ecotricity`, and only the integration's own data, such as `permanent_ids.json` and the Electricity Authority's `network_price_categories.json`, sits at the top of `tests/fixtures`. Most tests run against `CKHK` and `RLUTOU`, the test ICP's network and price category (`DEFAULT_NETWORK` and `DEFAULT_PRICE_CATEGORY` in `tests/conftest.py`).
 
 The chart images are real Ecotricity charts; they contain only public pricing. Only charts that test something no other chart does are kept in git (see [Adding a scenario's chart](#keeping-a-networks-charts)), so most plans have a chart or two, not one per season.
 
@@ -45,6 +64,10 @@ Write every test around the scenario it covers, not the network, plan or bug rep
 
 `tests/test_network_fixtures.py` covers every kept chart automatically, so a new network needs no new test unless it brings a new scenario.
 
+### Reviewing a branch
+
+[`docs/review.md`](review.md) is where the `branch-review` Claude Code skill gets everything it knows about this repository, as the skill itself is generic: the rule sources, the baseline commands, the scan settings, where probe tests go, which scenarios count as likely, how severe each kind of issue is, which document each detail belongs in, and what counts as obsolete, needlessly complex or slow enough to matter. Keep it up to date when a check it describes changes.
+
 ## Running Home Assistant locally
 
 ```bash
@@ -53,7 +76,13 @@ scripts/develop
 
 This creates a `config/` directory (git-ignored), links the integration into `config/custom_components`, writes a minimal `configuration.yaml`, and starts Home Assistant. The first start takes a minute or two while Home Assistant installs its own runtime packages. Open http://localhost:8123, create a user, then go to Settings > Devices & services > Add integration > Ecotricity NZ.
 
-Code changes need a restart: stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> and run `scripts/develop` again.
+It passes `--skip-pip-packages Pillow`, as `pyproject.toml` overrides Home Assistant's Pillow pin and Home Assistant would otherwise try, and fail, to install its own version at startup (failing `image_upload` and `person` with it).
+
+Code changes need a restart: stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> and run `scripts/develop` again. The bill card is the exception: `scripts/develop` rebuilds it as its source changes, so reloading the dashboard shows the change.
+
+### The bill card
+
+The card's source is `frontend/src`: `index.ts` is the bundle's entry, which waits for Home Assistant's app before loading the card (see [architecture.md](architecture.md#bill-card)), `bill.ts` works out the bill from statistics, with no DOM or Home Assistant, and `ecotricity-bill-card.ts` is the Lit element. esbuild bundles both, with Lit, into one file in `custom_components/ecotricity_nz/frontend/`, which is git-ignored: CD builds it for each release, and `card.py` logs a warning and skips the card when it hasn't been built. Its UI text is in English in the card itself, since `strings.json` only reaches the integration's backend.
 
 The first portal import backfills the whole history in the background, which can take a few minutes on an account with years of data. Watch for it in the log, then check Developer tools > Statistics for `ecotricity_nz:` entries.
 
@@ -63,7 +92,7 @@ Any one of these works:
 
 - Copy `custom_components/ecotricity_nz` into the `custom_components` folder of your Home Assistant config directory, then restart.
 - Download `ha_ecotricity_nz.zip` from a GitHub release and unzip it into `custom_components/ecotricity_nz`.
-- In HACS, add this repository as a custom repository, then pick a branch or pre-release from the download dialog.
+- In the Marketplace (**Settings > Marketplace**, or HACS before 2026.11), add this repository as a custom repository, then pick a branch from the download dialog, or turn on the repository's **Pre-release** switch to be offered pre-releases. A branch has no built bill card, so it's left out until you build it (`npm run build --prefix frontend`) and copy `custom_components/ecotricity_nz/frontend` across.
 
 ## Live smoke test
 
@@ -124,7 +153,7 @@ To use a file you've already downloaded, pass its path as the only argument. Net
 
 ### Choosing price categories
 
-A network's price categories mostly share the same Ecotricity data. Comparing the top categories of Wellington Electricity (`CKHK`), Orion (`ORON`) and Vector (`VECT`) in October 2026, every category returned the same six plans, seasons, per-kWh rates and charts (byte for byte). Only two things changed: the plan the site suggests as the default (a low-user plan on low-user categories, a standard plan otherwise), and on Orion the daily network charge (`URES` charges 90c a day on low-user plans where `RES` and `RSC` charge 75.72c). The low-user and standard-user split is in the plans themselves (`_LOW` and `_STD` plan codes), not in the price category.
+A network's price categories mostly share the same Ecotricity data. Comparing the top categories of Wellington Electricity (`CKHK`), Orion (`ORON`) and Vector (`VECT`), every category returned the same six plans, seasons, per-kWh rates and charts (byte for byte). Only two things changed: the plan the site suggests as the default (a low-user plan on low-user categories, a standard plan otherwise), and on Orion the daily network charge (`URES` charges 90c a day on low-user plans where `RES` and `RSC` charge 75.72c). The low-user and standard-user split is in the plans themselves (`_LOW` and `_STD` plan codes), not in the price category.
 
 So each network gets one price category folder, which covers everything the integration parses:
 
@@ -135,7 +164,7 @@ So each network gets one price category folder, which covers everything the inte
 
 ### Adding a network
 
-Ecotricity's onboarding site blocks an IP for about 24 hours after a burst of a few hundred requests (October 2026), so the script paces every request.
+Ecotricity's onboarding site blocks an IP for about 24 hours after a burst of a few hundred requests, so the script paces every request.
 
 ```bash
 uv run python scripts/build_ea_network_price_categories.py        # see which networks have no fixtures
@@ -154,7 +183,7 @@ To build a folder by hand instead: save the plan list response (`RESTPLAN/plan/l
 
 ### Keeping a network's charts
 
-The build script saves every chart of a network, but only charts that test something no other chart does are kept in git. In October 2026 every network's charts were read and described by the pricing scenarios they show (how many periods, whether Ecotricity's and the network's periods line up, hours with no network rate, a cut-off legend price, overlapping or unpublished seasons and so on), and one chart was kept for each scenario: 34 of 576 charts, from 11 networks. The test ICP's network (the one with `icp.json`) keeps more, because the integration tests run against it.
+The build script saves every chart of a network, but only charts that test something no other chart does are kept in git. Every network's charts were read and described by the pricing scenarios they show (how many periods, whether Ecotricity's and the network's periods line up, hours with no network rate, a cut-off legend price, overlapping or unpublished seasons and so on), and one chart was kept for each scenario: 34 of 576 charts, from 11 networks. The test ICP's network (the one with `icp.json`) keeps more, because the integration tests run against it.
 
 After building a network, or when a bug turns up a scenario the kept charts don't cover:
 
@@ -182,6 +211,6 @@ The git tag is the only place the version is set. `manifest.json` and `pyproject
 
 1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section.
 2. Create a GitHub release with a tag like `0.2.0` (no `v` prefix).
-3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which HACS installs.
+3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, builds the bill card, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which the Marketplace installs (`zip_release` in `hacs.json`).
 
 Nothing is committed, pushed or released without the maintainer's approval.

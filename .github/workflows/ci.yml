@@ -28,9 +28,10 @@ jobs:
       - run: uv run ruff check --output-format github .
       - run: uv run mypy
       - name: Other pre-commit hooks
-        # Ruff and mypy already ran above, with annotations.
+        # Ruff and mypy already ran above, with annotations, and the
+        # Frontend job type checks the card after installing its packages.
         env:
-          SKIP: ruff-format,ruff-check,mypy
+          SKIP: ruff-format,ruff-check,mypy,frontend-typecheck
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
   test:

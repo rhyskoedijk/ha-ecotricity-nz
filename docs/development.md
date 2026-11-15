@@ -64,6 +64,10 @@ Write every test around the scenario it covers, not the network, plan or bug rep
 
 `tests/test_network_fixtures.py` covers every kept chart automatically, so a new network needs no new test unless it brings a new scenario.
 
+### Reviewing a branch
+
+[`docs/review.md`](review.md) is where the `branch-review` Claude Code skill gets everything it knows about this repository, as the skill itself is generic: the rule sources, the baseline commands, the scan settings, where probe tests go, which scenarios count as likely, how severe each kind of issue is, which document each detail belongs in, and what counts as obsolete, needlessly complex or slow enough to matter. Keep it up to date when a check it describes changes.
+
 ## Running Home Assistant locally
 
 ```bash

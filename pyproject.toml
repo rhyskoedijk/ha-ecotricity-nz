@@ -14,7 +14,7 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
-    "home-assistant-frontend==20260930.5",
+    "home-assistant-frontend==20261028.5",
     "zizmor",
     "shellcheck-py",
 ]

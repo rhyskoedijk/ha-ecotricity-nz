@@ -7,6 +7,10 @@ updates:
     groups:
       dev-tools:
         patterns: ["*"]
+    ignore:
+      # Pinned to the version in package_constraints.txt of the Home Assistant that
+      # pytest-homeassistant-custom-component tests on, so it moves with that pin by hand.
+      - dependency-name: home-assistant-frontend
 
   - package-ecosystem: github-actions
     directory: /

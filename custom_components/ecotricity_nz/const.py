@@ -51,7 +51,7 @@ CONSUMPTION_CHUNK: Final = timedelta(days=31)
 # A missing half-hour newer than this (before the portal's latest data) holds back the import in
 # case the portal fills it in; an older one is imported as it stands.
 CONSUMPTION_SETTLE_PERIOD: Final = timedelta(days=7)
-# Pause between backfill requests so a first run doesn't hammer the portal.
+# Pause between backfill requests so a first run doesn't send the portal a burst of requests.
 BACKFILL_PAUSE_SECONDS: Final = 2.0
 
 # Raise a repair issue after this many consecutive failures to read TOU charts or mint tokens.

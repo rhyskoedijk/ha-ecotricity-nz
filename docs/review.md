@@ -94,8 +94,8 @@ npm run typecheck --prefix frontend
 npm test --prefix frontend
 npm run build --prefix frontend
 git diff --check <merge_base>
-for hook in check-json check-yaml check-toml check-added-large-files detect-private-key translations-match zizmor shellcheck; do uv run pre-commit run "$hook" --all-files || echo "FAILED: $hook"; done
-for sha in $(git rev-list --no-merges <merge_base>..HEAD); do git log -1 --format=%B "$sha" > "<run folder>/commit-msg"; uv run pre-commit run --hook-stage commit-msg --commit-msg-filename "<run folder>/commit-msg" || echo "FAILED: commit $sha"; done
+rc=0; for hook in check-json check-yaml check-toml check-added-large-files detect-private-key translations-match zizmor shellcheck; do uv run pre-commit run "$hook" --all-files || { echo "FAILED: $hook"; rc=1; }; done; exit $rc
+rc=0; for sha in $(git rev-list --no-merges <merge_base>..HEAD); do git log -1 --format=%B "$sha" > "<run folder>/commit-msg"; uv run pre-commit run --hook-stage commit-msg --commit-msg-filename "<run folder>/commit-msg" || { echo "FAILED: commit $sha"; rc=1; }; done; exit $rc
 ```
 
 Don't run `pre-commit run --all-files` as a whole: its `ruff-check`, `trailing-whitespace` and `end-of-file-fixer` hooks rewrite files. `git diff --check` covers trailing whitespace and missing final newlines instead.

@@ -209,7 +209,7 @@ They're rendered from the vector wordmark in the header of ecotricity.co.nz. The
 
 The git tag is the only place the version is set. `manifest.json` and `pyproject.toml` stay at `0.0.0` in the repository, so an install from a branch shows `0.0.0` rather than a version it isn't.
 
-1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section.
+1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section. Commit it as `chore: release <version>` (for example `chore: release 0.6.0`) with no body, in a pull request with the same title. Squash-merge it with that title and an empty message, so the release notes stay in the changelog rather than the commit.
 2. Create a GitHub release with a tag like `0.2.0` (no `v` prefix).
 3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, builds the bill card, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which the Marketplace installs (`zip_release` in `hacs.json`).
 

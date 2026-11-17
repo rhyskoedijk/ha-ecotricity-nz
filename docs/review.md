@@ -51,7 +51,7 @@ commit_width = 80
 "*.json" = "values"
 
 [prose_scan.commit_forbid]
-"ai mention" = '^co-authored-by:|generated with \[?claude|noreply@anthropic\.com'
+"ai mention" = '^co-authored-by:(?! dependabot\[bot\] )|generated with \[?claude|noreply@anthropic\.com'
 
 [obsolete]
 scope = "repository"

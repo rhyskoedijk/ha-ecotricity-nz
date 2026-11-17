@@ -38,7 +38,7 @@ npm run build       # bundle into custom_components/ecotricity_nz/frontend/
 
 CI runs the same commands. Below 95% code coverage, `pytest --cov` fails (`fail_under` in `pyproject.toml`), locally as in CI. The pre-commit hooks run in CI too, so a commit made without them installed is still checked, except for its message.
 
-Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, and there's no `Co-Authored-By` or AI tool line. `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
+Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, and there's no `Co-Authored-By` or AI tool line, apart from the `Co-authored-by: dependabot[bot]` line GitHub adds when a Dependabot pull request is squash-merged. `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
 
 Some of `CLAUDE.md`'s rules are tests rather than hooks, as they read the code:
 

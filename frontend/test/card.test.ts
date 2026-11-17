@@ -8,7 +8,7 @@ import {
   type EnergyCollection,
   type HomeAssistant,
 } from "../src/ecotricity-bill-card";
-import { billingPeriodStart, type BillLayout } from "../src/bill";
+import type { BillLayout } from "../src/bill";
 import { CHANGES, LAYOUT } from "./fixtures";
 
 interface StatisticRequest {
@@ -218,11 +218,12 @@ describe("ecotricity-bill-card", () => {
   });
 
   it("shows this month so far without a collection key", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 30 September 2026, 11pm in New Zealand: the period started at midnight on 1 September (NZST).
+    vi.setSystemTime(new Date("2026-09-30T10:00:00Z"));
     const { hass, requests } = fakeHass();
     await mount({}, hass);
-    expect(requests[0]?.fixed_period.start_time).toBe(
-      billingPeriodStart(new Date(), 1).toISOString(),
-    );
+    expect(requests[0]?.fixed_period.start_time).toBe("2026-08-31T12:00:00.000Z");
   });
 
   it("moves this month so far on as time passes, into the next billing period", async () => {
@@ -328,11 +329,12 @@ describe("ecotricity-bill-card", () => {
   });
 
   it("starts on the billing period start day without a date picker", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 30 September 2026 in New Zealand: the period started at midnight on 15 September (NZST).
+    vi.setSystemTime(new Date("2026-09-30T10:00:00Z"));
     const { hass, requests } = fakeHass();
     await mount({ billing_period_start_day: 15 }, hass);
-    expect(requests[0]?.fixed_period.start_time).toBe(
-      billingPeriodStart(new Date(), 15).toISOString(),
-    );
+    expect(requests[0]?.fixed_period.start_time).toBe("2026-09-14T12:00:00.000Z");
   });
 
   it("changes how the bill's shown without reading the statistics again", async () => {

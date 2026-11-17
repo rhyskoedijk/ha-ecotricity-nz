@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Bug fixes
+
+- The setup form's hint showed the ICP number with an "ICP" prefix, which the form doesn't accept. It now shows the number alone.
+
 ## 0.5.0 (2026-11-15)
 
 ### Breaking changes

@@ -1,8 +1,75 @@
 # Branch review
 
-This page holds the repository's own instructions for the `branch-review` Claude Code skill. The skill handles the process (scope, lanes, severity, evidence, decisions and the report) and assumes nothing about the project; this page gives everything specific to this integration, from its tools and commands to its rules, documents and checks. Each section below is read by name, so keep the headings as they are. `<merge_base>`, `<run folder>` and `<skill>` are filled in by the skill.
+This page holds the repository's own instructions for the `branch-review` Claude Code skill. The skill handles the process (scope, lanes, severity, evidence, decisions and the report) and assumes nothing about the project; this page gives everything specific to this integration, from its tools and commands to its rules, documents and checks. Each section below is read by name, so keep the headings as they are. The skill's scripts read the "Settings" block; the skill's `settings.md` explains each key. `<merge_base>`, `<run folder>` and `<skill>` are filled in by the skill.
 
-Base branch: `main`
+## Settings
+
+```toml
+base = "main"
+rule_sources = ["CLAUDE.md", "docs/development.md", "docs/security.md"]
+runs = ".review/"
+probes = ["tests/test_review_probe_*.py", "frontend/test/review-probe.test.ts"]
+
+[skip]
+code = ["uv.lock", "frontend/package-lock.json", "tests/fixtures/", "custom_components/ecotricity_nz/frontend/", "custom_components/ecotricity_nz/brand/", "docs/screenshots/"]
+writing = ["uv.lock", "frontend/package-lock.json", "tests/fixtures/", "custom_components/ecotricity_nz/frontend/", "custom_components/ecotricity_nz/brand/", "docs/screenshots/"]
+docs = ["uv.lock", "frontend/package-lock.json", "tests/fixtures/", "custom_components/ecotricity_nz/frontend/", "custom_components/ecotricity_nz/brand/", "docs/screenshots/"]
+simplicity = ["uv.lock", "frontend/package-lock.json", "tests/fixtures/", "custom_components/ecotricity_nz/frontend/", "custom_components/ecotricity_nz/brand/", "docs/screenshots/"]
+performance = ["uv.lock", "frontend/package-lock.json", "tests/fixtures/", "custom_components/ecotricity_nz/frontend/", "custom_components/ecotricity_nz/brand/", "docs/screenshots/"]
+conventions = ["uv.lock", "frontend/package-lock.json", "custom_components/ecotricity_nz/frontend/", "custom_components/ecotricity_nz/brand/", "docs/screenshots/"]
+obsolete = ["uv.lock", "frontend/package-lock.json", "custom_components/ecotricity_nz/frontend/", "custom_components/ecotricity_nz/brand/", "docs/screenshots/"]
+
+[coverage]
+report = "<run folder>/coverage.json"
+format = "json"
+measured = ["custom_components/ecotricity_nz/**.py"]
+
+[conventions]
+sources = [
+  "CLAUDE.md#Hard rules", "CLAUDE.md#Definition of done", "CLAUDE.md#Commands",
+  "CLAUDE.md#Architecture", "CLAUDE.md#Gotchas", "CLAUDE.md#Testing",
+  "docs/development.md#Writing tests", "docs/development.md#Choosing price categories",
+  "docs/development.md#Keeping a network's charts",
+]
+
+[writing]
+sources = ["CLAUDE.md#Commit messages"]
+
+[prose_scan]
+commit_subject = '^(fix|feat|refactor|docs|test|build|ci|chore)(\([^)]+\))?!?: [a-z0-9`].*[^.]$'
+commit_width = 80
+
+[prose_scan.map]
+"*.md" = "markdown"
+"*.py" = "python"
+"*.ts" = "slash"
+"*.js" = "slash"
+"*.sh" = "hash"
+"*.yaml" = "hash"
+"*.yml" = "hash"
+"*.toml" = "hash"
+"*.json" = "values"
+
+[prose_scan.commit_forbid]
+"ai mention" = '^co-authored-by:(?! dependabot\[bot\] )|generated with \[?claude|noreply@anthropic\.com'
+
+[obsolete]
+scope = "repository"
+tests = ["tests/", "frontend/test/"]
+docs = ["*.md"]
+ignore_names = '__\w+__|async_(setup|setup_entry|unload_entry|remove_entry|migrate_entry|get_config_entry_diagnostics|get_options_flow|step_\w+)|_async_migrate_func|CONFIG_SCHEMA|EcotricityConfigFlow|main'
+
+[obsolete.define]
+"custom_components/**.py" = '^\s*(?:async\s+)?def\s+(\w+)|^\s*class\s+(\w+)|^([A-Z][A-Z0-9_]*)\s*(?::[^=\n]*)?='
+"scripts/*.py" = '^\s*(?:async\s+)?def\s+(\w+)|^\s*class\s+(\w+)|^([A-Z][A-Z0-9_]*)\s*(?::[^=\n]*)?='
+"frontend/src/*.ts" = '^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)'
+```
+
+The rule sources are `CLAUDE.md`, all of it; `docs/development.md`, where only the sections under `conventions.sources` hold rules ("Writing tests", where each numbered item is a rule, and the two fixture sections, for fixture changes); and `docs/security.md`, for what may be stored, sent and logged.
+
+Every lane but security skips the lock files, the built card (git-ignored) and the images; skip globs match from the repository root, so the brand images are named by their full folder. The code, writing, docs, simplicity and performance lanes also skip `tests/fixtures/` (data, not code or prose; the performance lane's timing scripts still load it). The conventions lane reads `tests/fixtures/` for `CLAUDE.md` "Testing" (fake identifiers, which charts are kept), the obsolete lane reads it for OBS-R02, and the security lane reads everything.
+
+`obsolete.scope` is `repository`, so the obsolete lane audits the whole repository on every run, not only what the branch changed. `obsolete.ignore_names` holds Python's special methods, Home Assistant hooks the framework calls by name, and scripts' entry points. Add any new hook there rather than dismissing it on every run.
 
 ## Never
 
@@ -10,12 +77,6 @@ Base branch: `main`
 - Never call `RESTUSER/user/change` or any other onboarding endpoint that writes data.
 - Never quote anything from `.captures/` or `.env` in a finding, lane file or report.
 - Never commit, push, tag or publish, fixes included.
-
-## Rule sources
-
-- `CLAUDE.md`, all of it.
-- `docs/development.md`: "Writing tests" (each numbered item is a rule), and "Choosing price categories" and "Keeping a network's charts" for fixture changes.
-- `docs/security.md`, for what may be stored, sent and logged.
 
 ## Baseline
 
@@ -33,28 +94,29 @@ npm run typecheck --prefix frontend
 npm test --prefix frontend
 npm run build --prefix frontend
 git diff --check <merge_base>
-for hook in check-json check-yaml check-toml check-added-large-files detect-private-key translations-match zizmor shellcheck; do uv run pre-commit run "$hook" --all-files || echo "FAILED: $hook"; done
-for sha in $(git rev-list --no-merges <merge_base>..HEAD); do git log -1 --format=%B "$sha" > "<run folder>/commit-msg"; uv run pre-commit run --hook-stage commit-msg --commit-msg-filename "<run folder>/commit-msg" || echo "FAILED: commit $sha"; done
+rc=0; for hook in check-json check-yaml check-toml check-added-large-files detect-private-key translations-match zizmor shellcheck; do uv run pre-commit run "$hook" --all-files || { echo "FAILED: $hook"; rc=1; }; done; exit $rc
+rc=0; for sha in $(git rev-list --no-merges <merge_base>..HEAD); do git log -1 --format=%B "$sha" > "<run folder>/commit-msg"; uv run pre-commit run --hook-stage commit-msg --commit-msg-filename "<run folder>/commit-msg" || { echo "FAILED: commit $sha"; rc=1; }; done; exit $rc
 ```
 
-Leave `<merge_base>` off `git diff --check` and add `HEAD` after it when the review leaves out uncommitted changes. Don't run `pre-commit run --all-files` as a whole: its `ruff-check`, `trailing-whitespace` and `end-of-file-fixer` hooks rewrite files. `git diff --check` covers trailing whitespace and missing final newlines instead.
+Don't run `pre-commit run --all-files` as a whole: its `ruff-check`, `trailing-whitespace` and `end-of-file-fixer` hooks rewrite files. `git diff --check` covers trailing whitespace and missing final newlines instead.
+
+## Checkout setup
+
+A `--committed` run's checkout of HEAD needs its own environment and built card. Install them fresh rather than linking the working tree's git-ignored folders: `tests/test_conventions.py` runs `git check-ignore` on `.captures/` and the built card's folder, which fails ("beyond a symbolic link") when they're links. No test needs `.env`, `.captures/` or `config/`. Don't run `uv run pre-commit install` here: a checkout shares the repository's git hooks.
+
+```bash
+uv sync --locked
+npm ci --prefix frontend
+npm run build --prefix frontend
+```
 
 ## Coverage
 
-The `pytest --cov` line writes `<run folder>/coverage.json`, format `json`. The bill card has no coverage report.
+The `pytest --cov` line writes the report the settings name. Only the integration's Python is measured: the bill card and `scripts/` have no coverage report.
 
 ## Bug fix commits
 
 A commit whose subject starts `fix:` or `fix(` (Conventional Commits, as `CLAUDE.md` "Commit messages" says).
-
-## Skip
-
-The code and writing lanes skip all of these. The obsolete lane skips all but `tests/fixtures/**`, which OBS-R02 checks. The security lane reads everything.
-
-- `uv.lock`, `frontend/package-lock.json`
-- `tests/fixtures/**` (data, not code or prose)
-- `custom_components/ecotricity_nz/frontend/` (the built card, git-ignored)
-- `brand/**`, `docs/screenshots/**` (images)
 
 ## Probe tests
 
@@ -118,24 +180,12 @@ Two config entries for the same ICP, a hand-edited `.storage` file, and a clock 
 
 ## Writing lane
 
-The skill's global writing rules apply here as everywhere. `CLAUDE.md` "Writing rules" repeats them; this repository adds `CLAUDE.md` "Commit messages". They cover every kind of prose, including UI text in `strings.json` and the bill card.
+All of the skill's default writing rules apply. `CLAUDE.md` "Writing rules" repeats them, and the settings add `CLAUDE.md` "Commit messages". They cover every kind of prose, including UI text in `strings.json` and the bill card.
 
 - Home Assistant's own UI terms and API names, quoted or used as names, keep Home Assistant's spelling.
 - Pull requests are squash-merged, so a branch commit's message doesn't reach `main`, but the rules still apply to it, as its subject and body are what the squash message is written from.
 
-## Prose scan arguments
-
-```text
---skip uv.lock --skip frontend/package-lock.json --skip 'tests/fixtures/*' --skip 'custom_components/ecotricity_nz/frontend/*'
---map '*.md=markdown' --map '*.py=python' --map '*.ts=slash' --map '*.js=slash' --map '*.sh=hash' --map '*.yaml=hash' --map '*.yml=hash' --map '*.toml=hash' --map '*.json=values'
---commit-subject '^(fix|feat|refactor|docs|test|build|ci|chore)(\([^)]+\))?!?: [a-z0-9`].*[^.]$'
---commit-forbid 'ai mention=^co-authored-by:|generated with \[?claude|noreply@anthropic\.com'
---commit-width 80
-```
-
 ## Conventions lane
-
-Use the `CLAUDE.md` sections "Hard rules", "Definition of done", "Commands", "Architecture", "Gotchas" and "Testing", and the `docs/development.md` sections in "Rule sources".
 
 Enforced by tooling, so Pass when the baseline passes: everything `tests/test_conventions.py`, `tests/test_permanent_ids.py` and `tests/test_dependencies.py` check (listed in `docs/development.md` "Checks"); Ruff with all rules; mypy strict; `tsc` strict; the `translations-match`, `uv-lock`, `zizmor`, `shellcheck`, `commit-subject` and `commit-no-ai-mention` hooks.
 
@@ -162,20 +212,6 @@ Checks beyond the rules:
 - Personal details no entity uses (the ICP's address and region) must not be parsed into models or saved (`CLAUDE.md`, `store.py`).
 
 ## Obsolete lane
-
-Symbol scan command:
-
-```bash
-python3 -I <skill>/scripts/unused_symbols.py \
-  --define 'custom_components/*.py=^\s*(?:async\s+)?def\s+(\w+)|^\s*class\s+(\w+)|^([A-Z][A-Z0-9_]*)\s*(?::[^=\n]*)?=' \
-  --define 'scripts/*.py=^\s*(?:async\s+)?def\s+(\w+)|^\s*class\s+(\w+)|^([A-Z][A-Z0-9_]*)\s*(?::[^=\n]*)?=' \
-  --define 'frontend/src/*.ts=^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)' \
-  --tests 'tests/*' --tests 'frontend/test/*' --docs '*.md' \
-  --skip 'custom_components/ecotricity_nz/frontend/*' --skip uv.lock --skip frontend/package-lock.json --skip 'tests/fixtures/*' \
-  --ignore-names '__\w+__|async_(setup|setup_entry|unload_entry|remove_entry|migrate_entry|get_config_entry_diagnostics|get_options_flow|step_\w+)|_async_migrate_func|CONFIG_SCHEMA|EcotricityConfigFlow|main'
-```
-
-The ignored names are Python's special methods, Home Assistant hooks the framework calls by name, and scripts' entry points. Add any new hook here rather than dismissing it on every run.
 
 Must stay, so never a finding:
 

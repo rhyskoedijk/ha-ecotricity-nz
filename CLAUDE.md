@@ -30,7 +30,9 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), i
 - Subject: `type: summary` in lower case, imperative and without a full stop, for example `fix: don't skip past gaps in portal readings`. Use `fix`, `feat`, `refactor`, `docs`, `test`, `build`, `ci` or `chore`.
 - Body: skip it when the subject says it all. Otherwise, a short paragraph or two wrapped at about 76 characters: first why the change was needed (what was wrong, and what it caused), then what changed. Name the sensors, functions or files involved.
 - Keep it brief. Don't list every file touched, restate the diff, or mention tests and docs updated as part of the definition of done.
-- Never add `Co-Authored-By` lines or any other mention of AI tools.
+- Never add `Co-Authored-By` lines or any other mention of AI tools. The hook lets Dependabot's own `Co-authored-by: dependabot[bot]` line through, as GitHub adds it when its pull requests are squash-merged.
+- A release commit is `chore: release <version>`, such as `chore: release 0.6.0`, with no body: the release notes are in `CHANGELOG.md`. Older history has `release: 0.5.0`; don't copy it, as `release` isn't a type.
+- Pull requests are squash-merged on GitHub, which skips the hooks, so the squash commit's title and message must follow these rules too: the title is the subject, and the message is cut down to the body above (or emptied), not the pull request's description.
 - The `commit-subject` and `commit-no-ai-mention` hooks in `.pre-commit-config.yaml` check the subject's type and these lines at commit time.
 
 ## Definition of done

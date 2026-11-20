@@ -30,6 +30,9 @@ htmlcov/
 # IDE and OS files
 .vscode/
 
-# Frontend dependencies and build artifacts
+# Frontend dependencies and build artefacts
 node_modules/
 /custom_components/ecotricity_nz/frontend/
+
+# branch-review skill run output
+/.review/

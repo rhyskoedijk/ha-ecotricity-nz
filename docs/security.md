@@ -23,6 +23,8 @@ The integration talks to two Ecotricity websites and nothing else. It has no ana
 
 With both, the integration identifies itself with a User-Agent of `HomeAssistant/<version> ecotricity_nz/<version>`, so Ecotricity can see the requests that come from this integration and which Home Assistant version is running. During setup, reauthentication and reconfiguration, the User-Agent is `HomeAssistant ecotricity_nz config flow` instead.
 
+The **Current time-of-use chart** image is the one exception. It points at the chart on `onboarding.ecotricity.co.nz`, and Home Assistant's image component downloads it when the image is shown, and again whenever the chart changes (a new season, a switch between weekday and weekend, or a restart). Those requests carry only the public chart's path, with Home Assistant's own User-Agent, `HomeAssistant/<version> httpx/<version> Python/<version>`.
+
 ## What stays visible inside Home Assistant
 
 - Entity IDs include your ICP number (for example `sensor.icp_0000123456ab1c2_current_import_price`), and so does the device name. Keep that in mind when sharing screenshots, dashboards, automations or logs.

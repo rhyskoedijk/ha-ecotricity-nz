@@ -38,7 +38,7 @@ npm run build       # bundle into custom_components/ecotricity_nz/frontend/
 
 CI runs the same commands. Below 95% code coverage, `pytest --cov` fails (`fail_under` in `pyproject.toml`), locally as in CI. The pre-commit hooks run in CI too, so a commit made without them installed is still checked, except for its message.
 
-Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, and there's no `Co-Authored-By` or AI tool line. `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
+Besides formatting and JSON, YAML and TOML checks, the pre-commit hooks check that `uv.lock` matches `pyproject.toml` (`uv lock --check`), audit the workflows with zizmor and the shell scripts with shellcheck (both pinned dev dependencies), and check each commit message: the subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with one of the types in `CLAUDE.md`, and there's no `Co-Authored-By` or AI tool line, apart from the `Co-authored-by: dependabot[bot]` line GitHub adds when a Dependabot pull request is squash-merged. `scripts/setup` installs the commit message hooks with the others, and CI doesn't run them, as pull requests are squash-merged and the branch's messages never reach `main`.
 
 Some of `CLAUDE.md`'s rules are tests rather than hooks, as they read the code:
 
@@ -209,7 +209,7 @@ They're rendered from the vector wordmark in the header of ecotricity.co.nz. The
 
 The git tag is the only place the version is set. `manifest.json` and `pyproject.toml` stay at `0.0.0` in the repository, so an install from a branch shows `0.0.0` rather than a version it isn't.
 
-1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section.
+1. In `CHANGELOG.md`, rename "Unreleased" to the new version and start a new "Unreleased" section. Commit it as `chore: release <version>` (for example `chore: release 0.6.0`) with no body, in a pull request with the same title. Squash-merge it with that title and an empty message, so the release notes stay in the changelog rather than the commit.
 2. Create a GitHub release with a tag like `0.2.0` (no `v` prefix).
 3. The CD workflow (`.github/workflows/cd.yml`) sets that version in `manifest.json`, builds the bill card, zips `custom_components/ecotricity_nz` and attaches `ha_ecotricity_nz.zip`, which the Marketplace installs (`zip_release` in `hacs.json`).
 

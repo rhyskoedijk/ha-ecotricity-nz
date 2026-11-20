@@ -72,6 +72,6 @@ repos:
         stages: [commit-msg]
       - id: commit-no-ai-mention
         name: commit message has no co-author or AI tool line
-        entry: '(?im)^co-authored-by:|generated with \[?claude|noreply@anthropic\.com'
+        entry: '(?im)^co-authored-by:(?! dependabot\[bot\] )|generated with \[?claude|noreply@anthropic\.com'
         language: pygrep
         stages: [commit-msg]
